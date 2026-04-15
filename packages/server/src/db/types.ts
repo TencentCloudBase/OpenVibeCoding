@@ -37,6 +37,7 @@ export interface Task {
   repoUrl: string | null
   selectedAgent: string | null
   selectedModel: string | null
+  mode: string
   installDependencies: boolean | null
   maxDuration: number | null
   keepAlive: boolean | null

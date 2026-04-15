@@ -62,6 +62,7 @@ export const tasks = sqliteTable('tasks', {
   repoUrl: text('repo_url'),
   selectedAgent: text('selected_agent').default('claude'),
   selectedModel: text('selected_model'),
+  mode: text('mode').notNull().default('default'), // 'default' | 'coding'
   installDependencies: integer('install_dependencies', { mode: 'boolean' }).default(false),
   maxDuration: integer('max_duration').default(parseInt(process.env.MAX_SANDBOX_DURATION || '300', 10)),
   keepAlive: integer('keep_alive', { mode: 'boolean' }).default(false),

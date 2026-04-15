@@ -285,6 +285,7 @@ tasksRouter.post('/', async (c) => {
     repoUrl,
     selectedAgent = 'claude',
     selectedModel,
+    mode = 'default',
     installDependencies = false,
     maxDuration = 300,
     keepAlive = false,
@@ -303,6 +304,7 @@ tasksRouter.post('/', async (c) => {
     repoUrl: repoUrl || null,
     selectedAgent,
     selectedModel: selectedModel || null,
+    mode,
     installDependencies,
     maxDuration,
     keepAlive,
@@ -2306,6 +2308,58 @@ tasksRouter.post('/:taskId/file-operation', requireUserEnv, async (c) => {
   } catch (error) {
     console.error('Error performing file operation:', error)
     return c.json({ success: false, error: 'Failed to perform file operation' }, 500)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Preview proxy — forward requests to dev server inside sandbox
+// ---------------------------------------------------------------------------
+
+tasksRouter.all('/:taskId/preview/*', async (c) => {
+  const authErr = requireAuth(c)
+  if (authErr) return authErr
+  const session = c.get('session')!
+  const taskId = c.req.param('taskId')
+
+  const task = await getDb().tasks.findById(taskId)
+  if (!task || task.userId !== session.user.id) {
+    return c.json({ error: 'Task not found' }, 404)
+  }
+
+  const envId = (c.get('userEnv') as any)?.envId || process.env.TCB_ENV_ID || ''
+  const sandbox = await getScfSandbox(task, envId)
+  if (!sandbox) {
+    return c.json({ error: 'Sandbox not available' }, 503)
+  }
+
+  // Extract the path after /preview/
+  const fullPath = c.req.path
+  const previewIdx = fullPath.indexOf('/preview/')
+  const proxyPath = previewIdx >= 0 ? fullPath.slice(previewIdx + '/preview'.length) : '/'
+
+  try {
+    const res = await sandbox.request(`/proxy/5173${proxyPath}`, {
+      method: c.req.method,
+      headers: {
+        Accept: c.req.header('accept') || '*/*',
+        'Accept-Encoding': c.req.header('accept-encoding') || '',
+      },
+      signal: AbortSignal.timeout(30_000),
+    })
+
+    // Forward response headers and body
+    const contentType = res.headers.get('content-type')
+    const body = await res.arrayBuffer()
+
+    return new Response(body, {
+      status: res.status,
+      headers: {
+        ...(contentType ? { 'Content-Type': contentType } : {}),
+        'Cache-Control': 'no-cache',
+      },
+    })
+  } catch {
+    return c.json({ error: 'Dev server not responding' }, 502)
   }
 })
 

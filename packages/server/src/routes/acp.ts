@@ -192,8 +192,8 @@ acp.delete('/conversation/:conversationId', async (c) => {
  * 简单的聊天端点，返回 SSE 流式响应
  */
 acp.post('/chat', async (c) => {
-  const body = await c.req.json<{ prompt: string; conversationId?: string; model?: string }>()
-  const { prompt, conversationId, model } = body
+  const body = await c.req.json<{ prompt: string; conversationId?: string; model?: string; mode?: string }>()
+  const { prompt, conversationId, model, mode } = body
 
   const { envId, userId, credentials: userCredentials } = c.get('userEnv')!
   if (!envId) {
@@ -202,12 +202,24 @@ acp.post('/chat', async (c) => {
 
   const actualConversationId = conversationId || uuidv4()
 
+  // Resolve mode: from request body, or from existing task record
+  let taskMode = mode as 'default' | 'coding' | undefined
+  if (!taskMode && conversationId) {
+    try {
+      const task = await getDb().tasks.findById(conversationId)
+      if (task?.mode === 'coding') taskMode = 'coding'
+    } catch {
+      // ignore
+    }
+  }
+
   const { turnId } = await cloudbaseAgentService.chatStream(prompt, null, {
     conversationId: actualConversationId,
     envId,
     userId,
     userCredentials,
     model,
+    mode: taskMode,
   })
 
   return observeStream(c, null, actualConversationId, turnId, envId, userId)
@@ -383,6 +395,15 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
     // write failure doesn't affect main flow
   }
 
+  // Resolve task mode
+  let taskMode: 'default' | 'coding' | undefined
+  try {
+    const task = await getDb().tasks.findById(sessionId)
+    if (task?.mode === 'coding') taskMode = 'coding'
+  } catch {
+    // ignore
+  }
+
   // Launch agent in background and observe via SSE
   const { turnId } = await cloudbaseAgentService.chatStream(effectivePrompt, null, {
     conversationId: sessionId,
@@ -392,6 +413,7 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
     model: selectedModel,
     askAnswers: params.askAnswers,
     toolConfirmation: params.toolConfirmation,
+    mode: taskMode,
   })
 
   return observeStream(c, id, sessionId, turnId, envId, userId)
