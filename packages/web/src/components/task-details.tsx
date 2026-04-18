@@ -61,6 +61,7 @@ import { FileDiffViewer } from '@/components/file-diff-viewer'
 import { CreatePRDialog } from '@/components/create-pr-dialog'
 import { MergePRDialog } from '@/components/merge-pr-dialog'
 import { TaskChat } from '@/components/task-chat'
+import { useChatStream } from '@/hooks/use-chat-stream'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -185,6 +186,18 @@ export function TaskDetails({
   initialPrompt,
   onInitialPromptConsumed,
 }: TaskDetailsProps) {
+  // ── Chat stream — hoisted here so it survives TaskChat remounts ──
+  const chatStream = useChatStream(task.id, { onStreamComplete })
+
+  // Handle initial prompt (once) at this level
+  const initialTriggered = useRef(false)
+  useEffect(() => {
+    if (!initialPrompt || initialTriggered.current) return
+    initialTriggered.current = true
+    onInitialPromptConsumed?.()
+    chatStream.sendInitialPrompt(initialPrompt)
+  }, [initialPrompt, onInitialPromptConsumed, chatStream.sendInitialPrompt])
+
   const [optimisticStatus, setOptimisticStatus] = useState<Task['status'] | null>(null)
   const [mcpServers, setMcpServers] = useState<Connector[]>([])
   const [loadingMcpServers, setLoadingMcpServers] = useState(false)
@@ -2154,9 +2167,8 @@ export function TaskDetails({
                   key={task.id}
                   taskId={task.id}
                   task={task}
+                  chatStream={chatStream}
                   onStreamComplete={onStreamComplete}
-                  initialPrompt={initialPrompt}
-                  onInitialPromptConsumed={onInitialPromptConsumed}
                 />
               </div>
             )}
@@ -2215,9 +2227,8 @@ export function TaskDetails({
                   key={task.id}
                   taskId={task.id}
                   task={task}
+                  chatStream={chatStream}
                   onStreamComplete={onStreamComplete}
-                  initialPrompt={initialPrompt}
-                  onInitialPromptConsumed={onInitialPromptConsumed}
                 />
               </div>
 
@@ -2546,9 +2557,8 @@ export function TaskDetails({
               key={task.id}
               taskId={task.id}
               task={task}
+              chatStream={chatStream}
               onStreamComplete={onStreamComplete}
-              initialPrompt={initialPrompt}
-              onInitialPromptConsumed={onInitialPromptConsumed}
             />
           </div>
         </div>

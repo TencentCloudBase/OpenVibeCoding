@@ -250,11 +250,17 @@ export class ScfSandboxManager {
     envId: string,
     options?: {
       mode?: SandboxMode
+      /** Workspace isolation: 'shared' uses envId as SCF session, 'isolated' uses conversationId */
+      workspaceIsolation?: 'shared' | 'isolated'
+      /** Pre-computed SCF session ID (overrides workspaceIsolation logic) */
+      sandboxSessionId?: string
     },
     onProgress?: SandboxProgressCallback,
   ): Promise<SandboxInstance> {
     const progress = onProgress || (() => {})
     const mode = options?.mode || 'shared'
+    const isolation = options?.workspaceIsolation || 'shared'
+    const scfSessionId = options?.sandboxSessionId || (isolation === 'shared' ? envId : conversationId)
 
     const envConfig = this.getEnvConfig()
     const functionPrefix = envConfig.functionPrefix || this.config.functionPrefix
@@ -268,26 +274,33 @@ export class ScfSandboxManager {
     if (functionExists) {
       await this.waitForFunctionReady(functionName)
       const instanceDeps = await this.buildInstanceDeps()
-      const mcpConfig = await this.buildSandboxMcpConfig(functionName, envId, conversationId, instanceDeps.sandboxEnvId)
+      const mcpConfig = await this.buildSandboxMcpConfig(
+        functionName,
+        scfSessionId,
+        conversationId,
+        instanceDeps.sandboxEnvId,
+      )
 
       return new SandboxInstance(instanceDeps, {
         functionName,
         conversationId,
-        envId,
+        envId: scfSessionId,
         status: 'ready',
         mode,
         mcpConfig,
       })
     }
 
-    return this.createNewFunction(functionName, conversationId, envId, mode, options, progress)
+    return this.createNewFunction(functionName, conversationId, scfSessionId, mode, options, progress)
   }
 
   /**
    * 获取已存在的沙箱实例（不创建新实例）
    * 适用于任务删除等场景，沙箱不存在时返回 null
+   * @param conversationId 会话ID
+   * @param scfSessionId SCF session ID（shared模式=envId，isolated模式=conversationId）
    */
-  async getExisting(conversationId: string, envId: string): Promise<SandboxInstance | null> {
+  async getExisting(conversationId: string, scfSessionId: string): Promise<SandboxInstance | null> {
     const envConfig = this.getEnvConfig()
     const functionPrefix = envConfig.functionPrefix || this.config.functionPrefix
     const functionName = this.generateFunctionName('shared', functionPrefix)
@@ -299,7 +312,7 @@ export class ScfSandboxManager {
     return new SandboxInstance(instanceDeps, {
       functionName,
       conversationId,
-      envId,
+      envId: scfSessionId,
       status: 'ready',
       mode: 'shared',
     })

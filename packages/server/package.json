@@ -9,8 +9,8 @@
     "./agent/cloudbase-agent.service": "./src/agent/cloudbase-agent.service.ts"
   },
   "scripts": {
-    "dev": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting --silent && DOTENVX_PATH=.env tsx watch --env-file=.env src/index.ts",
-    "build": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting && tsup src/index.ts --format esm --target node22",
+    "dev": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting --silent && tsup src/util/skill-loader-override.ts --format cjs --outDir dist/util --no-splitting --silent && DOTENVX_PATH=.env tsx watch --env-file=.env src/index.ts",
+    "build": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting && tsup src/util/skill-loader-override.ts --format cjs --outDir dist/util --no-splitting && tsup src/index.ts --format esm --target node22",
     "start": "node dist/index.js"
   },
   "dependencies": {
@@ -28,6 +28,7 @@
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.8.0",
     "drizzle-orm": "^0.36.4",
+    "gray-matter": "^4.0.3",
     "hono": "^4.7.0",
     "jose": "^6.1.3",
     "nanoid": "^5.1.6",

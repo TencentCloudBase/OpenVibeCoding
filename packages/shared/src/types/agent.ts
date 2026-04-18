@@ -232,6 +232,7 @@ export interface ToolCallStatusUpdate {
   toolCallId: string
   status: 'in_progress' | 'completed' | 'failed'
   result?: unknown
+  input?: unknown
   error?: { message: string }
 }
 
@@ -403,6 +404,7 @@ export interface AgentCallbackMessage {
     | 'text'
     | 'thinking'
     | 'tool_use'
+    | 'tool_input_update'
     | 'tool_result'
     | 'result'
     | 'error'
@@ -437,7 +439,7 @@ export interface AgentCallbackMessage {
 /**
  * Agent 回调类型
  */
-export type AgentCallback = (message: AgentCallbackMessage) => void | Promise<void>
+export type AgentCallback = (message: AgentCallbackMessage, seq?: number) => void | Promise<void>
 
 /**
  * Agent 选项

@@ -230,11 +230,13 @@ export function useACP(sessionId: string) {
                 break
               case 'tool_call_update':
                 setToolCalls((prev) =>
-                  prev.map((tc) =>
-                    tc.id === (update as any).toolCallId
-                      ? { ...tc, status: (update as any).status, result: (update as any).result }
-                      : tc,
-                  ),
+                  prev.map((tc) => {
+                    if (tc.id !== (update as any).toolCallId) return tc
+                    const merged: ToolCall = { ...tc, status: (update as any).status || tc.status }
+                    if ((update as any).result !== undefined) merged.result = (update as any).result
+                    if ((update as any).input !== undefined) merged.input = (update as any).input
+                    return merged
+                  }),
                 )
                 break
               case 'ask_user':

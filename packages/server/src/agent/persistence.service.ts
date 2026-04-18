@@ -608,6 +608,18 @@ export class PersistenceService {
       const localFilePath = getLocalMessageFilePath(conversationId, cwd)
       await this.writeLocalMessageFile(localFilePath, messages)
 
+      // DEBUG: copy JSONL after restore for comparison
+      try {
+        const debugDir = path.resolve(cwd, 'debug-jsonl')
+        await fs.mkdir(debugDir, { recursive: true })
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const debugPath = path.join(debugDir, `${conversationId}_after-restore_${timestamp}.jsonl`)
+        await fs.copyFile(localFilePath, debugPath)
+        console.error(`[DEBUG] Copied JSONL after restore to: ${debugPath}`)
+      } catch {
+        // debug copy failed, ignore
+      }
+
       return { messages, lastRecordId, lastAssistantRecordId }
     } catch {
       return { messages: [], lastRecordId: null, lastAssistantRecordId: null }
@@ -676,6 +688,17 @@ export class PersistenceService {
         preSavedUserRecordId,
       )
     } finally {
+      // DEBUG: copy JSONL before deletion for comparison
+      try {
+        const debugDir = path.resolve(cwd, 'debug-jsonl')
+        await fs.mkdir(debugDir, { recursive: true })
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const debugPath = path.join(debugDir, `${conversationId}_before-delete_${timestamp}.jsonl`)
+        await fs.copyFile(localFilePath, debugPath)
+        console.error(`[DEBUG] Copied JSONL before delete to: ${debugPath}`)
+      } catch {
+        // debug copy failed (file may not exist), ignore
+      }
       await this.cleanupLocalFile(localFilePath)
     }
   }

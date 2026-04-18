@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, appendFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { query, ExecutionError } from '@tencent-ai/agent-sdk'
@@ -277,8 +277,35 @@ function createToolCallTracker(): ToolCallTracker {
  */
 function getToolOverridePath(): string {
   const __dirname = path.dirname(fileURLToPath(import.meta.url))
-  // Use pre-compiled CJS file since CLI subprocess can't load .ts directly
-  return path.resolve(__dirname, '../../dist/sandbox/tool-override.cjs')
+  // In dev: __dirname = src/agent/ → ../../dist/sandbox/tool-override.cjs
+  // In prod (bundled): __dirname = dist/ → ./sandbox/tool-override.cjs
+  const devPath = path.resolve(__dirname, '../../dist/sandbox/tool-override.cjs')
+  const prodPath = path.resolve(__dirname, 'sandbox/tool-override.cjs')
+  return existsSync(prodPath) ? prodPath : devPath
+}
+
+/**
+ * Get the path to the skill-loader-override module for injection
+ */
+function getSkillLoaderOverridePath(): string {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+  // In dev: __dirname = src/agent/ → ../../dist/util/skill-loader-override.cjs
+  // In prod (bundled): __dirname = dist/ → ./util/skill-loader-override.cjs
+  const devPath = path.resolve(__dirname, '../../dist/util/skill-loader-override.cjs')
+  const prodPath = path.resolve(__dirname, 'util/skill-loader-override.cjs')
+  return existsSync(prodPath) ? prodPath : devPath
+}
+
+/**
+ * Get the path to the bundled skills directory
+ */
+function getBundledSkillsDir(): string {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+  // In dev: __dirname = src/agent/ → ../../skills/
+  // In prod (bundled): __dirname = dist/ → ../skills/
+  const devPath = path.resolve(__dirname, '../../skills')
+  const prodPath = path.resolve(__dirname, '../skills')
+  return existsSync(prodPath) ? prodPath : devPath
 }
 
 // ─── System Prompt Builder ─────────────────────────────────────────────────
@@ -335,7 +362,7 @@ export class CloudbaseAgentService {
   /**
    * 将内部 AgentCallbackMessage 转换为 ACP ExtendedSessionUpdate 格式
    */
-  private convertToSessionUpdate(msg: AgentCallbackMessage, sessionId: string): ExtendedSessionUpdate | null {
+  public static convertToSessionUpdate(msg: AgentCallbackMessage, sessionId: string): ExtendedSessionUpdate | null {
     if (msg.type === 'text' && msg.content) {
       return {
         sessionUpdate: 'agent_message_chunk',
@@ -357,6 +384,14 @@ export class CloudbaseAgentService {
         status: 'in_progress',
         input: msg.input,
         assistantMessageId: msg.assistantMessageId,
+      } as ExtendedSessionUpdate
+    }
+    if (msg.type === 'tool_input_update') {
+      return {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: msg.id || '',
+        status: 'in_progress',
+        input: msg.input,
       } as ExtendedSessionUpdate
     }
     if (msg.type === 'tool_result') {
@@ -471,7 +506,7 @@ export class CloudbaseAgentService {
       envId,
       userId,
       userCredentials,
-      maxTurns = 50,
+      maxTurns = 100,
       cwd,
       askAnswers,
       toolConfirmation,
@@ -483,7 +518,46 @@ export class CloudbaseAgentService {
 
     const userContext = { envId: envId || '', userId: userId || 'anonymous' }
 
-    const actualCwd = cwd || `/tmp/workspace/${userContext.envId}/${conversationId}`
+    // Read sandbox config from task record (written at creation time)
+    // Historical tasks missing these fields are backfilled as 'shared' mode
+    let taskSandboxMode: string | null = null
+    let taskSandboxSessionId: string | null = null
+    let taskSandboxCwd: string | null = null
+    try {
+      const taskRecord = await getDb().tasks.findById(conversationId)
+      taskSandboxMode = taskRecord?.sandboxMode || null
+      taskSandboxSessionId = taskRecord?.sandboxSessionId || null
+      taskSandboxCwd = taskRecord?.sandboxCwd || null
+
+      // Backfill missing sandbox config for historical tasks (default to 'shared')
+      if (!taskSandboxMode || !taskSandboxSessionId || !taskSandboxCwd) {
+        taskSandboxMode = taskSandboxMode || 'shared'
+        taskSandboxSessionId =
+          taskSandboxSessionId || (taskSandboxMode === 'shared' ? userContext.envId : conversationId)
+        taskSandboxCwd =
+          taskSandboxCwd ||
+          (taskSandboxMode === 'shared'
+            ? `/tmp/workspace/${userContext.envId}/${conversationId}`
+            : `/tmp/workspace/${conversationId}`)
+        await getDb().tasks.update(conversationId, {
+          sandboxMode: taskSandboxMode as 'shared' | 'isolated',
+          sandboxSessionId: taskSandboxSessionId,
+          sandboxCwd: taskSandboxCwd,
+          updatedAt: Date.now(),
+        })
+      }
+    } catch {
+      // Non-critical
+    }
+
+    const sandboxMode = taskSandboxMode || (process.env.WORKSPACE_ISOLATION === 'isolated' ? 'isolated' : 'shared')
+    const sandboxSessionId = taskSandboxSessionId || (sandboxMode === 'shared' ? userContext.envId : conversationId)
+    const defaultCwd =
+      sandboxMode === 'shared'
+        ? `/tmp/workspace/${userContext.envId}/${conversationId}`
+        : `/tmp/workspace/${conversationId}`
+
+    const actualCwd = cwd || taskSandboxCwd || defaultCwd
     mkdirSync(actualCwd, { recursive: true })
 
     // ── 创建 EventBuffer 用于持久化 ACP 事件 ─────────────────────────
@@ -624,6 +698,11 @@ export class CloudbaseAgentService {
       preSavedUserRecordId = preSaved.userRecordId
     }
 
+    // DEBUG: ACP SSE event log path (shared with message loop debug dir)
+    const debugAcpLogDir = path.resolve(actualCwd, 'debug-jsonl')
+    mkdirSync(debugAcpLogDir, { recursive: true })
+    const debugAcpLogPath = path.join(debugAcpLogDir, `${conversationId}_acp_${Date.now()}.jsonl`)
+
     const wrappedCallback: AgentCallback = (msg) => {
       // Enrich message with assistantMessageId
       const enrichedMsg =
@@ -632,9 +711,17 @@ export class CloudbaseAgentService {
           : { ...msg, id: msg.id || assistantMessageId, assistantMessageId }
 
       // 1. Always persist ACP event to DB via EventBuffer
-      const acpEvent = this.convertToSessionUpdate(enrichedMsg, conversationId)
+      const acpEvent = CloudbaseAgentService.convertToSessionUpdate(enrichedMsg, conversationId)
+      let eventSeq: number | undefined
       if (acpEvent) {
-        eventBuffer.push(acpEvent)
+        eventSeq = eventBuffer.pushAndGetSeq(acpEvent)
+      }
+
+      // DEBUG: log raw AgentCallbackMessage and converted ACP event
+      try {
+        appendFileSync(debugAcpLogPath, JSON.stringify({ ts: Date.now(), raw: enrichedMsg, acp: acpEvent }) + '\n')
+      } catch {
+        // ignore
       }
 
       // 2. Persist deployment records (side-effect, fire-and-forget)
@@ -647,7 +734,7 @@ export class CloudbaseAgentService {
       // 3. Forward to live SSE callback if present (ignore errors on disconnect)
       if (liveCallback) {
         try {
-          liveCallback(enrichedMsg)
+          liveCallback(enrichedMsg, eventSeq)
         } catch {
           // SSE disconnected, ignore
         }
@@ -657,6 +744,7 @@ export class CloudbaseAgentService {
     // ── 获取 SCF 沙箱 ────────────────────────────────────────────────
     let sandboxInstance: SandboxInstance | null = null
     let toolOverrideConfig: { url: string; headers: Record<string, string> } | null = null
+    let detectedSandboxCwd: string | undefined
 
     const sandboxEnabled = process.env.TCB_ENV_ID && process.env.SCF_SANDBOX_IMAGE_URI
 
@@ -664,6 +752,8 @@ export class CloudbaseAgentService {
       try {
         sandboxInstance = await scfSandboxManager.getOrCreate(conversationId, userContext.envId, {
           mode: 'shared',
+          workspaceIsolation: sandboxMode as 'shared' | 'isolated',
+          sandboxSessionId,
         })
 
         toolOverrideConfig = await sandboxInstance.getToolOverrideConfig()
@@ -686,6 +776,7 @@ export class CloudbaseAgentService {
             conversationId,
           )
           if (sandboxCwd) {
+            detectedSandboxCwd = sandboxCwd
             wrappedCallback({ type: 'session', sandboxCwd } as any)
             console.log(`[Agent] Sandbox workspace initialized, cwd: ${sandboxCwd}`)
           }
@@ -795,10 +886,17 @@ export class CloudbaseAgentService {
         : { persistSession: true, sessionId: conversationId }
 
       // Build env vars for tool override
-
       if (toolOverrideConfig) {
         envVars.CODEBUDDY_TOOL_OVERRIDE = getToolOverridePath()
         envVars.CODEBUDDY_TOOL_OVERRIDE_CONFIG = JSON.stringify(toolOverrideConfig)
+      }
+
+      // Skill loader override: load bundled skills + project/user skills
+      envVars.CODEBUDDY_SKILL_LOADER_OVERRIDE = getSkillLoaderOverridePath()
+      envVars.CODEBUDDY_BUNDLED_SKILLS_DIR = getBundledSkillsDir()
+      if (sandboxInstance && detectedSandboxCwd) {
+        // Pass sandbox cwd so skill-loader can scan remote skills dirs
+        envVars.CODEBUDDY_SANDBOX_CWD = detectedSandboxCwd
       }
 
       // Build MCP servers config - pass the SDK-wrapped McpServer to query()
@@ -970,7 +1068,7 @@ export class CloudbaseAgentService {
           stderr: (data: string) => {
             console.error('[Agent CLI stderr]', data.trim())
           },
-          // disallowedTools: ['AskUserQuestion'],
+          disallowedTools: ['AskUserQuestion', 'EnterPlanMode'],
         },
       }
 
@@ -990,8 +1088,21 @@ export class CloudbaseAgentService {
 
       try {
         console.log('[Agent] starting for-await loop...')
+
+        // DEBUG: log all messages from messageLoop to a file
+        const debugMsgLogDir = path.resolve(actualCwd, 'debug-jsonl')
+        mkdirSync(debugMsgLogDir, { recursive: true })
+        const debugMsgLogPath = path.join(debugMsgLogDir, `${conversationId}_messageloop_${Date.now()}.jsonl`)
+
         messageLoop: for await (const message of q) {
           console.log('[Agent] message type:', message.type, JSON.stringify(message).slice(0, 300))
+
+          // DEBUG: write full message to log file
+          try {
+            appendFileSync(debugMsgLogPath, JSON.stringify({ ts: Date.now(), ...message }) + '\n')
+          } catch {
+            // ignore debug log errors
+          }
 
           // Tool result (user message) means tool execution completed — resume timeout
           if (message.type === 'user') {
@@ -1037,6 +1148,7 @@ export class CloudbaseAgentService {
             }
             case 'assistant':
               this.handleToolNotFoundErrors(message, tracker, wrappedCallback)
+              this.handleAssistantToolUseInputs(message, tracker, wrappedCallback)
               break
             case 'result':
               wrappedCallback({
@@ -1335,7 +1447,8 @@ export class CloudbaseAgentService {
       try {
         const parsedInput = JSON.parse(toolInfo.inputJson)
         toolInfo.input = parsedInput
-        callback({ type: 'tool_use', name: toolInfo.name, input: parsedInput, id: toolId })
+        // Send input update (not a new tool_call) so frontend can merge
+        callback({ type: 'tool_input_update', name: toolInfo.name, input: parsedInput, id: toolId })
       } catch {
         // ignore
       }
@@ -1549,6 +1662,31 @@ export class CloudbaseAgentService {
           tracker.pendingToolCalls.delete(toolUseId)
           break
         }
+      }
+    }
+  }
+
+  /**
+   * 处理 assistant message 中 tool_use 块的完整 input。
+   *
+   * GLM 等非 Anthropic 模型不通过 content_block_delta / input_json_delta 流式传输工具参数，
+   * 而是在 content_block_start 时 input 为空（{}），然后在 assistant message 里包含完整 input。
+   * 此方法将完整 input 通过 tool_input_update 事件发送给前端，使前端能正确展示工具参数。
+   */
+  private handleAssistantToolUseInputs(msg: any, tracker: ToolCallTracker, callback: AgentCallback): void {
+    const content = msg.message?.content
+    if (!Array.isArray(content)) return
+    for (const block of content) {
+      if (block.type !== 'tool_use') continue
+      const toolId = block.id
+      if (!toolId) continue
+      // Only send input update if we have actual input (non-empty object) and the
+      // pending tool call still has an empty input (i.e. no input_json_delta was received)
+      const pendingTool = tracker.pendingToolCalls.get(toolId)
+      const hasInput = block.input && typeof block.input === 'object' && Object.keys(block.input).length > 0
+      if (hasInput && pendingTool && Object.keys(pendingTool.input).length === 0) {
+        pendingTool.input = block.input
+        callback({ type: 'tool_input_update', name: block.name || pendingTool.name, input: block.input, id: toolId })
       }
     }
   }

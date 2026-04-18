@@ -30,6 +30,10 @@ interface UseChatStreamOptions {
   wasAtBottomRef?: React.RefObject<boolean>
 }
 
+// ─── Return type (exported for parent components) ─────────────────────
+
+export type ChatStreamReturn = ReturnType<typeof useChatStream>
+
 // ─── Hook ─────────────────────────────────────────────────────────────
 
 export function useChatStream(taskId: string, options: UseChatStreamOptions = {}) {
@@ -176,6 +180,23 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
         }
 
         case 'tool_call_update': {
+          // Input update (from content_block_stop): merge input into existing tool_call part
+          if (u.input !== undefined && u.result === undefined) {
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== assistantMsgId) return m
+                const prevParts = m.parts || []
+                return {
+                  ...m,
+                  parts: prevParts.map((p) =>
+                    p.type === 'tool_call' && p.toolCallId === u.toolCallId ? { ...p, input: u.input } : p,
+                  ),
+                }
+              }),
+            )
+            break
+          }
+          // Result update: add tool_result part
           setMessages((prev) =>
             prev.map((m) => {
               if (m.id !== assistantMsgId) return m
@@ -209,6 +230,10 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
             toolName: u.toolName,
             input: u.input || {},
           })
+          break
+
+        case 'ask_user':
+          phaseRef.current = 'waiting_for_interaction'
           break
 
         case 'artifact':
@@ -609,6 +634,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
   /** Reconnect to an ongoing agent stream after page refresh. */
   const reconnectToStream = useCallback(
     async (assistantMsgId: string) => {
+      if (phaseRef.current !== 'idle') return
       // Add a placeholder agent message if not already present
       setMessages((prev) => {
         if (prev.some((m) => m.id === assistantMsgId)) return prev
@@ -635,6 +661,28 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
     },
     [enterStreaming, exitStreaming, readSSEStream, setMessages, taskId],
   )
+
+  /** Cancel the current session/agent run via ACP. */
+  const cancelSession = useCallback(async () => {
+    try {
+      await fetch('/api/agent/acp', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/cancel',
+          id: Date.now(),
+          params: { sessionId: taskId },
+        }),
+      })
+      phaseRef.current = 'idle'
+      setIsSending(false)
+      setIsStreamingResponse(false)
+    } catch (err) {
+      console.error('Failed to cancel session:', err)
+    }
+  }, [taskId])
 
   // ════════════════════════════════════════════════════════════════════
   // Public API
@@ -663,11 +711,15 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
     canFetchMessages,
     phaseRef,
 
+    // Options ref (allows child components to inject scrollToBottom etc.)
+    optionsRef,
+
     // Operations
     sendInitialPrompt,
     sendMessage,
     answerQuestion,
     confirmTool,
     reconnectToStream,
+    cancelSession,
   }
 }

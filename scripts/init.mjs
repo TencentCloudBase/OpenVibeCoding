@@ -1102,6 +1102,16 @@ async function main() {
     log('使用 CloudBase 数据库，集合将在首次访问时自动创建', 'success')
   }
 
+  // Step 11: Install Skills
+  logSection('安装 Skills')
+  const installSkillsResult = runCommandSafe('sh scripts/install-skills.sh')
+  if (installSkillsResult.success) {
+    log('Skills 安装完成', 'success')
+  } else {
+    log('Skills 安装失败（可选步骤，不影响启动）', 'warn')
+    log('可手动运行: sh scripts/install-skills.sh', 'info')
+  }
+
   // Done!
   console.log('')
   console.log(`${colors.bright}${colors.green}╔══════════════════════════════════════════════╗${colors.reset}`)

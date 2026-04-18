@@ -10,8 +10,10 @@ import {
   type InitializeResult,
   type SessionNewResult,
   type SessionPromptParams,
+  type AgentCallback,
+  type AgentCallbackMessage,
 } from '@coder/shared'
-import { cloudbaseAgentService, getSupportedModels } from '../agent/cloudbase-agent.service.js'
+import { CloudbaseAgentService, cloudbaseAgentService, getSupportedModels } from '../agent/cloudbase-agent.service.js'
 import { persistenceService } from '../agent/persistence.service.js'
 import { getAgentRun } from '../agent/agent-registry.js'
 import { loadConfig } from '../config/store.js'
@@ -184,47 +186,6 @@ acp.delete('/conversation/:conversationId', async (c) => {
   return c.json({ status: 'success' })
 })
 
-// ─── Chat Endpoint (SSE) ───────────────────────────────────────────────────
-
-/**
- * POST /api/agent/chat
- *
- * 简单的聊天端点，返回 SSE 流式响应
- */
-acp.post('/chat', async (c) => {
-  const body = await c.req.json<{ prompt: string; conversationId?: string; model?: string; mode?: string }>()
-  const { prompt, conversationId, model, mode } = body
-
-  const { envId, userId, credentials: userCredentials } = c.get('userEnv')!
-  if (!envId) {
-    return c.json({ error: 'CloudBase environment not bound' }, 400)
-  }
-
-  const actualConversationId = conversationId || uuidv4()
-
-  // Resolve mode: from request body, or from existing task record
-  let taskMode = mode as 'default' | 'coding' | undefined
-  if (!taskMode && conversationId) {
-    try {
-      const task = await getDb().tasks.findById(conversationId)
-      if (task?.mode === 'coding') taskMode = 'coding'
-    } catch {
-      // ignore
-    }
-  }
-
-  const { turnId } = await cloudbaseAgentService.chatStream(prompt, null, {
-    conversationId: actualConversationId,
-    envId,
-    userId,
-    userCredentials,
-    model,
-    mode: taskMode,
-  })
-
-  return observeStream(c, null, actualConversationId, turnId, envId, userId)
-})
-
 // ─── ACP JSON-RPC 2.0 Endpoint ─────────────────────────────────────────────
 
 /**
@@ -394,7 +355,6 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
   } catch {
     // write failure doesn't affect main flow
   }
-
   // Resolve task mode
   let taskMode: 'default' | 'coding' | undefined
   try {
@@ -404,19 +364,19 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
     // ignore
   }
 
-  // Launch agent in background and observe via SSE
-  const { turnId } = await cloudbaseAgentService.chatStream(effectivePrompt, null, {
-    conversationId: sessionId,
-    envId,
-    userId,
-    userCredentials,
-    model: selectedModel,
-    askAnswers: params.askAnswers,
-    toolConfirmation: params.toolConfirmation,
-    mode: taskMode,
+  // Launch agent with liveCallback for real-time SSE push
+  return observeStreamWithLiveCallback(c, id, sessionId, envId, userId, async (callback) => {
+    return cloudbaseAgentService.chatStream(effectivePrompt, callback, {
+      conversationId: sessionId,
+      envId,
+      userId,
+      userCredentials,
+      model: selectedModel,
+      askAnswers: params.askAnswers,
+      toolConfirmation: params.toolConfirmation,
+      mode: taskMode,
+    })
   })
-
-  return observeStream(c, id, sessionId, turnId, envId, userId)
 }
 
 // ─── Observe Stream (SSE replay + poll) ──────────────────────────────────────
@@ -511,11 +471,142 @@ async function observeStream(
     }
     await stream.writeSSE({ data: '[DONE]' })
 
-    // 4. Cleanup stream events — messages are already persisted to DB,
-    //    stream events are only needed for SSE replay and can be safely removed.
-    persistenceService.cleanupStreamEvents(sessionId, turnId).catch(() => {
-      // Non-critical
+    // 4. Cleanup stream events — only if agent is no longer running.
+    // If agent is still running (client disconnected mid-stream),
+    // keep events in DB for reconnection via GET /observe/:sessionId.
+    const runAfterDone = getAgentRun(sessionId)
+    if (!runAfterDone || runAfterDone.status !== 'running') {
+      persistenceService.cleanupStreamEvents(sessionId, turnId).catch(() => {
+        // Non-critical
+      })
+    }
+  })
+}
+
+// ─── Observe Stream with Live Push (real-time SSE) ──────────────────────────
+
+/**
+ * Like `observeStream`, but additionally passes a `liveCallback` to `chatStream`
+ * for real-time SSE push. The poll loop serves as a safety net for completion
+ * detection and any events the liveCallback might have missed.
+ *
+ * Used by `session/prompt` and `POST /chat` where we launch the agent.
+ * NOT used by `GET /observe/:sessionId` (reconnection — poll-only).
+ */
+async function observeStreamWithLiveCallback(
+  c: any,
+  rpcId: number | string | null,
+  sessionId: string,
+  envId: string,
+  userId: string,
+  chatStreamFn: (callback: AgentCallback) => Promise<{ turnId: string; alreadyRunning: boolean }>,
+): Promise<Response> {
+  return streamSSE(c, async (stream) => {
+    let lastSeq = -1
+    let streamClosed = false
+    const POLL_INTERVAL = 500
+    const MAX_POLL_DURATION = 10 * 60 * 1000
+
+    stream.onAbort(() => {
+      streamClosed = true
     })
+
+    // ── Build liveCallback: real-time SSE push ────────────────
+    const liveCallback: AgentCallback = (msg: AgentCallbackMessage, seq?: number) => {
+      if (streamClosed || stream.closed || stream.aborted) return
+
+      const acpEvent = CloudbaseAgentService.convertToSessionUpdate(msg, sessionId)
+      if (!acpEvent) return
+
+      // Track seq for deduplication against poll loop
+      if (seq !== undefined) {
+        lastSeq = Math.max(lastSeq, seq)
+      }
+
+      try {
+        stream.writeSSE({
+          data: JSON.stringify({
+            jsonrpc: '2.0',
+            method: 'session/update',
+            params: { sessionId, update: acpEvent },
+          }),
+        })
+      } catch {
+        streamClosed = true
+      }
+    }
+
+    // ── Launch agent with liveCallback ────────────────────────
+    const { turnId, alreadyRunning } = await chatStreamFn(liveCallback)
+
+    // ── Replay existing events if agent was already running ──
+    // (liveCallback won't fire for already-running agents)
+    if (alreadyRunning) {
+      try {
+        const existingEvents = await persistenceService.getStreamEvents(sessionId, turnId)
+        for (const evt of existingEvents) {
+          if (evt.seq <= lastSeq) continue
+          await stream.writeSSE({
+            data: JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: { sessionId, update: evt.event },
+            }),
+          })
+          lastSeq = Math.max(lastSeq, evt.seq)
+        }
+      } catch {
+        // Replay failure is non-fatal
+      }
+    }
+
+    // ── Poll loop (safety net for missed events + completion) ─
+    const startTime = Date.now()
+    while (Date.now() - startTime < MAX_POLL_DURATION) {
+      if (stream.closed || stream.aborted) break
+
+      const run = getAgentRun(sessionId)
+      const isDone = !run || run.status !== 'running'
+
+      try {
+        // Only fetch events after what we've already delivered
+        const newEvents = await persistenceService.getStreamEvents(sessionId, turnId, lastSeq)
+        for (const evt of newEvents) {
+          await stream.writeSSE({
+            data: JSON.stringify({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: { sessionId, update: evt.event },
+            }),
+          })
+          lastSeq = Math.max(lastSeq, evt.seq)
+        }
+
+        if (isDone && newEvents.length === 0) break
+      } catch {
+        if (isDone) break
+      }
+
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL))
+    }
+
+    // ── Send final response + [DONE] ─────────────────────────
+    if (rpcId !== null) {
+      const run = getAgentRun(sessionId)
+      const stopReason = run?.status === 'error' ? 'error' : 'end_turn'
+      await stream.writeSSE({ data: JSON.stringify(rpcOk(rpcId, { stopReason })) })
+    }
+    await stream.writeSSE({ data: '[DONE]' })
+
+    // Cleanup stream events — only if agent is no longer running.
+    // If agent is still running (client disconnected mid-stream),
+    // keep events in DB for reconnection via GET /observe/:sessionId.
+    const runAfterDone = getAgentRun(sessionId)
+    if (!runAfterDone || runAfterDone.status !== 'running') {
+      persistenceService.cleanupStreamEvents(sessionId, turnId).catch(() => {
+        // Non-critical
+      })
+    }
   })
 }
 
@@ -529,11 +620,19 @@ async function handleSessionCancel(
 
   const { envId, userId, credentials: userCredentials } = c.get('userEnv')!
 
-  if (sessionId && envId) {
-    // 获取最新消息并更新状态为 cancel
-    const latestStatus = await persistenceService.getLatestRecordStatus(sessionId, userId, envId)
-    if (latestStatus && (latestStatus.status === 'pending' || latestStatus.status === 'streaming')) {
-      await persistenceService.updateRecordStatus(latestStatus.recordId, 'cancel')
+  if (sessionId) {
+    // Abort the running agent process
+    const run = getAgentRun(sessionId)
+    if (run && run.status === 'running') {
+      run.abortController.abort()
+    }
+
+    if (envId) {
+      // Update DB record status to cancel
+      const latestStatus = await persistenceService.getLatestRecordStatus(sessionId, userId, envId)
+      if (latestStatus && (latestStatus.status === 'pending' || latestStatus.status === 'streaming')) {
+        await persistenceService.updateRecordStatus(latestStatus.recordId, 'cancel')
+      }
     }
   }
 

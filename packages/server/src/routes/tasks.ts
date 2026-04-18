@@ -92,10 +92,14 @@ async function runCommandInScfSandbox(
   }
 }
 
-async function getScfSandbox(task: { sandboxId: string | null }, envId: string): Promise<SandboxInstance | null> {
+async function getScfSandbox(
+  task: { sandboxId: string | null; sandboxSessionId?: string | null },
+  envId: string,
+): Promise<SandboxInstance | null> {
   if (!task.sandboxId) return null
   try {
-    return (await scfSandboxManager.getExisting(task.sandboxId, envId)) ?? null
+    const scfSessionId = task.sandboxSessionId || envId
+    return (await scfSandboxManager.getExisting(task.sandboxId, scfSessionId)) ?? null
   } catch {
     return null
   }
@@ -296,6 +300,20 @@ tasksRouter.post('/', async (c) => {
   const taskId = body.id || nanoid(12)
   const now = Date.now()
 
+  // Compute sandbox config based on WORKSPACE_ISOLATION env var
+  const sandboxMode = process.env.WORKSPACE_ISOLATION === 'isolated' ? 'isolated' : 'shared'
+  let sandboxSessionId: string | null = null
+  let sandboxCwd: string | null = null
+  try {
+    const resource = await getDb().userResources.findByUserId(session.user.id)
+    if (resource?.envId) {
+      sandboxSessionId = sandboxMode === 'shared' ? resource.envId : taskId
+      sandboxCwd = sandboxMode === 'shared' ? `/tmp/workspace/${resource.envId}/${taskId}` : `/tmp/workspace/${taskId}`
+    }
+  } catch {
+    // Non-critical: sandbox config will be computed at agent launch time
+  }
+
   await getDb().tasks.create({
     id: taskId,
     userId: session.user.id,
@@ -315,6 +333,9 @@ tasksRouter.post('/', async (c) => {
     error: null,
     branchName: null,
     sandboxId: null,
+    sandboxSessionId,
+    sandboxCwd,
+    sandboxMode,
     agentSessionId: null,
     sandboxUrl: null,
     previewUrl: null,
@@ -382,7 +403,8 @@ tasksRouter.delete('/:taskId', requireUserEnv, async (c) => {
   // Try to clean up via sandbox (rm -rf workspace dir + git archive sync); fall back to direct API delete
   ;(async () => {
     try {
-      const sandbox = await scfSandboxManager.getExisting(taskId, envId).catch(() => null)
+      const scfSessionId = existing.sandboxSessionId || envId
+      const sandbox = await scfSandboxManager.getExisting(taskId, scfSessionId).catch(() => null)
       if (sandbox) {
         await deleteConversationViaSandbox(sandbox, envId, taskId)
       }

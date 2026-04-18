@@ -1,4 +1,5 @@
 import type { Task } from '@coder/shared'
+import type { ChatStreamReturn } from '@/hooks/use-chat-stream'
 
 // ─── Message Types ────────────────────────────────────────────────────
 
@@ -61,10 +62,8 @@ export interface TaskChatProps {
   task: Task
   /** 当 ACP 对话轮次完成时（stream DONE）通知父组件刷新 task */
   onStreamComplete?: () => void
-  /** 从 URL 参数传入的初始 prompt，存在时自动发起 ACP 请求 */
-  initialPrompt?: string
-  /** 初始 prompt 已被消费后回调，父组件应清除 initialPrompt 防止 remount 时重复触发 */
-  onInitialPromptConsumed?: () => void
+  /** 由父组件提供的 chat stream 状态（提升到 TaskDetails 以避免 remount 丢失） */
+  chatStream?: ChatStreamReturn
   /** 只读模式：隐藏输入框、禁止流式交互，仅展示消息 */
   readOnly?: boolean
   /** 消息 API 基础路径，默认 ''。管理员查看时设为 '/api/admin' */

@@ -321,7 +321,7 @@ export async function createSandboxMcpClient(deps: SandboxMcpDeps): Promise<{
 
   const server = new McpServer({ name: 'cloudbase-sandbox-proxy', version: '2.0.0' })
 
-  const SKIP = new Set(['logout'])
+  const SKIP = new Set(['logout', 'interactiveDialog'])
 
   for (const tool of cloudbaseTools) {
     if (SKIP.has(tool.name)) continue

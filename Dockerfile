@@ -24,6 +24,10 @@ COPY . .
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN pnpm --filter @coder/shared build && pnpm build
 
+# Install bundled skills (CloudBase guidelines, etc.)
+# scripts/ already copied via COPY . .
+RUN sh scripts/install-skills.sh
+
 # ── Stage 2: Production ──────────────────────────────────────────────────────
 FROM node:22-slim
 
@@ -48,6 +52,10 @@ RUN CI=true pnpm install --no-frozen-lockfile --prod --ignore-scripts
 COPY --from=build /app/packages/server/dist ./packages/server/dist
 COPY --from=build /app/packages/web/dist ./packages/web/dist
 COPY --from=build /app/packages/shared/dist ./packages/shared/dist
+
+# Copy bundled skills directly into packages/server/skills/ (no symlink needed)
+# skill-loader-override reads CODEBUDDY_BUNDLED_SKILLS_DIR = packages/server/skills
+COPY --from=build /app/.agents/skills/cloudbase ./packages/server/skills/cloudbase
 
 # Point shared exports to built dist (source .ts files not available at runtime)
 RUN sed -i 's|./src/index.ts|./dist/index.js|g' packages/shared/package.json

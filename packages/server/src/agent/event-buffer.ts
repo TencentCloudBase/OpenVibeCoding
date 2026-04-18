@@ -24,6 +24,10 @@ export class EventBuffer {
   ) {}
 
   push(event: ExtendedSessionUpdate): void {
+    this.pushAndGetSeq(event)
+  }
+
+  pushAndGetSeq(event: ExtendedSessionUpdate): number {
     const seq = getNextSeq(this.conversationId)
     this.buffer.push({
       eventId: uuidv4(),
@@ -43,6 +47,8 @@ export class EventBuffer {
     } else if (!this.flushTimer) {
       this.flushTimer = setTimeout(() => this.flush(), this.FLUSH_INTERVAL_MS)
     }
+
+    return seq
   }
 
   flush(): void {

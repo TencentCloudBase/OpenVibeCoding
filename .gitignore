@@ -77,3 +77,11 @@ packages/dashboard/vite.config.d.ts
 packages/dashboard/vite.config.js
 dist
 cloudbaserc.json
+
+# debug JSONL snapshots
+debug-jsonl/
+
+# skills (installed via scripts/install-skills.sh, not committed)
+.agents/
+packages/server/skills/cloudbase
+skills-lock.json
