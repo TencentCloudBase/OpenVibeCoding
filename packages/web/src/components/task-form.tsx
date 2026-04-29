@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { Loader2, ArrowUp, Settings, X, Cable, Users, Globe } from 'lucide-react'
+import { Loader2, ArrowUp, Settings, X, Cable, Users, Globe, Code } from 'lucide-react'
 import { CodeBuddy, ProviderLogos, type ProviderKey } from '@/components/logos'
 // import { Claude, Codex, Copilot, Cursor, Gemini, OpenCode } from '@/components/logos'
 import { setInstallDependencies, setMaxDuration, setKeepAlive, setEnableBrowser } from '@/lib/utils/cookies'
@@ -46,6 +46,7 @@ interface TaskFormProps {
     maxDuration: number
     keepAlive: boolean
     enableBrowser: boolean
+    mode: 'default' | 'coding'
   }) => void
   isSubmitting: boolean
   selectedOwner: string
@@ -131,6 +132,7 @@ export function TaskForm({
   const [prompt, setPrompt] = useAtom(taskPromptAtom)
   const selectedAgent = 'codebuddy'
   const [selectedModel, setSelectedModel] = useState<string>(DEFAULT_MODELS.codebuddy)
+  const [taskMode, setTaskMode] = useState<'default' | 'coding'>('default')
   const [codebuddyModels, setCodebuddyModels] = useState<ModelInfo[]>([{ id: 'glm-5.0', name: 'GLM 5.0' }])
   const [repos, setRepos] = useAtom(githubReposAtomFamily(selectedOwner))
   const [, setLoadingRepos] = useState(false)
@@ -306,6 +308,7 @@ export function TaskForm({
         maxDuration,
         keepAlive,
         enableBrowser,
+        mode: taskMode,
       })
       return
     }
@@ -353,6 +356,7 @@ export function TaskForm({
       maxDuration,
       keepAlive,
       enableBrowser,
+      mode: taskMode,
     })
   }
 
@@ -391,10 +395,24 @@ export function TaskForm({
             />
           </div>
 
-          {/* Agent/Model selector (fixed to codebuddy) */}
+          {/* Mode + Agent/Model selector */}
           <div className="p-4">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 flex-1 min-w-0">
+                {/* Mode toggle */}
+                <button
+                  type="button"
+                  onClick={() => setTaskMode(taskMode === 'default' ? 'coding' : 'default')}
+                  className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full border transition-colors ${
+                    taskMode === 'coding'
+                      ? 'bg-primary/10 text-primary border-primary/30'
+                      : 'text-muted-foreground border-border hover:border-primary/30'
+                  }`}
+                >
+                  <Code className="h-3 w-3" />
+                  {taskMode === 'coding' ? 'Coding' : 'Default'}
+                </button>
+                <span className="text-muted-foreground/50">·</span>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground px-2 h-8">
                   {(() => {
                     const agent = CODING_AGENTS.find((a) => a.value === selectedAgent)

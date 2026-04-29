@@ -571,9 +571,24 @@ export function TaskChat({
     ),
   }
 
+  const isCodingMode = task.mode === 'coding'
+
   // ─── Tab content ───────────────────────────────────────────────────
 
   const renderTabContent = () => {
+    if (activeTab === 'preview' && isCodingMode) {
+      return (
+        <div className="flex-1 overflow-hidden -mx-3 -mt-3 relative">
+          <iframe
+            src={`/api/tasks/${taskId}/preview/`}
+            className="w-full h-full border-0"
+            title="Project Preview"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          />
+        </div>
+      )
+    }
+
     if (activeTab === 'cloud') {
       return (
         <div className="flex-1 overflow-hidden -mx-3 -mt-3">
@@ -1154,6 +1169,14 @@ export function TaskChat({
           >
             Deployments
           </button>
+          {isCodingMode && (
+            <button
+              onClick={() => setActiveTab('preview')}
+              className={`text-sm font-semibold px-2 py-1 rounded transition-colors whitespace-nowrap flex-shrink-0 ${currentTab === 'preview' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              Preview
+            </button>
+          )}
           {!readOnly && (
             <button
               onClick={() => setActiveTab('cloud')}

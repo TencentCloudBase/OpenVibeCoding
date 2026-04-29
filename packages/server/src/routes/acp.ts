@@ -186,35 +186,6 @@ acp.delete('/conversation/:conversationId', async (c) => {
   return c.json({ status: 'success' })
 })
 
-// ─── Chat Endpoint (SSE) ───────────────────────────────────────────────────
-
-/**
- * POST /api/agent/chat
- *
- * 简单的聊天端点，返回 SSE 流式响应
- */
-acp.post('/chat', async (c) => {
-  const body = await c.req.json<{ prompt: string; conversationId?: string; model?: string }>()
-  const { prompt, conversationId, model } = body
-
-  const { envId, userId, credentials: userCredentials } = c.get('userEnv')!
-  if (!envId) {
-    return c.json({ error: 'CloudBase environment not bound' }, 400)
-  }
-
-  const actualConversationId = conversationId || uuidv4()
-
-  return observeStreamWithLiveCallback(c, null, actualConversationId, envId, userId, async (callback) => {
-    return cloudbaseAgentService.chatStream(prompt, callback, {
-      conversationId: actualConversationId,
-      envId,
-      userId,
-      userCredentials,
-      model,
-    })
-  })
-})
-
 // ─── ACP JSON-RPC 2.0 Endpoint ─────────────────────────────────────────────
 
 /**
@@ -384,6 +355,14 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
   } catch {
     // write failure doesn't affect main flow
   }
+  // Resolve task mode
+  let taskMode: 'default' | 'coding' | undefined
+  try {
+    const task = await getDb().tasks.findById(sessionId)
+    if (task?.mode === 'coding') taskMode = 'coding'
+  } catch {
+    // ignore
+  }
 
   // Launch agent with liveCallback for real-time SSE push
   return observeStreamWithLiveCallback(c, id, sessionId, envId, userId, async (callback) => {
@@ -395,6 +374,7 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
       model: selectedModel,
       askAnswers: params.askAnswers,
       toolConfirmation: params.toolConfirmation,
+      mode: taskMode,
     })
   })
 }
