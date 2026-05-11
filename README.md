@@ -220,6 +220,77 @@ TCR_REPO_NAME=sandbox
 TCR_TAG=latest
 ```
 
+## OpenCode 模型配置
+
+项目内置 OpenCode ACP runtime。如果前端需要使用 OpenCode agent，需要先配置至少一个
+provider（model 提供商）。
+
+### 前置：安装 opencode CLI
+
+```bash
+npm i -g opencode-ai
+# 验证
+opencode --version
+```
+
+### 一键配置
+
+```bash
+pnpm opencode:setup
+```
+
+该命令会：
+
+1. 从 [models.dev](https://models.dev)（opencode 自身使用的 catalog）拉取 118+ provider 列表
+2. 引导选择要启用的 provider（deepseek / moonshot / openai / anthropic / zhipuai / …）
+3. 提示输入对应的 API Key（如 `DEEPSEEK_API_KEY`）
+4. 选择默认模型
+5. 把 provider 启用声明写入 `.opencode/opencode.json`（空对象风格，与 opencode 官方推荐一致）
+6. 把 API Key 写入 `packages/server/.env`
+
+### 生成结果示例
+
+```jsonc
+// .opencode/opencode.json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-chat",
+  "provider": {
+    "deepseek": {},
+    "moonshot": {}
+  }
+}
+```
+
+```bash
+# packages/server/.env 会追加 API Key
+DEEPSEEK_API_KEY=sk-***
+MOONSHOT_API_KEY=sk-***
+```
+
+`provider.<id>: {}` 表示启用该 provider，其 `npm`/`api`/`name`/`models` 等元数据由 opencode
+运行时从 models.dev 自动获取。这样做的好处：
+
+- 与 opencode 官方行为完全一致，不用冗余维护字段
+- models.dev 上游新增模型时自动生效，无需改项目配置
+
+### 高级：自定义 provider / 覆盖字段
+
+如果需要：
+
+- 非 catalog 内置的 provider（如内网 LLM 网关、本地 Ollama）
+- 覆盖 catalog 默认的 `baseURL` / `headers`
+- 用 `whitelist` / `blacklist` 限制要展示的模型
+- 配置 variants（如 Anthropic 的 thinking 预算）
+
+请参考 `.opencode/opencode.example.json` 和 [OpenCode 官方 providers 文档](https://opencode.ai/docs/zh-cn/providers/)
+直接手动编辑 `.opencode/opencode.json`。setup 脚本只覆盖最常用的"启用 + 灌 key + 选默认
+model"三件事。
+
+### 重新配置 / 新增 provider
+
+`pnpm opencode:setup` 幂等，可多次运行。已存在的 provider / env key 不会被重复询问。
+
 ## 常用命令
 
 ```bash
@@ -248,6 +319,9 @@ pnpm db:studio        # 打开 Drizzle Studio
 
 # TCR
 pnpm setup:tcr        # 配置容器镜像服务
+
+# OpenCode
+pnpm opencode:setup   # 配置 OpenCode provider 和模型
 ```
 
 ## 技术栈

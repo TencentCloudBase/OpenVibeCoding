@@ -1,13 +1,13 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "mimo/mimo-v2.5-pro",
+  "model": "deepseek/deepseek-v4-flash",
   "provider": {
     "mimo": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "MiMo",
       "options": {
-        "baseURL": "{env:OPENAI_API_ENDPOINT}",
-        "apiKey": "{env:OPENAI_API_KEY}"
+        "baseURL": "{env:MIMO_API_ENDPOINT}",
+        "apiKey": "{env:MIMO_API_KEY}"
       },
       "models": {
         "mimo-v2.5-pro": {
@@ -18,8 +18,13 @@
             "output": 131072
           },
           "modalities": {
-            "input": ["text", "image"],
-            "output": ["text"]
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
           }
         },
         "mimo-v2.5": {
@@ -30,8 +35,12 @@
             "output": 131072
           },
           "modalities": {
-            "input": ["text"],
-            "output": ["text"]
+            "input": [
+              "text"
+            ],
+            "output": [
+              "text"
+            ]
           }
         },
         "mimo-v2.5-tts": {
@@ -42,8 +51,12 @@
             "output": 4096
           },
           "modalities": {
-            "input": ["text"],
-            "output": ["audio"]
+            "input": [
+              "text"
+            ],
+            "output": [
+              "audio"
+            ]
           }
         },
         "mimo-v2.5-tts-voiceclone": {
@@ -54,8 +67,12 @@
             "output": 4096
           },
           "modalities": {
-            "input": ["text"],
-            "output": ["audio"]
+            "input": [
+              "text"
+            ],
+            "output": [
+              "audio"
+            ]
           }
         },
         "mimo-v2.5-tts-voicedesign": {
@@ -66,11 +83,16 @@
             "output": 4096
           },
           "modalities": {
-            "input": ["text"],
-            "output": ["audio"]
+            "input": [
+              "text"
+            ],
+            "output": [
+              "audio"
+            ]
           }
         }
       }
-    }
+    },
+    "deepseek": {}
   }
 }

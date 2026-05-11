@@ -19,6 +19,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "setup:tcr": "node scripts/setup-tcr.mjs",
+    "opencode:setup": "node scripts/opencode-setup.mjs",
     "prepare": "husky"
   },
   "devDependencies": {

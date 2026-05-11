@@ -39,6 +39,7 @@ import { persistenceService } from '../persistence.service.js'
 import { CloudbaseAgentService } from '../cloudbase-agent.service.js'
 import { getAcpTransportFactory, getResolvedBin, type AcpTransport } from './acp-transport.js'
 import { getOpencodeConfigDir } from './opencode-installer.js'
+import { resolveModels } from './opencode-catalog.js'
 import { registerPending, resolvePending, rejectPendingForConversation } from './pending-permission-registry.js'
 import { resolvePendingQuestion, rejectPendingQuestionsForConversation } from './pending-question-registry.js'
 import { OpencodeMessageBuilder, findLastRecordIds, buildHistoryContextPrompt } from './opencode-message-builder.js'
@@ -148,32 +149,18 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
   }
 
   async getSupportedModels(): Promise<ModelInfo[]> {
-    // Read model list from .opencode/opencode.json (the authoritative config file)
-    try {
-      const configPath = path.join(getOpencodeConfigDir(), 'opencode.json')
-      const raw = fs.readFileSync(configPath, 'utf-8')
-      const config = JSON.parse(raw) as {
-        provider?: Record<string, { name?: string; models?: Record<string, { name?: string }> }>
-      }
-      const models: ModelInfo[] = []
-      for (const [providerKey, providerDef] of Object.entries(config.provider ?? {})) {
-        const vendorName =
-          typeof providerDef.name === 'string' && !providerDef.name.startsWith('{env:')
-            ? providerDef.name
-            : process.env.OPENCODE_PROVIDER_NAME || providerKey
-        for (const [modelKey, modelDef] of Object.entries(providerDef.models ?? {})) {
-          models.push({
-            id: `${providerKey}/${modelKey}`,
-            name: modelDef.name || modelKey,
-            vendor: vendorName,
-          })
-        }
-      }
-      if (models.length > 0) return models
-    } catch {
-      // fall through to env-based fallback
-    }
-    // Fallback: single model from env
+    // 合并 models.dev catalog + .opencode/opencode.json 的 provider override，按 env 过滤。
+    // 行为对齐 opencode 自身：
+    //   - provider 写 `{}` 即启用（catalog 已有的 provider 自动获得 name/npm/api/models）
+    //   - provider 级 env（如 DEEPSEEK_API_KEY）命中则算可用
+    //   - options.apiKey 中的 {env:VAR} 占位符会被解析
+    //   - whitelist/blacklist/enabled_providers/disabled_providers 支持
+    const models = await resolveModels({
+      opencodeConfigDir: getOpencodeConfigDir(),
+      env: process.env,
+    })
+    if (models.length > 0) return models
+    // 兜底：env 默认模型（保留旧行为，避免前端空列表）
     const defaultModel = DEFAULT_OPENCODE_MODEL
     const vendor = process.env.OPENCODE_PROVIDER_NAME || 'Custom'
     return [{ id: defaultModel, name: defaultModel.split('/').pop() || defaultModel, vendor }]

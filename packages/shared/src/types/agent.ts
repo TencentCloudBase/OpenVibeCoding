@@ -98,6 +98,19 @@ export interface ModelInfo {
   supportsReasoning?: boolean
   supportsToolCall?: boolean
   tags?: string[]
+  /**
+   * OpenCode/models.dev 对齐的可选富字段。来自 models.dev catalog 合并结果，
+   * 前端可用于展示上下文长度、能力标记、成本等。CodeBuddy runtime 暂不填充。
+   */
+  contextLimit?: number
+  outputLimit?: number
+  inputModalities?: Array<'text' | 'image' | 'audio' | 'video' | 'pdf'>
+  outputModalities?: Array<'text' | 'image' | 'audio' | 'video' | 'pdf'>
+  toolCall?: boolean
+  reasoning?: boolean
+  attachment?: boolean
+  cost?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+  status?: 'alpha' | 'beta' | 'deprecated'
   [key: string]: unknown
 }
 

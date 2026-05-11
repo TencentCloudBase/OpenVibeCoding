@@ -6,7 +6,7 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "MiMo",
       "options": {
-        "baseURL": "{env:OPENAI_API_ENDPOINT}",
+        "baseURL": "{env:MIMO_API_ENDPOINT}",
         "apiKey": "{env:MIMO_API_KEY}"
       },
       "models": {
