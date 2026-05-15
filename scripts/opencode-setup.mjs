@@ -22,6 +22,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const CloudBaseManager = require('../packages/server/node_modules/@cloudbase/manager-node')
+let managerApp = null
 
 // ─── Constants ───────────────────────────────────────────────────────────
 
@@ -447,6 +452,9 @@ function listProviders(catalog, existingProvider, envNow) {
       }
     })
     .sort((a, b) => {
+      // cloudbase 始终排在第一位
+      if (a.id === 'cloudbase') return -1
+      if (b.id === 'cloudbase') return 1
       // 已启用的排在前面，便于识别
       if (a.alreadyEnabled !== b.alreadyEnabled) return a.alreadyEnabled ? -1 : 1
       return a.id.localeCompare(b.id)
@@ -591,6 +599,62 @@ async function pickDefaultModel(catalog, selected, currentDefault) {
   return candidates[defaultIdx].id
 }
 
+function getManager(envId, secretId, secretKey) {
+  if (managerApp) return managerApp
+  managerApp = new CloudBaseManager({
+    envId,
+    secretId,
+    secretKey
+  })
+  return managerApp
+}
+
+async function describeAIModes(envId, secretId, secretKey) {
+  try {
+    const manager = getManager(envId, secretId, secretKey)
+    const commonService = manager.commonService('tcb', '2018-06-08')
+    const result = await commonService.call({
+      Action: 'DescribeAIModels',
+      Param: {
+        EnvId: envId,
+      },
+    })
+    return result?.AIModels || []
+  } catch (err) {
+    // Non-fatal: server-side SDK uses admin creds and bypasses rules.
+    console.error(
+      '[open code setup] Failed to describe ai models',
+      err instanceof Error ? err.message : err,
+    )
+  }
+}
+
+async function getCloudBaseModelConfig(envId, secretId, secretKey) {
+  const modelList = await describeAIModes(envId, secretId, secretKey)
+  let cloudBaseModels = {}
+  for (const it of modelList) {
+    if (it?.GroupName !== "cloudbase") {
+      continue;
+    }
+    for (const model of it?.Models){
+      cloudBaseModels[model.Model] ={
+        id : model.Model,
+        name : model.Model,
+      }
+    }
+  }
+
+  return {
+    id: "cloudbase",
+    env: ["CLOUDBASE_API_KEY"],
+    npm: "",
+    api: `https://${envId}.api.tcloudbasegateway.com/v1/ai/cloudbase`,
+    name: "cloudbase",
+    doc:"",
+    models: cloudBaseModels
+  }
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -609,9 +673,16 @@ async function main() {
     process.exit(1)
   }
 
+  const envNow = parseEnvFile(SERVER_ENV_FILE)
+  const envId = envNow['TCB_ENV_ID']
+  const secretId = envNow['TCB_SECRET_ID']
+  const secretKey = envNow['TCB_SECRET_KEY']
+
+  // 添加 cloudbase 模型
+  catalog['cloudbase'] = await getCloudBaseModelConfig(envId, secretId, secretKey)
+
   // 2. 读现状
   const existing = readOpencodeJson()
-  const envNow = parseEnvFile(SERVER_ENV_FILE)
 
   // 3. 扫描已有 provider，识别缺失 env
   const existingRows = inspectExistingProviders(existing.provider, catalog, envNow)
