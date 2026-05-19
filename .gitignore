@@ -90,5 +90,6 @@ CodeBuddy Code_decompiled
 CodeBuddy Code_files
 decompiled
 decompiled-ui
+.plans/
 # opencode project-level config (auto-generated tool overrides)
 .opencode/tools/
