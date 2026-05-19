@@ -91,5 +91,14 @@ CodeBuddy Code_files
 decompiled
 decompiled-ui
 .plans/
+.cursor/
+
+# CocoIndex Code (ccc)
+.cocoindex_code/
+/.cocoindex_code/
+
+# CodeGraph
+.codegraph/
+
 # opencode project-level config (auto-generated tool overrides)
 .opencode/tools/
