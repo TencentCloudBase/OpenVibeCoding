@@ -660,26 +660,35 @@ async function getCloudBaseModelConfig(envId, secretId, secretKey) {
 async function main() {
   logSection('OpenCode Provider 配置')
 
-  // 1. 拉 catalog
-  log('拉取 models.dev catalog...', 'step')
-  let catalog
-  try {
-    catalog = await fetchCatalog()
-    log(`catalog 已拉取：${Object.keys(catalog).length} providers`, 'ok')
-  } catch (e) {
-    log(`拉取失败：${e.message}`, 'err')
-    console.log('')
-    console.log(`请检查网络或设置 ${colors.bold}MODELS_DEV_CATALOG_URL${colors.reset} env 指向镜像。`)
-    process.exit(1)
-  }
-
   const envNow = parseEnvFile(SERVER_ENV_FILE)
   const envId = envNow['TCB_ENV_ID']
   const secretId = envNow['TCB_SECRET_ID']
   const secretKey = envNow['TCB_SECRET_KEY']
 
-  // 添加 cloudbase 模型
-  catalog['cloudbase'] = await getCloudBaseModelConfig(envId, secretId, secretKey)
+  // 1. 拉 catalog
+  // log('拉取 models.dev catalog...', 'step')
+  let catalog = {}
+  // 默认不拉取第三方模型
+  // try {
+  //   catalog = await fetchCatalog()
+  //   log(`catalog 已拉取：${Object.keys(catalog).length} providers`, 'ok')
+  // } catch (e) {
+  //   log(`拉取失败：${e.message}`, 'err')
+  //   console.log('')
+  //   console.log(`请检查网络或设置 ${colors.bold}MODELS_DEV_CATALOG_URL${colors.reset} env 指向镜像。`)
+  //   process.exit(1)
+  // }
+
+  // 仅添加 cloudbase 模型
+  log('拉取 cloudbase 模型', 'step')
+  const cloudBaseModelConfig = await getCloudBaseModelConfig(envId, secretId, secretKey)
+
+  if (Object.keys(cloudBaseModelConfig.models).length === 0) {
+    logSection(`未配置 cloudbase 模型, 请前往 https://tcb.cloud.tencent.com/dev?envId=${envId}#/ai?tab=text-aiModel 开启模型配置` )
+    process.exit(1)
+  }
+
+  catalog['cloudbase'] = cloudBaseModelConfig
 
   // 2. 读现状
   const existing = readOpencodeJson()
@@ -714,11 +723,18 @@ async function main() {
   renderProviderTable(items)
 
   // 5. 用户选
-  const selected = await pickProviders(items)
-  if (selected.length === 0 && Object.keys(missingEnvUpdates).length === 0) {
-    log('没有任何变更，退出', 'info')
-    process.exit(0)
+  // const selected = await pickProviders(items)
+  // if (selected.length === 0 && Object.keys(missingEnvUpdates).length === 0) {
+  //   log('没有任何变更，退出', 'info')
+  //   process.exit(0)
+  // }
+  // 默认仅支持 cloudbase
+  let selected = []
+  const byId = new Map(items.map((it) => [it.id, it]))
+  if (byId.has("cloudbase")) {
+    selected.push(byId.get("cloudbase"))
   }
+
 
   // 6. 收 key（仅针对新选的 provider；missing 的已在 step 3a 处理）
   let envUpdates = { ...missingEnvUpdates }
@@ -747,7 +763,7 @@ async function main() {
   // 8. 构造新 opencode.json：从 catalog 取完整字段写入，保留已有 provider
   const nextProvider = { ...existing.provider }
   for (const it of selected) {
-    if (nextProvider[it.id]) continue // 已存在的不覆盖（用户可能手动调过）
+    // if (nextProvider[it.id]) continue // 已存在的不覆盖（用户可能手动调过）
     nextProvider[it.id] = buildProviderConfig(catalog, it.id)
   }
   const nextConfig = {
