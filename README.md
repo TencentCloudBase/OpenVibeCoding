@@ -10,6 +10,7 @@
 
 - [Setup 指南](docs/setup.md) — 初始化流程、环境变量、验证清单与排障
 - [系统架构](docs/architecture.md) — 系统分层、模块设计与关键数据流
+- [上游分叉与同步](docs/upstream-fork.md) — 硬分叉基线、merge 历史、下次同步命令
 
 ---
 
@@ -463,15 +464,18 @@ CODEBUDDY_USE_CUSTOM_MODELS=true
 
 ## 与上游的关系
 
-本项目 fork 自 Vercel 的 [coding-agent-template](https://github.com/vercel-labs/coding-agent-template)。主要差异：
+- 最初模板：[vercel-labs/coding-agent-template](https://github.com/vercel-labs/coding-agent-template)
+- **直接上游**：[TencentCloudBase/OpenVibeCoding](https://github.com/TencentCloudBase/OpenVibeCoding)（`origin`）
 
-|          | 上游           | 本项目                                     |
-| -------- | -------------- | ------------------------------------------ |
-| 架构     | Next.js 全栈   | Monorepo 前后端分离（React + Vite / Hono） |
-| 部署     | Vercel         | 腾讯云 CloudBase                           |
-| Sandbox  | Vercel Sandbox | 沙箱 infra（Stateful + TRW）               |
-| Agent    | 单一 runtime   | CodeBuddy / OpenCode / MiMo 多 runtime     |
-| 环境隔离 | 无             | shared / isolated / task 三级              |
+**硬分叉基线**（不变）：`43c3e6038d833481c2fd0d4d206f4a801de7a750`（2026-05-21，`feautre/env-pool` 合入点）。本线此后增加沙箱 infra，与上游 **不保证长期可 merge**。
+
+**最近一次上游同步**（2026-05-21）：`git merge origin/main`，已对齐至上游 `main` 的 `a878ddb`（CodeBuddy TokenHub、自定义模型、`codebuddy-setup`、agent 选项等）。完整记录见 [docs/upstream-fork.md](docs/upstream-fork.md)。
+
+|          | 上游 `main`（已 merge 部分） | 本线独有（`feature/stateful-infra`）     |
+| -------- | ---------------------------- | ---------------------------------------- |
+| Agent    | TokenHub、自定义模型、选项更新 | 同左（已并入）                           |
+| Sandbox  | 环境池 / 演进中              | 沙箱 infra（Stateful + TRW）、公开 TCR 默认 |
+| 实例策略 | shared / isolated / task     | + `SANDBOX_INSTANCE_MODE`、细粒度进度文案 |
 
 ---
 
