@@ -136,12 +136,8 @@ interface DiffData {
 }
 
 const CODING_AGENTS = [
-  { value: 'claude', label: 'Claude', icon: Claude },
-  { value: 'codex', label: 'Codex', icon: Codex },
-  { value: 'copilot', label: 'Copilot', icon: Copilot },
-  { value: 'cursor', label: 'Cursor', icon: Cursor },
-  { value: 'gemini', label: 'Gemini', icon: Gemini },
-  { value: 'opencode', label: 'opencode', icon: OpenCode },
+  { value: 'codebuddy', label: 'CodeBuddy', icon: CodeBuddy, runtime: 'codebuddy' },
+  { value: 'opencode', label: 'OpenCode', icon: OpenCode, runtime: 'opencode-acp' },
 ] as const
 
 const AGENT_MODELS = {
@@ -303,7 +299,7 @@ export function TaskDetails({
   const [showUnlinkRepoDialog, setShowUnlinkRepoDialog] = useState(false)
   const [isUnlinkingRepo, setIsUnlinkingRepo] = useState(false)
   const [personalGitInfo, setPersonalGitInfo] = useState<{ repoUrl: string; branchName: string } | null>(null)
-  const [selectedAgent, setSelectedAgent] = useState(task.selectedAgent || 'claude')
+  const [selectedAgent, setSelectedAgent] = useState(task.selectedAgent || 'codebuddy')
   const [selectedModel, setSelectedModel] = useState<string>(
     task.selectedModel || DEFAULT_MODELS[(task.selectedAgent as keyof typeof DEFAULT_MODELS) || 'claude'],
   )
@@ -311,6 +307,10 @@ export function TaskDetails({
   const [tryAgainMaxDuration, setTryAgainMaxDuration] = useState(task.maxDuration || maxSandboxDuration)
   const [tryAgainKeepAlive, setTryAgainKeepAlive] = useState(task.keepAlive || false)
   const [tryAgainEnableBrowser, setTryAgainEnableBrowser] = useState(task.enableBrowser || false)
+  const [tryAgainAgentModels, setTryAgainAgentModels] = useState<Record<string, Array<{ id: string; name: string }>>>(
+    {},
+  )
+  const [tryAgainUnavailableAgents, setTryAgainUnavailableAgents] = useState<Set<string>>(new Set())
   const [deploymentUrl, setDeploymentUrl] = useState<string | null>(task.previewUrl || null)
   const [loadingDeployment, setLoadingDeployment] = useState(false)
   const [showPRDialog, setShowPRDialog] = useState(false)
@@ -2047,7 +2047,48 @@ export function TaskDetails({
                 New Task
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setShowTryAgainDialog(true)}>
+              <DropdownMenuItem
+                onClick={() => {
+                  setShowTryAgainDialog(true)
+                  // 打开时动态加载 runtimes，保持和新建任务一致
+                  fetch('/api/agent/runtimes')
+                    .then((r) => r.json())
+                    .then(
+                      (data: {
+                        default: string
+                        runtimes: Array<{
+                          name: string
+                          available: boolean
+                          models: Array<{ id: string; name: string }>
+                        }>
+                      }) => {
+                        const newAgentModels: Record<string, Array<{ id: string; name: string }>> = {}
+                        const unavailable = new Set<string>()
+                        for (const rt of data.runtimes) {
+                          if (!rt.available) {
+                            for (const agent of CODING_AGENTS) {
+                              if ((agent as { runtime?: string }).runtime === rt.name) unavailable.add(agent.value)
+                            }
+                          } else if (rt.models.length > 0) {
+                            for (const agent of CODING_AGENTS) {
+                              if ((agent as { runtime?: string }).runtime === rt.name)
+                                newAgentModels[agent.value] = rt.models
+                            }
+                          }
+                        }
+                        setTryAgainAgentModels(newAgentModels)
+                        setTryAgainUnavailableAgents(unavailable)
+                        // 校正当前选中的 agent/model
+                        const currentAgent = task.selectedAgent || 'codebuddy'
+                        const models = newAgentModels[currentAgent] ?? []
+                        if (models.length > 0 && !models.some((m) => m.id === selectedModel)) {
+                          setSelectedModel(models[0].id)
+                        }
+                      },
+                    )
+                    .catch(() => {})
+                }}
+              >
                 <RotateCcw className="h-4 w-4 mr-2" />
                 Try Again
               </DropdownMenuItem>
@@ -3348,19 +3389,32 @@ export function TaskDetails({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-sm font-medium mb-2 block">Agent</label>
-                <Select value={selectedAgent} onValueChange={setSelectedAgent}>
+                <Select
+                  value={selectedAgent}
+                  onValueChange={(v) => {
+                    setSelectedAgent(v)
+                    const models = tryAgainAgentModels[v] ?? []
+                    if (models.length > 0 && !models.some((m) => m.id === selectedModel)) {
+                      setSelectedModel(models[0].id)
+                    }
+                  }}
+                >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select an agent" />
                   </SelectTrigger>
                   <SelectContent>
-                    {CODING_AGENTS.map((agent) => (
-                      <SelectItem key={agent.value} value={agent.value}>
-                        <div className="flex items-center gap-2">
-                          <agent.icon className="w-4 h-4" />
-                          <span>{agent.label}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
+                    {CODING_AGENTS.map((agent) => {
+                      const disabled = tryAgainUnavailableAgents.has(agent.value)
+                      return (
+                        <SelectItem key={agent.value} value={agent.value} disabled={disabled}>
+                          <div className={`flex items-center gap-2 ${disabled ? 'opacity-40' : ''}`}>
+                            <agent.icon className="w-4 h-4" />
+                            <span>{agent.label}</span>
+                            {disabled && <span className="text-xs">(unavailable)</span>}
+                          </div>
+                        </SelectItem>
+                      )
+                    })}
                   </SelectContent>
                 </Select>
               </div>
@@ -3371,17 +3425,17 @@ export function TaskDetails({
                     <SelectValue placeholder="Select a model" />
                   </SelectTrigger>
                   <SelectContent>
-                    {AGENT_MODELS[selectedAgent as keyof typeof AGENT_MODELS]?.map((model) => (
-                      <SelectItem key={model.value} value={model.value}>
-                        {model.label}
+                    {(tryAgainAgentModels[selectedAgent] ?? []).map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name}
                       </SelectItem>
-                    )) || []}
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
-            {/* Task Options */}
+            {/* Task Options — 暂不支持，已隐藏
             <div className="border-t pt-4">
               <h3 className="text-sm font-medium mb-3">Task Options</h3>
               <div className="space-y-4">
@@ -3454,6 +3508,7 @@ export function TaskDetails({
                 </div>
               </div>
             </div>
+            */}
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

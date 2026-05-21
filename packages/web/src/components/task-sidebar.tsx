@@ -495,7 +495,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
       </div>
 
       {/* Tasks header with delete */}
-      <div className="mb-2">
+      {/* <div className="mb-2">
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-muted-foreground px-1">任务列表</span>
           <Button
@@ -509,7 +509,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
             <Trash2 className="h-3.5 w-3.5" />
           </Button>
         </div>
-      </div>
+      </div> */}
 
       {/* Tasks Tab Content */}
       {activeTab === 'tasks' && (

@@ -783,6 +783,43 @@ async function setupCodebuddy() {
   return true
 }
 
+async function setupCustomModel() {
+
+  console.log('')
+  console.log('  可选择配置以下自定义模型（从 CloudBase 拉取）。')
+  console.log('')
+
+  // 1) CodeBuddy（默认启用）
+  const setupCodeBuddyModel = await askYesNo('是否配置 CodeBuddy 自定义模型 (默认启动)', true)
+  if (setupCodeBuddyModel) {
+    log('正在运行 CodeBuddy 模型配置脚本...')
+    try {
+      execSync('node scripts/codebuddy-setup.mjs', { stdio: 'inherit' })
+      log('CodeBuddy 模型配置完成', 'success')
+    } catch (error) {
+      log('CodeBuddy 模型配置失败，可稍后手动执行：node scripts/codebuddy-setup.mjs', 'warn')
+    }
+  } else {
+    log('已跳过 CodeBuddy 自定义模型配置，稍后请手动执行：node scripts/codebuddy-setup.mjs', 'info')
+  }
+
+  // 2) OpenCode（默认启用）
+  const setupOpenCodeModel = await askYesNo('是否配置 OpenCode 自定义模型 (默认启动)', true)
+  if (setupOpenCodeModel) {
+    log('正在运行 OpenCode 模型配置脚本...')
+    try {
+      execSync('node scripts/opencode-setup.mjs', { stdio: 'inherit' })
+      log('OpenCode 模型配置完成', 'success')
+    } catch (error) {
+      log('OpenCode 模型配置失败，可稍后手动执行：node scripts/opencode-setup.mjs', 'warn')
+    }
+  } else {
+    log('已跳过 OpenCode 自定义模型配置，稍后请手动执行：node scripts/opencode-setup.mjs', 'info')
+  }
+
+  return true
+}
+
 async function setupTcr() {
   logSection('配置 TCR（容器镜像服务）')
 
@@ -1112,6 +1149,13 @@ async function main() {
     log('Skills 安装失败（可选步骤，不影响启动）', 'warn')
     log('可手动运行: sh scripts/install-skills.sh', 'info')
   }
+
+  // Step 12: 配置自定义模型
+  logSection('配置自定义模型')
+  if (!(await setupCustomModel())) {
+    process.exit(1)
+  }
+
 
   // Done!
   console.log('')

@@ -363,6 +363,87 @@ CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 - **已设置的 env key** 不会被重复询问
 - **缺失 env 的 provider** 会在启动时提示补齐
 
+## CodeBuddy 模型配置
+
+项目默认使用 CodeBuddy（`@tencent-ai/agent-sdk`）官方模型服务。如果需要使用 CloudBase 上的自定义 AI 模型（如 DeepSeek、混元等），可通过以下方式配置。
+
+### 一键配置
+
+```bash
+pnpm codebuddy:setup
+```
+
+该命令会：
+
+1. 调用 腾讯云开发 AI+ 接口 [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) 拉取当前环境已开通的模型
+2. 检查 `CLOUDBASE_API_KEY`，缺失时引导输入并自动写入 `packages/server/.env`
+3. 同时设置 `CODEBUDDY_USE_CUSTOM_MODELS=true`
+4. 生成 `packages/server/.config/.codebuddy/models.json` 供 SDK 读取
+
+### 生成结果示例
+
+```jsonc
+// packages/server/.config/.codebuddy/models.json（自动生成）
+{
+  "models": [
+    {
+      "id": "deepseek-v4-flash",
+      "name": "deepseek-v4-flash",
+      "vendor": "cloudbase",
+      "apiKey": "${CLOUDBASE_API_KEY}",
+      "url": "https://envId-xxxxxxx.api.tcloudbasegateway.com/v1/ai/cloudbase",
+      "supportsToolCall": true,
+      "supportsImages": true
+    }
+  ],
+  "availableModels": ["deepseek-v4-flash"]
+}
+```
+
+```bash
+# packages/server/.env 会自动追加
+CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
+CODEBUDDY_USE_CUSTOM_MODELS=true
+```
+
+> **关于 `${CLOUDBASE_API_KEY}` 占位符**：`models.json` 中的 `apiKey` 字段使用 `${VAR_NAME}` 语法，
+> 由 `@tencent-ai/agent-sdk` 在运行时解析为对应的环境变量值，避免将敏感密钥硬编码到配置文件中。
+
+### 同步与自定义模型
+
+`pnpm codebuddy:setup` 幂等，可多次运行：
+
+- **CloudBase 模型以 API 返回为准**：如果你在 CloudBase 控制台新增或删除了模型，重新运行脚本会同步更新 `models.json`
+- **已设置的 env key** 不会被重复询问
+
+### 手动添加自定义模型
+
+如需接入非 CloudBase 的模型（如本地 Ollama、私有 LLM 网关），可直接编辑：
+
+```bash
+packages/server/.config/.codebuddy/models.json
+```
+
+在 `models` 数组中添加自定义条目（注意 `vendor` 不要写 `cloudbase`，避免被同步覆盖）：
+
+```json
+{
+  "id": "my-custom-model",
+  "name": "My Custom Model",
+  "vendor": "custom",
+  "apiKey": "${MY_API_KEY}",
+  "url": "https://my-llm-gateway.example.com/v1/chat/completions",
+  "supportsToolCall": true,
+  "supportsImages": false
+}
+```
+
+同时确保在 `packages/server/.env` 中提供对应的环境变量，并设置：
+
+```bash
+CODEBUDDY_USE_CUSTOM_MODELS=true
+```
+
 ## 技术栈
 
 | 层      | 技术                                                    |

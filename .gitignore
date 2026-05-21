@@ -106,3 +106,6 @@ decompiled-ui
 # opencode project-level config (auto-generated tool overrides)
 .opencode/tools/
 .opencode/opencode.json
+
+# codebuddy custom models (auto-generated from CloudBase)
+packages/server/.config/.codebuddy/models.json

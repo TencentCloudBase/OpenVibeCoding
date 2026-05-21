@@ -506,7 +506,11 @@ async function collectApiKeys(selected, envNow) {
       continue
     }
     console.log('')
-    console.log(`  ${colors.bold}${it.name}${colors.reset} (${it.id})`)
+    let extraHint = ''
+    if (it.id === 'cloudbase') {
+      extraHint = `${colors.dim}(CLOUDBASE_API_KEY 可从 https://tcb.cloud.tencent.com/dev?envId=${envNow['TCB_ENV_ID']}#/env/apikey 创建获取) ${colors.reset}`
+    }
+    console.log(`  ${colors.bold}${it.name}${colors.reset} (${it.id}) ${extraHint}`)
     if (it.envKeys.length > 1) {
       console.log(`  ${colors.dim}候选 env: ${it.envKeys.join(', ')} — 将使用 ${it.envKey}${colors.reset}`)
     }
@@ -524,7 +528,7 @@ async function collectApiKeys(selected, envNow) {
  * 收集"已存在但缺 env 的 provider"的 env 值。
  * 与 collectApiKeys 区别：这里是补齐，不需要再写 provider 对象到 opencode.json。
  */
-async function collectMissingEnvs(envId,rows) {
+async function collectMissingEnvs(envId, rows) {
   const updates = {}
   // 把所有 row 的 missingEnv 去重展开成一个待补齐列表
   const todoMap = new Map() // envKey -> Set<providerId>
@@ -546,9 +550,9 @@ async function collectMissingEnvs(envId,rows) {
     console.log('')
     let extraHint = ''
     if (envKey === 'CLOUDBASE_API_KEY') {
-      extraHint = ` ${colors.dim}（可从 https://tcb.cloud.tencent.com/dev?envId=${envId}#/env/apikey 创建获取）${colors.reset}`
+      extraHint = `${colors.dim}(可从 https://tcb.cloud.tencent.com/dev?envId=${envId}#/env/apikey 创建获取) ${colors.reset}`
     }
-    console.log(`  ${colors.bold}${envKey}${colors.reset} ${colors.dim}（用于: ${[...providers].join(', ')}）${colors.reset}` + extraHint)
+    console.log(`  ${colors.bold}${envKey}${colors.reset} ${colors.dim} (用于: ${[...providers].join(', ')}) ${colors.reset}` + extraHint)
 
     const value = await prompt(`  ${envKey}`, { hidden: true })
     if (value && value.trim() !== '') {

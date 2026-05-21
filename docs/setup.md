@@ -326,6 +326,77 @@ pnpm opencode:setup
 - [OpenCode Provider](https://opencode.ai/docs/zh-cn/providers/)
 - [models.dev catalog](https://models.dev)
 
+## CodeBuddy Agent 配置（可选）
+
+项目默认使用 CodeBuddy（`@tencent-ai/agent-sdk`）官方模型服务。如果需要使用 CloudBase 上的自定义 AI 模型（如 DeepSeek、混元等），需要额外配置模型列表。
+
+### 配置模型
+
+```bash
+pnpm codebuddy:setup
+```
+
+脚本会自动完成以下操作：
+
+1. 调用 腾讯云开发 AI+ 接口 [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) 拉取当前环境已开通的模型
+2. 检查 `CLOUDBASE_API_KEY`，缺失时引导输入并自动写入 `packages/server/.env`
+3. 同时设置 `CODEBUDDY_USE_CUSTOM_MODELS=true`
+4. 生成 `packages/server/.config/.codebuddy/models.json` 供 SDK 读取
+
+配置完成后**必须重启 server**（Node.js 的 `--env-file` 只在启动时加载一次）。
+
+### 涉及的文件
+
+| 文件 | 作用 | 是否 gitignore |
+|---|---|---|
+| `packages/server/.config/.codebuddy/models.json` | 模型定义列表（`@tencent-ai/agent-sdk` 读取） | 是（自动生成） |
+| `packages/server/.env` | API Key 与 `CODEBUDDY_USE_CUSTOM_MODELS` 开关 | 是 |
+
+### 同步与自定义模型规则
+
+`pnpm codebuddy:setup` 幂等，可多次运行：
+
+- **CloudBase 模型以 API 返回为准**：如果你在 CloudBase 控制台新增或删除了模型，重新运行脚本会同步更新 `models.json`
+- **保留真正的自定义模型**：若你手动添加了 `vendor` 非 `cloudbase` 的第三方模型（如本地 Ollama、内网网关），这些模型不会被覆盖
+- **已设置的 env key** 不会被重复询问
+
+### 手动添加自定义模型
+
+如需接入非 CloudBase 的模型（如本地 Ollama、私有 LLM 网关），可直接编辑：
+
+```bash
+packages/server/.config/.codebuddy/models.json
+```
+
+在 `models` 数组中添加自定义条目（注意 `vendor` 不要写 `cloudbase`，避免被同步覆盖）：
+
+```json
+{
+  "id": "my-custom-model",
+  "name": "My Custom Model",
+  "vendor": "custom",
+  "apiKey": "${MY_API_KEY}",
+  "url": "https://my-llm-gateway.example.com/v1/chat/completions",
+  "supportsToolCall": true,
+  "supportsImages": false
+}
+```
+
+同时确保在 `packages/server/.env` 中提供对应的环境变量，并设置：
+
+```bash
+CODEBUDDY_USE_CUSTOM_MODELS=true
+```
+
+### 常见问题
+
+| 问题 | 原因 | 解决 |
+|---|---|---|
+| 前端 CodeBuddy agent 模型列表为空 | `models.json` 未生成或 `CODEBUDDY_USE_CUSTOM_MODELS` 未设置 | 运行 `pnpm codebuddy:setup` |
+| 前端有模型但 agent 请求失败 | `CLOUDBASE_API_KEY` 无效或已过期 | 检查 `packages/server/.env` 中的 API Key，或重新创建 |
+| 已从 CloudBase 删除的模型仍存在 | 旧版本脚本保留了已删除模型 | 重跑 `pnpm codebuddy:setup`，会自动清理 vendor 为 `cloudbase` 的已删除模型 |
+| 配置后前端没变化 | server 未重启 | 重启 `pnpm dev:server` |
+
 ## 手动初始化的推荐顺序
 
 如果不使用交互式脚本，建议按照以下顺序手动处理：
@@ -337,7 +408,8 @@ pnpm opencode:setup
 5. 配置 TCR 镜像
 6. 初始化数据库
 7. （可选）配置 OpenCode provider：`pnpm opencode:setup`
-8. 运行构建或启动命令验证环境
+8. （可选）配置 CodeBuddy 自定义模型：`pnpm codebuddy:setup`
+9. 运行构建或启动命令验证环境
 
 ## 延伸阅读
 

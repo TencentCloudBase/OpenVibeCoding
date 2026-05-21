@@ -614,7 +614,7 @@ export function TaskForm({
                 {/* Buttons */}
                 <div className="flex items-center gap-2">
                   <TooltipProvider delayDuration={1500} skipDelayDuration={1500}>
-                    <Tooltip>
+                    {/* <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
                           type="button"
@@ -632,7 +632,7 @@ export function TaskForm({
                       <TooltipContent>
                         <p>Agent Browser</p>
                       </TooltipContent>
-                    </Tooltip>
+                    </Tooltip> */}
 
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -659,6 +659,7 @@ export function TaskForm({
                       </TooltipContent>
                     </Tooltip>
 
+                    {/* Task Options — 暂不支持，已隐藏
                     <DropdownMenu>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -753,6 +754,7 @@ export function TaskForm({
                         </div>
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    */}
                   </TooltipProvider>
 
                   <button
