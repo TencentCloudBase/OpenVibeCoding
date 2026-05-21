@@ -951,13 +951,13 @@ GIT_ARCHIVE_REPO=${getPreserved('GIT_ARCHIVE_REPO')}
 GIT_ARCHIVE_USER=${getPreserved('GIT_ARCHIVE_USER')}
 GIT_ARCHIVE_TOKEN=${getPreserved('GIT_ARCHIVE_TOKEN')}
 
-# ==================== SCF Sandbox ====================
+# ==================== Stateful Sandbox (AGS + TRW) ====================
 
-SCF_SANDBOX_IMAGE_TYPE=${get('SCF_SANDBOX_IMAGE_TYPE', 'personal')}
-SCF_SANDBOX_IMAGE_URI=${get('TCR_IMAGE')}
-SCF_SANDBOX_IMAGE_ACCELERATE=${get('SCF_SANDBOX_IMAGE_ACCELERATE', 'false')}
-SCF_SANDBOX_IMAGE_PORT=${get('SCF_SANDBOX_IMAGE_PORT', '9000')}
-SCF_SANDBOX_TEST_URL=${get('SCF_SANDBOX_TEST_URL')}
+# TCB_API_KEY: set in CloudBase console or paste after init
+STATEFUL_SANDBOX_IMAGE=${get('STATEFUL_SANDBOX_IMAGE', get('TCR_IMAGE'))}
+# STATEFUL_TOOL_ID=              # existing SDT; skips CreateSandboxTool
+# STATEFUL_GATEWAY_URL=
+# STATEFUL_SANDBOX_ID=           # debug: pin instance
 
 # ==================== GitHub OAuth (Optional) ====================
 

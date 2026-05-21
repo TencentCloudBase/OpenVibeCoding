@@ -2,7 +2,7 @@
 
 ## Overview
 
-CloudBase VibeCoding Platform 是一个基于腾讯云 CloudBase 的 AI 编程助手平台。用户通过 Web 界面向 Agent 下达编程指令，Agent 在隔离的 SCF Sandbox 容器中执行代码操作，结果通过 SSE 流式返回并持久化到 CloudBase 数据库。
+CloudBase VibeCoding Platform 是一个基于腾讯云 CloudBase 的 AI 编程助手平台。用户通过 Web 界面向 Agent 下达编程指令，Agent 在 **AGS Stateful Sandbox**（TRW 数据面 + gateway 路由）中执行代码操作，结果通过 SSE 流式返回并持久化到 CloudBase 数据库。
 
 ```mermaid
 graph TB
@@ -27,7 +27,7 @@ graph TB
 
     subgraph Infra["CloudBase Infrastructure"]
         DB[("CloudBase DB")]
-        SCF["SCF Sandbox"]
+        AGS["AGS Stateful Sandbox"]
         Storage["Cloud Storage"]
         TCR["TCR Registry"]
         EnvPool["Environment Pool"]
@@ -43,11 +43,11 @@ graph TB
     Auth --> TaskSvc
     RuntimeMgr --> CodeBuddy & OpenCode & MiMo
     CodeBuddy & OpenCode & MiMo --> MCPMiddleware
-    MCPMiddleware --> SCF
-    TaskSvc --> SCF
+    MCPMiddleware --> AGS
+    TaskSvc --> AGS
     RuntimeMgr --> Persist --> DB
-    SCF --> CNB
-    SCF --> TCR
+    AGS --> CNB
+    AGS --> TCR
     TaskSvc --> Storage
     Auth --> EnvPool --> DB
 ```
@@ -251,67 +251,63 @@ Agent 调用子 Agent 时，`parent_tool_use_id` 从 SDK 顶层透传至前端 `
 
 ## Sandbox Module
 
-Sandbox 模块为每个任务 / 会话提供隔离的执行环境。
+Sandbox 模块为每个 **envId** 提供 Stateful 执行环境（AGS 控制面 + TRW 数据面），任务共享同一实例上的 `/home/user` 工作区。
 
 ### Architecture
 
 ```mermaid
 flowchart LR
-    Agent["Agent Runtime"] --> Manager["ScfSandboxManager"]
-    Manager --> SCF["SCF Container"]
-    SCF --> FS["File System"]
-    SCF --> Bash["Bash / PTY"]
-    SCF --> MCPServer["MCP Server"]
-    SCF --> PreviewBridge["Preview Bridge"]
-    SCF --> Git["Git Archive"]
-    MCPServer --> CloudBase["CloudBase Tools"]
-    MCPServer --> Deploy["Deployment Tools"]
+    Agent["Agent Runtime"] --> Provider["StatefulSandboxProvider"]
+    Provider --> AGS["AGS StartSandboxInstance"]
+    AGS --> TRW["TRW :9000"]
+    TRW --> FS["File System /home/user"]
+    TRW --> Bash["Bash / PTY"]
+    TRW --> Preview["/preview/5173 / 7681"]
+    TRW --> Git["Git Archive"]
+    Provider --> McpClient["stateful-mcp-client"]
+    McpClient --> CloudBase["CloudBase Tools"]
+    McpClient --> Deploy["Deployment Tools"]
+    Web["Web UI"] --> OvcProxy["OVC preview proxy"]
+    OvcProxy --> Gateway["tcloudbasegateway.com"]
+    Gateway --> TRW
 ```
 
-### SCF Sandbox Lifecycle
+### Stateful Sandbox Lifecycle
 
-1. **Create or Reuse** — `scfSandboxManager` 根据 conversationId 创建或复用云函数容器
-2. **Health Check** — 轮询 `/health` 等待容器就绪（进度细分：镜像拉取 → 容器就绪 → 工作区初始化）
-3. **Init Workspace** — 通过 `ensureSessionRoot(sessionId)` 注入 CloudBase 凭证和环境变量
-4. **Execute** — Agent 通过 HTTP 调用容器内的工具接口
-5. **Archive** — 任务结束（包括 error / cancel）时通过 Git 归档工作区
+1. **Ensure Tool** — `ensureStatefulTool(envId)` 为环境创建或复用 AGS Sandbox Tool（`sdt-xxx`），镜像来自 `STATEFUL_SANDBOX_IMAGE` / TCR
+2. **Start / Reuse Instance** — `StatefulSandboxProvider` 按 envId 单实例：running 复用、paused 恢复、缺失则 `StartSandboxInstance`；镜像更新后 `stateful-tool-warmup` 轮询预热
+3. **Data Plane** — `TCB_API_KEY` + `E2b-Sandbox-Id` / `E2b-Sandbox-Port: 9000` 经 gateway 访问 TRW
+4. **Init Workspace** — `PUT /api/workspace/env` 注入凭证，`POST /api/workspace/init` 初始化 `/home/user`
+5. **Execute** — Agent 工具经 TRW `/api/tools/*`；CloudBase MCP 由 server 侧 `stateful-mcp-client` 转发
+6. **Archive** — 任务结束时 Git 归档工作区
 
-### Workspace Provisioning API
-
-Sandbox 内部使用语义化 Provisioning API 管理工作区层级：
+### TRW Workspace API
 
 | API | Description |
 | --- | --- |
-| `ensureSessionRoot(sessionId)` | 确保 session 根目录就绪，不触发 vite 启动 |
-| `ensureWorkspaceFor(sessionId, scopeId?, template)` | 确保工作区就绪，可选挂载 Scope |
+| `PUT /api/workspace/env` | 注入 CloudBase 凭证与环境变量 |
+| `POST /api/workspace/init` | 初始化工作区，返回 workspace 路径 |
+| `GET /health` | 实例健康检查 |
+| `POST /api/workspace/snapshot` | 显式 COS 快照（可选） |
 
 ### Sandbox Capabilities
 
-每个 Sandbox 容器对外暴露以下能力：
+经 gateway 路由到 TRW（OVC 对浏览器暴露 `/api/tasks/:id/preview/:port/*` 反向代理）：
 
-| Capability | Endpoint | Description |
+| Capability | TRW path | Description |
 | --- | --- | --- |
-| File System | `/api/tools/read`, `write`, `files_upload`, `files_download` | 文件读写 |
+| File System | `/api/tools/read`, `write`, … | 文件读写 |
 | Bash | `/api/tools/bash` | Shell 命令执行 |
 | Web Terminal | `/preview/7681/` (ttyd) | 浏览器终端 |
-| Vite preview | `/preview/5173/` | 开发服务器（vibecoding lazy ensure） |
-| Git Push | `POST /api/extend/git_push` | 将工作区变更推送到远端（`ENABLE_GIT_ARCHIVE`） |
-| MCP Server | In-memory transport | CloudBase 工具和部署工具 |
-| Health | `/health` | 容器健康检查 |
-| Scope Info | `/api/scope/info` | 子工作区路径和 vite 状态 |
+| Vite preview | `/preview/5173/` | 开发服务器（默认端口 5173） |
+| Git Push | `POST /api/extend/git_push` | 工作区推送到远端（`ENABLE_GIT_ARCHIVE`） |
+| Health | `/health` | 实例健康检查 |
 
-### Scope API（子工作区隔离）
-
-同一 session 内支持多个相互隔离的子工作区：
-
-- 通过请求头 `X-Scope-Id` / `X-Scope-Template` 控制
-- 每个 scope 独立运行 vite dev server，端口 5173-5199 动态分配
-- `GET /api/scope/info` 返回工作区路径和 vite 状态（`viteState: "starting" | "ready" | "failed"`）
-- `spawnVite` 将 tar 解压 + npm install 在 `setImmediate` 中异步执行，HTTP handler 立即返回，不阻塞
+> **已移除**：旧 SCF 时代的子工作区 Scope API（`X-Scope-Id`、`/api/scope/info`、5173–5199 多端口）。`user_resources.scope` 仍指 **CloudBase 环境隔离**（shared / isolated / task），与 TRW Scope 无关。
 
 ### MCP Tool Proxy
 
-Sandbox 内通过 MCP (Model Context Protocol) 向 Agent 提供工具能力。
+Server 侧 `stateful-mcp-client` 通过 MCP 向 Agent 提供 CloudBase / 部署工具（不再依赖容器内 `sandbox-mcp-proxy`）。
 
 **CloudBase MCP（内置）** — 全局 CloudBase MCP HTTP server，复用 Express 端口，零额外 TCP 开销；支持 stdio 和 HTTP 两种模式。工具通过 `lib/mcp-middleware/` 的 koa 风格中间件框架进行拦截 / 新增 / 过滤，policy 文件按工具名平铺在 `middleware/mcp/cloudbase/`：
 
@@ -415,7 +411,7 @@ sequenceDiagram
     participant Web
     participant Server
     participant Runtime as ACP Runtime
-    participant Sandbox as SCF Sandbox
+    participant Sandbox as AGS + TRW
     participant DB as CloudBase DB
     participant Git as Git Archive
 
@@ -425,7 +421,7 @@ sequenceDiagram
     Server->>Runtime: chatStream(prompt, options)
     Runtime->>Sandbox: Create or reuse sandbox
     Sandbox-->>Runtime: Health check OK
-    Runtime->>Sandbox: ensureSessionRoot (inject credentials)
+    Runtime->>Sandbox: workspace/env + workspace/init
     Runtime->>Runtime: Call LLM via selected runtime
 
     loop Agent execution
@@ -457,7 +453,7 @@ sequenceDiagram
 | Backend | Hono, Node.js, Drizzle ORM |
 | Database | CloudBase DB (primary), SQLite (local fallback) |
 | AI | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP, MiMo |
-| Sandbox | CloudBase SCF, TCR container images |
+| Sandbox | CloudBase AGS Stateful Sandbox, TRW, TCR images |
 | Auth | JWE session, bcrypt, Arctic (OAuth) |
 | Persistence | CloudBase DB, local .jsonl, Git archive |
 | Protocol | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |
@@ -688,6 +684,6 @@ erDiagram
 ## Related Documents
 
 - [Setup Guide](./setup.md) — 初始化流程、环境变量、验证与排障
-- [SCF Session Sharing](./scf-session-sharing.md) — 沙箱会话共享方案
+- [SCF Session Sharing](./scf-session-sharing.md) — **已废弃**，仅作 SCF 时代历史参考
 - [Cron Task Plan](./crontask-cloudfunction-plan.md) — 定时任务云函数演进规划
 - [ACP Runtime Abstraction](./acp-runtime-abstraction.md) — ACP Runtime 抽象层设计

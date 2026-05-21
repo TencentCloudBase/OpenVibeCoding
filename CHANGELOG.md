@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **AGS Stateful Sandbox**：`StatefulSandboxProvider` + `ensureStatefulTool` + TRW 数据面；移除 SCF `scf-sandbox-manager` / `sandbox-mcp-proxy`；预览经 OVC → gateway → TRW `/preview/5173/`；终端 ttyd `/preview/7681/`；镜像更新后 `stateful-tool-warmup` 轮询
+
+### Changed
+
+- **沙箱子工作区 Scope API 已移除**（旧 SCF 多端口 5173–5199）；工作区统一 `/home/user`
+
 - **CodeBuddy 自定义模型支持**：`CODEBUDDY_USE_CUSTOM_MODELS=true` 时按 `.config/.codebuddy/models.json` 模板加载模型列表，前端 listModels / SDK modelId 校验都走自定义白名单；`false` 时保留 SYSTEM_MODELS 写死的官方列表
 - **环境隔离粒度配置**（Issue #14）：admin 可在 `/admin/settings` 切换 `shared` / `isolated` / `task` 三种 provision mode，DB 优先级高于 env 默认，配 source badge 与重置按钮
 - **环境池（Environment Pool）**：预创建 CloudBase 环境 + CAM + Policy，task/isolated 模式获取环境从分钟级降到毫秒级

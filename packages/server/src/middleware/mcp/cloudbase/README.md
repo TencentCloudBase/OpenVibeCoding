@@ -187,7 +187,7 @@ middleware/mcp/cloudbase/           # CloudBase 专用，所有 policy 平铺在
 └── cronTask.ts                     # [CORE]
 
 routes/cloudbase-mcp.ts             # OpenCode HTTP runtime 入口
-sandbox/sandbox-mcp-proxy.ts        # CodeBuddy SDK runtime 入口
+sandbox/stateful/stateful-mcp-client.ts  # CodeBuddy SDK runtime（经 TRW 数据面）
                                     # 两条路径都用 lib/cloudbase-mcp-utils + middleware/mcp/cloudbase
 ```
 

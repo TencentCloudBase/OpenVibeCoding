@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
 [![pnpm](https://img.shields.io/badge/maintained%20with-pnpm-cc00ff.svg)](https://pnpm.io/)
-[![Node](https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg)](https://nodejs.org/)
+[![Node](https://img.shields.io/badge/node-22.x-brightgreen.svg)](https://nodejs.org/)
 
 ## 延伸阅读
 
@@ -20,9 +20,9 @@
 | **多 Agent 运行时**     | CodeBuddy / OpenCode / MiMo 三个 runtime 并行可选；per-agent 独立模型列表；切换时自动校验 selectedModel                              |
 | **三级环境隔离**        | `shared`（共用）/ `isolated`（用户独立）/ `task`（任务独立 + 独立 CAM 子账号）三种模式，admin 后台动态切换，无需重启                 |
 | **环境池**              | 预创建 CloudBase 环境 + CAM + Policy，获取延迟从分钟级降至毫秒级；池空自动回退实时创建；多 Pod CAS 安全                              |
-| **编码模式沙箱**        | 任务启动自动冷启动 SCF 容器；PTY 执行 bash；vite dev server 端口动态分配；预览进度细分（镜像拉取 → 容器就绪 → 工作区初始化）         |
-| **Preview Bridge**      | 内嵌 Browser 工具栏（地址栏 / 刷新 / 前进后退 / 设备切换）；postMessage 协议；HMR 热更新；预览错误自动修复                           |
-| **子工作区隔离**        | 同一 session 内多个隔离 Scope，独立 vite dev server，端口 5173-5199 动态分配；`X-Scope-Id` 头控制                                    |
+| **编码模式沙箱**        | AGS Stateful Sandbox + TRW；按 envId 单实例复用；`ensureStatefulTool` + 镜像预热；工作区 `/home/user`；预览经 gateway → TRW `/preview/5173/` |
+| **Preview Bridge**      | 内嵌 Browser 工具栏（地址栏 / 刷新 / 前进后退 / 设备切换）；OVC 反向代理至 TRW；HMR；预览错误自动修复                                 |
+| **Web 终端**            | ttyd 经 TRW `/preview/7681/`，OVC 代理为 `/api/tasks/:id/preview/7681/`                                                              |
 | **CloudBase MCP**       | 内置 50+ CloudBase 工具（DB / Storage / Functions / 域名 / 安全规则）；koa 风格 middleware 框架；stdio + HTTP 双模式                 |
 | **Human-in-Loop**       | ToolConfirm（四值权限：allow / allow_always / deny / reject_and_exit_plan）；AskUserQuestion 内联表单；消息流内渲染，不打断上下文    |
 | **Plan 模式**           | 写操作拦截；PlanModeCard 三按钮（允许执行 / 继续完善 / 拒绝退出）；`planModeAtomFamily` 跨组件状态共享                               |
@@ -80,7 +80,7 @@
 ├── docs/
 │   ├── setup.md                  # setup 详解与排障
 │   ├── architecture.md           # 系统架构文档
-│   └── scf-session-sharing.md    # SCF Session 共享设计
+│   └── scf-session-sharing.md    # （历史）SCF Session 共享，stateful 分支已废弃
 ├── packages/
 │   ├── web/                      # React 19 + Vite 前端
 │   ├── server/                   # Hono 后端：Auth、Agent 编排、Sandbox 管理
@@ -283,7 +283,7 @@ CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 | 后端    | Hono, Node.js, Drizzle ORM                              |
 | 数据库  | CloudBase DB（主），SQLite（本地回退）                  |
 | AI      | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP, MiMo |
-| Sandbox | CloudBase SCF, TCR 容器镜像                             |
+| Sandbox | CloudBase AGS Stateful Sandbox, TRW, TCR 镜像           |
 | 认证    | JWE session, bcrypt, Arctic (OAuth)                     |
 | 持久化  | CloudBase DB, 本地 .jsonl, Git archive                  |
 | 协议    | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol)  |
@@ -300,7 +300,7 @@ CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 | -------- | -------------- | ------------------------------------------ |
 | 架构     | Next.js 全栈   | Monorepo 前后端分离（React + Vite / Hono） |
 | 部署     | Vercel         | 腾讯云 CloudBase                           |
-| Sandbox  | Vercel Sandbox | CloudBase SCF                              |
+| Sandbox  | Vercel Sandbox | CloudBase AGS Stateful Sandbox (TRW)       |
 | Agent    | 单一 runtime   | CodeBuddy / OpenCode / MiMo 多 runtime     |
 | 环境隔离 | 无             | shared / isolated / task 三级              |
 

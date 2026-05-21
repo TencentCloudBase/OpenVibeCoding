@@ -93,7 +93,7 @@ flowchart TD
 - CloudBase 相关配置（`TCB_ENV_ID`、`TCB_SECRET_ID`、`TCB_SECRET_KEY`）
 - CodeBuddy 认证配置
 - 数据库提供方配置
-- SCF Sandbox / TCR 配置
+- Stateful Sandbox（AGS + TRW）/ TCR 镜像配置
 - 可选的 GitHub OAuth、代理配置
 
 初始化脚本会优先把 CloudBase 和服务端相关配置写入这里。
@@ -120,14 +120,17 @@ flowchart TD
 | `CODEBUDDY_CLIENT_SECRET` | 二选一 | OAuth 模式下使用 |
 | `CODEBUDDY_OAUTH_ENDPOINT` | 否 | OAuth Token 端点，默认使用国内地址 |
 
-### Sandbox / TCR
+### Stateful Sandbox / TCR
 
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
-| `SCF_SANDBOX_IMAGE_TYPE` | 否 | 镜像类型，默认 `personal` |
-| `SCF_SANDBOX_IMAGE_URI` | 是 | SCF Sandbox 所使用的镜像 URI |
-| `SCF_SANDBOX_IMAGE_PORT` | 否 | 容器暴露端口，默认 `9000` |
-| `TCR_IMAGE` | 建议 | `setup-tcr` 成功后会写入，用于 sandbox 镜像配置 |
+| `TCB_API_KEY` | 是 | gateway 数据面 Bearer（与 `TCB_ENV_ID` 配套） |
+| `STATEFUL_TOOL_ID` | 建议 | 已有 vibecoding SDT 时填写，跳过 `CreateSandboxTool` |
+| `STATEFUL_SANDBOX_IMAGE` | 创建 tool 时必需 | AGS 工具镜像 URI（通常与 `TCR_IMAGE` 相同） |
+| `STATEFUL_GATEWAY_URL` | 否 | 默认 `https://{TCB_ENV_ID}.api.tcloudbasegateway.com/v1/sandbox/-` |
+| `STATEFUL_SANDBOX_ID` | 否 | 调试时固定实例 ID |
+| `STATEFUL_TOOL_WARMUP_POLL_MS` / `STATEFUL_TOOL_WARMUP_POLL_MAX` | 否 | 镜像更新后预热轮询（默认 10s × 6） |
+| `TCR_IMAGE` | 建议 | `setup-tcr` 写入；供 `STATEFUL_SANDBOX_IMAGE` 引用 |
 
 ## 用户环境模式
 
@@ -325,4 +328,4 @@ pnpm opencode:setup
 
 - [根目录 README](../README.md)
 - [系统架构文档](./architecture.md)
-- [SCF Session 共享方案](./scf-session-sharing.md)
+- [SCF Session 共享方案](./scf-session-sharing.md)（**已废弃**，stateful 分支请以上表为准）

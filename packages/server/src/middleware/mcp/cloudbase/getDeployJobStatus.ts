@@ -3,7 +3,7 @@
  *
  * 查询 publishMiniprogram 异步返回的 jobId。
  *
- * 历史背景：原本在 sandbox-mcp-proxy.ts 中硬编码（line 507-527 DEPLOY_STATUS_*）。
+ * 历史背景：原本在已删除的 sandbox-mcp-proxy.ts 中硬编码（DEPLOY_STATUS_*）。
  */
 
 import type { McpPolicy } from './_index.js'
