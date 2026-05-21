@@ -71,9 +71,7 @@ export function attachPreviewWebSocketProxy(server: Server): void {
       proxyReq.on('upgrade', (res, upstreamSocket, upgradeHead) => {
         const statusLine = `HTTP/1.1 ${res.statusCode ?? 101} ${res.statusMessage ?? 'Switching Protocols'}`
         const headerLines = Object.entries(res.headers)
-          .flatMap(([key, values]) =>
-            (Array.isArray(values) ? values : [values]).map((v) => `${key}: ${v}`),
-          )
+          .flatMap(([key, values]) => (Array.isArray(values) ? values : [values]).map((v) => `${key}: ${v}`))
           .join('\r\n')
         clientSocket.write(`${statusLine}\r\n${headerLines}\r\n\r\n`)
         if (upgradeHead.length > 0) upstreamSocket.write(upgradeHead)

@@ -8,10 +8,7 @@ import type { Task } from '../db/types.js'
 import { buildStatefulAcquireContext } from './acquire-context.js'
 import { getSandboxProvider } from './provider/factory.js'
 import type { SandboxInstance, SandboxProvider } from './provider/types.js'
-import {
-  statefulReadBinaryFile,
-  statefulReadTextFile,
-} from './stateful/e2b-native-client.js'
+import { statefulReadBinaryFile, statefulReadTextFile } from './stateful/e2b-native-client.js'
 
 export interface CommandResult {
   success: boolean
@@ -129,10 +126,7 @@ export async function readFileFromSandbox(
 }
 
 /** Download file bytes via TRW POST /api/tools/files_download (production TRW has no /e2b-compatible). */
-export async function downloadFileFromSandbox(
-  sandbox: SandboxInstance,
-  filePath: string,
-): Promise<Uint8Array | null> {
+export async function downloadFileFromSandbox(sandbox: SandboxInstance, filePath: string): Promise<Uint8Array | null> {
   try {
     const res = await sandbox.request('/api/tools/files_download', {
       method: 'POST',
@@ -148,7 +142,11 @@ export async function downloadFileFromSandbox(
   }
 }
 
-export async function writeFileToSandbox(sandbox: SandboxInstance, filePath: string, content: string): Promise<boolean> {
+export async function writeFileToSandbox(
+  sandbox: SandboxInstance,
+  filePath: string,
+  content: string,
+): Promise<boolean> {
   try {
     const res = await sandbox.request('/api/tools/write', {
       method: 'POST',

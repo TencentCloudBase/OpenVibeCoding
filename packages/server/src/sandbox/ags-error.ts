@@ -29,13 +29,15 @@ export function unwrapManagerApiError(err: unknown): ManagerErr {
 function pickRequestId(e: ManagerErr | undefined): string | undefined {
   if (!e) return undefined
   return (
-    e.requestId ||
-    e.original?.RequestId ||
-    (e.data && typeof e.data === 'object' && e.data !== null
-      ? String((e.data as { RequestId?: string }).RequestId || '')
-      : undefined) ||
-    undefined
-  )?.trim() || undefined
+    (
+      e.requestId ||
+      e.original?.RequestId ||
+      (e.data && typeof e.data === 'object' && e.data !== null
+        ? String((e.data as { RequestId?: string }).RequestId || '')
+        : undefined) ||
+      undefined
+    )?.trim() || undefined
+  )
 }
 
 function pickCode(e: ManagerErr | undefined): string | undefined {

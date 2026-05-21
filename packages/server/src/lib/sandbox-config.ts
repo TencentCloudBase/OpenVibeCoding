@@ -89,9 +89,7 @@ export function isValidSandboxInstanceMode(val: string): val is SandboxInstanceM
 }
 
 /** Default sandbox instance mode when creating a task (honours body override). */
-export async function resolveSandboxModeForNewTask(
-  bodyMode?: string | null,
-): Promise<SandboxInstanceMode> {
+export async function resolveSandboxModeForNewTask(bodyMode?: string | null): Promise<SandboxInstanceMode> {
   if (bodyMode && isValidSandboxInstanceMode(bodyMode)) return bodyMode
   return (await resolveSandboxInstanceMode()).value
 }

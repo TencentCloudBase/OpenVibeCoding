@@ -39,10 +39,7 @@ async function resolveUserEnvId(userId: string, taskId: string): Promise<string 
   return null
 }
 
-export async function resolveSandboxForTaskWs(
-  req: IncomingMessage,
-  taskId: string,
-): Promise<SandboxInstance | null> {
+export async function resolveSandboxForTaskWs(req: IncomingMessage, taskId: string): Promise<SandboxInstance | null> {
   const rawCookie = parseCookie(req.headers.cookie, SESSION_COOKIE_NAME)
   if (!rawCookie) return null
 

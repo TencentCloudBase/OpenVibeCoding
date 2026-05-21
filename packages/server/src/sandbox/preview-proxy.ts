@@ -60,12 +60,7 @@ function shouldRewriteBody(contentType: string | null): boolean {
   )
 }
 
-function rewriteLocationHeader(
-  location: string,
-  taskId: string,
-  port: string,
-  sandboxBaseUrl: string,
-): string {
+function rewriteLocationHeader(location: string, taskId: string, port: string, sandboxBaseUrl: string): string {
   try {
     const loc = new URL(location, sandboxBaseUrl)
     const previewPrefix = trwPreviewPrefix(port)

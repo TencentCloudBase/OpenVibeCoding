@@ -86,10 +86,7 @@ export function buildTrwPreviewGatewayTarget(args: {
   })
 }
 
-export async function gatewayFetch(
-  target: StatefulGatewayTarget,
-  init?: RequestInit,
-): Promise<Response> {
+export async function gatewayFetch(target: StatefulGatewayTarget, init?: RequestInit): Promise<Response> {
   return fetch(target.url, {
     ...init,
     headers: {

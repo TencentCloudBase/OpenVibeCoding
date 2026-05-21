@@ -90,7 +90,11 @@ export async function statefulReadBinaryFile(inst: SandboxInstance, filePath: st
   }
 }
 
-export async function statefulWriteTextFile(inst: SandboxInstance, filePath: string, content: string): Promise<boolean> {
+export async function statefulWriteTextFile(
+  inst: SandboxInstance,
+  filePath: string,
+  content: string,
+): Promise<boolean> {
   const sdk = await createStatefulNativeE2bClient(inst)
   const normalized = resolveStatefulFilePath(filePath)
   try {

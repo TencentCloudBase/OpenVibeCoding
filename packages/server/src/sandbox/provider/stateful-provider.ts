@@ -273,10 +273,7 @@ async function ensureSingleEnvInstance(
   const active = discover.filter((it) => ['RUNNING', 'PAUSED', 'RESUME_FAILED'].includes(it.status))
   const primary = pickPrimaryInstance(active)
   if (!primary) {
-    const sandboxId = await startStatefulInstanceWithWarmup(
-      () => startStatefulInstance(cfg, toolId),
-      onProgress,
-    )
+    const sandboxId = await startStatefulInstanceWithWarmup(() => startStatefulInstance(cfg, toolId), onProgress)
     return { sandboxId, created: true }
   }
 
@@ -314,10 +311,7 @@ async function ensureTaskInstance(
     }
   }
 
-  const sandboxId = await startStatefulInstanceWithWarmup(
-    () => startStatefulInstance(cfg, toolId),
-    onProgress,
-  )
+  const sandboxId = await startStatefulInstanceWithWarmup(() => startStatefulInstance(cfg, toolId), onProgress)
   return { sandboxId, created: true }
 }
 

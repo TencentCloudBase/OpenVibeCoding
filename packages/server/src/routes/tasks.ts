@@ -401,7 +401,7 @@ tasksRouter.post('/', async (c) => {
     error: null,
     branchName: null,
     sandboxId: null,
-        sandboxCwd: sandboxConfig?.sandboxCwd ?? null,
+    sandboxCwd: sandboxConfig?.sandboxCwd ?? null,
     sandboxMode: sandboxConfig?.sandboxMode ?? null,
     agentSessionId: null,
     sandboxUrl: null,
@@ -459,19 +459,14 @@ tasksRouter.patch('/:taskId', async (c) => {
 })
 
 /** Task.status values that bulk delete may target (aliases: failed→error, done→completed). */
-const BULK_DELETE_STATUSES = new Set([
-  'completed',
-  'done',
-  'error',
-  'failed',
-  'stopped',
-  'processing',
-  'pending',
-])
+const BULK_DELETE_STATUSES = new Set(['completed', 'done', 'error', 'failed', 'stopped', 'processing', 'pending'])
 
 function resolveBulkDeleteStatuses(action: string): Set<string> {
   const out = new Set<string>()
-  for (const raw of action.split(',').map((s) => s.trim()).filter(Boolean)) {
+  for (const raw of action
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)) {
     if (raw === 'failed') {
       out.add('error')
       continue
@@ -857,10 +852,7 @@ tasksRouter.get('/:taskId/files', requireUserEnv, async (c) => {
           .trim()
           .split('\n')
           .filter((line) => line.trim())
-        const checkRemoteResult = await runCommandInSandbox(
-          sandbox,
-          `git rev-parse --verify origin/${task.branchName}`,
-        )
+        const checkRemoteResult = await runCommandInSandbox(sandbox, `git rev-parse --verify origin/${task.branchName}`)
         const remoteBranchExists = checkRemoteResult.success
         const compareRef = remoteBranchExists ? `origin/${task.branchName}` : 'HEAD'
         const numstatResult = await runCommandInSandbox(sandbox, `git diff --numstat ${compareRef}`)
@@ -1493,10 +1485,7 @@ tasksRouter.get('/:taskId/diff', requireUserEnv, async (c) => {
         const sandbox = await getTaskSandbox(task, envId)
         if (!sandbox) return c.json({ error: 'Sandbox not found or inactive' }, 400)
         await runCommandInSandbox(sandbox, `git fetch origin ${task.branchName}`)
-        const checkRemoteResult = await runCommandInSandbox(
-          sandbox,
-          `git rev-parse --verify origin/${task.branchName}`,
-        )
+        const checkRemoteResult = await runCommandInSandbox(sandbox, `git rev-parse --verify origin/${task.branchName}`)
         const remoteBranchExists = checkRemoteResult.success
         if (!remoteBranchExists) {
           const oldContentResult = await runCommandInSandbox(sandbox, `git show HEAD:${filename}`)
@@ -2435,9 +2424,7 @@ tasksRouter.get('/:taskId/preview-health', requireUserEnv, async (c) => {
     }
     const info = (await res.json()) as { ports?: Array<{ port: number }> }
     const ports = Array.isArray(info.ports) ? info.ports.map((p) => p.port) : []
-    const vitePort = ports.includes(STATEFUL_DEFAULT_VITE_PORT)
-      ? STATEFUL_DEFAULT_VITE_PORT
-      : ports[0] ?? null
+    const vitePort = ports.includes(STATEFUL_DEFAULT_VITE_PORT) ? STATEFUL_DEFAULT_VITE_PORT : (ports[0] ?? null)
     const alive = vitePort !== null
     return c.json({ status: alive ? 'running' : 'stopped', vitePort })
   } catch (error) {
@@ -2844,9 +2831,7 @@ tasksRouter.get('/:taskId/preview-errors', requireUserEnv, async (c) => {
       if (portsRes.ok) {
         const info = (await portsRes.json()) as { ports?: Array<{ port: number }> }
         const ports = Array.isArray(info.ports) ? info.ports.map((p) => p.port) : []
-        vitePort = ports.includes(STATEFUL_DEFAULT_VITE_PORT)
-          ? STATEFUL_DEFAULT_VITE_PORT
-          : ports[0] ?? null
+        vitePort = ports.includes(STATEFUL_DEFAULT_VITE_PORT) ? STATEFUL_DEFAULT_VITE_PORT : (ports[0] ?? null)
       }
     } catch {
       // preview/ports unavailable → treat as no vite

@@ -52,9 +52,8 @@ async function main() {
     },
   }
 
-  const { STATEFUL_TOOL_WARMUP_POLL_MS, STATEFUL_TOOL_WARMUP_POLL_MAX } = await import(
-    '../src/sandbox/stateful-tool-warmup.js'
-  )
+  const { STATEFUL_TOOL_WARMUP_POLL_MS, STATEFUL_TOOL_WARMUP_POLL_MAX } =
+    await import('../src/sandbox/stateful-tool-warmup.js')
 
   for (const action of ['UpdateSandboxTool', 'ModifySandboxTool'] as const) {
     try {

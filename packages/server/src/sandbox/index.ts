@@ -35,7 +35,12 @@ export {
   type GitArchiveConfig,
 } from './git-archive.js'
 
-export { overrideTools, type ToolOverrideConfig as LegacyToolOverrideConfig, type ToolResult, type ToolContext } from './tool-override.js'
+export {
+  overrideTools,
+  type ToolOverrideConfig as LegacyToolOverrideConfig,
+  type ToolResult,
+  type ToolContext,
+} from './tool-override.js'
 
 export {
   statefulReadTextFile,
