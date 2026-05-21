@@ -8,6 +8,12 @@ All notable changes to this project will be documented in this file.
 
 - **CodeBuddy 自定义模型支持**：`CODEBUDDY_USE_CUSTOM_MODELS=true` 时按 `.config/.codebuddy/models.json` 模板加载模型列表，前端 listModels / SDK modelId 校验都走自定义白名单；`false` 时保留 SYSTEM_MODELS 写死的官方列表
 - **环境隔离粒度配置**（Issue #14）：admin 可在 `/admin/settings` 切换 `shared` / `isolated` / `task` 三种 provision mode，DB 优先级高于 env 默认，配 source badge 与重置按钮
+- **环境池（Environment Pool）**：预创建 CloudBase 环境 + CAM + Policy，task/isolated 模式获取环境从分钟级降到毫秒级
+  - 统一生命周期接口 `acquireEnv()` / `releaseEnv()`，屏蔽池化实现细节
+  - 管理后台 `/admin/env-pool` 页面：池配置（开关 + 容量）、实时状态监控、手动补充、释放池
+  - 配置存 DB（`env_pool_enabled` / `env_pool_size`），admin UI 可动态修改无需重启
+  - 多 Pod 安全：认领用 CAS 原子操作，补充用分布式锁（settings 表 TTL 锁）
+  - 池空自动回退实时创建，零停机降级
 - **CloudBase MCP 通用 middleware 框架**：`lib/mcp-middleware/` 提供 koa 风格中间件，配置驱动的工具拦截/新增/过滤；policy 文件按工具名平铺在 `middleware/mcp/cloudbase/`（auth、cronTask、uploadFiles、publishMiniprogram、downloadTemplate、getDeployJobStatus 等 13 个）
 - **CloudBase Dashboard 集成**：在 task 详情页内嵌可视化 dashboard（DB 集合 / Storage / SQL / Functions），envId/taskId 通过 Context 强制显式参数化，所有请求自动带 `?envId=` 与 `X-Task-Id`
 - **数据库自定义安全规则**：CollectionPermissions 切到 `DescribeSafeRule` / `ModifySafeRule`，支持 CUSTOM 模式编辑 JSON 安全规则

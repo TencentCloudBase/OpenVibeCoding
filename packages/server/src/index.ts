@@ -172,6 +172,13 @@ const server = serve({ fetch: app.fetch, port: PORT }, () => {
     console.error('Failed to initialize cron scheduler:', err)
   })
 
+  // Initialize environment pool (if enabled)
+  import('./cloudbase/env-lifecycle.js').then(({ initEnvLifecycle }) => {
+    initEnvLifecycle().catch((err) => {
+      console.error('Failed to initialize env lifecycle:', err)
+    })
+  })
+
   // Backfill API keys for existing users
   backfillApiKeys()
 }) as Server

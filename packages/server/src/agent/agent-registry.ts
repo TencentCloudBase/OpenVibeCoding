@@ -75,12 +75,14 @@ export function completeAgent(
  * Remove agent from registry.
  * Only deletes if the current entry matches the given turnId (prevents a stale
  * setTimeout from removing a newer run that reused the same conversationId).
+ * Also refuses to delete a 'running' entry — this prevents the case where
+ * a resume reuses the same turnId and a stale timer from the previous run
+ * would incorrectly delete the active entry.
  */
 export function removeAgent(conversationId: string, turnId?: string): void {
-  if (turnId) {
-    const run = runningAgents.get(conversationId)
-    if (run && run.turnId !== turnId) return // stale removal — skip
-  }
+  const run = runningAgents.get(conversationId)
+  if (!run) return
+  if (turnId && run.turnId !== turnId) return // stale removal — different turnId
   runningAgents.delete(conversationId)
 }
 

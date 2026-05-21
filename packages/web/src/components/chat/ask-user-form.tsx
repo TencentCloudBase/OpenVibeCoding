@@ -59,6 +59,7 @@ export function AskUserForm({
                     variant={questionAnswers[question.question] === option.label ? 'default' : 'outline'}
                     size="sm"
                     className="h-auto py-1.5 px-2 text-xs flex flex-col items-start gap-0"
+                    disabled={isSending}
                     onClick={() => onAnswerSelect(toolCallId, question.question, option.label)}
                   >
                     <span>{option.label}</span>
@@ -73,6 +74,7 @@ export function AskUserForm({
                   className="h-7 text-xs flex-1"
                   placeholder="输入自定义答案..."
                   value={manualInputs[question.question] || ''}
+                  disabled={isSending}
                   onChange={(e) => onManualInput(toolCallId, question.question, e.target.value)}
                 />
               </div>

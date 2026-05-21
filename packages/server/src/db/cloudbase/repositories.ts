@@ -25,6 +25,8 @@ import type {
   NewDeployment,
   AdminLog,
   NewAdminLog,
+  EnvPoolEntry,
+  NewEnvPoolEntry,
   UserRepository,
   LocalCredentialRepository,
   TaskRepository,
@@ -37,6 +39,7 @@ import type {
   SettingRepository,
   DeploymentRepository,
   AdminLogRepository,
+  EnvPoolRepository,
   DatabaseProvider,
 } from '../types'
 
@@ -989,6 +992,97 @@ class CloudBaseAdminLogRepository implements AdminLogRepository {
   }
 }
 
+// ─── EnvPool Repository ─────────────────────────────────────────────────────
+
+class CloudBaseEnvPoolRepository implements EnvPoolRepository {
+  async findReady(): Promise<EnvPoolEntry | null> {
+    const _ = getCommand()
+    const collection = await getCollection('env_pool')
+    const { data } = await collection
+      .where({ status: _.eq('ready') })
+      .orderBy('createdAt', 'asc')
+      .limit(1)
+      .get()
+    if (!data || data.length === 0) return null
+    return stripCloudBaseId<EnvPoolEntry>(data[0] as Record<string, unknown>)
+  }
+
+  async claimEntry(
+    id: string,
+    data: { claimedByUserId: string; claimedByTaskId: string | null; claimedAt: number },
+  ): Promise<EnvPoolEntry | null> {
+    const _ = getCommand()
+    const collection = await getCollection('env_pool')
+    // CAS: only update where status is still 'ready'
+    const { updated } = await collection
+      .where({ id: _.eq(id), status: _.eq('ready') })
+      .update({ status: 'claimed', ...data, updatedAt: now() })
+    if (updated === 0) return null // already claimed by another pod
+    const { data: rows } = await collection
+      .where({ id: _.eq(id) })
+      .limit(1)
+      .get()
+    if (!rows || rows.length === 0) return null
+    return stripCloudBaseId<EnvPoolEntry>(rows[0] as Record<string, unknown>)
+  }
+
+  async countByStatus(status: string): Promise<number> {
+    const _ = getCommand()
+    const collection = await getCollection('env_pool')
+    const { total } = await collection.where({ status: _.eq(status) }).count()
+    return total
+  }
+
+  async findAllByStatus(status: string): Promise<EnvPoolEntry[]> {
+    const _ = getCommand()
+    const collection = await getCollection('env_pool')
+    const { data } = await collection
+      .where({ status: _.eq(status) })
+      .limit(1000)
+      .get()
+    return (data as Record<string, unknown>[]).map((doc) => stripCloudBaseId<EnvPoolEntry>(doc))
+  }
+
+  async countActive(): Promise<number> {
+    const _ = getCommand()
+    const collection = await getCollection('env_pool')
+    const { total } = await collection.where(_.or([{ status: _.eq('creating') }, { status: _.eq('ready') }])).count()
+    return total
+  }
+
+  async create(entry: NewEnvPoolEntry): Promise<EnvPoolEntry> {
+    const collection = await getCollection('env_pool')
+    const ts = now()
+    const doc: EnvPoolEntry = {
+      ...entry,
+      createdAt: entry.createdAt ?? ts,
+      updatedAt: entry.updatedAt ?? ts,
+    }
+    await collection.add(doc)
+    return doc
+  }
+
+  async update(id: string, data: Partial<Omit<EnvPoolEntry, 'id'>>): Promise<EnvPoolEntry | null> {
+    const _ = getCommand()
+    const collection = await getCollection('env_pool')
+    await collection.where({ id: _.eq(id) }).update({ ...data, updatedAt: data.updatedAt ?? now() })
+    const { data: rows } = await collection
+      .where({ id: _.eq(id) })
+      .limit(1)
+      .get()
+    if (!rows || rows.length === 0) return null
+    return stripCloudBaseId<EnvPoolEntry>(rows[0] as Record<string, unknown>)
+  }
+
+  async getStats(): Promise<Record<string, number>> {
+    const stats: Record<string, number> = { creating: 0, ready: 0, claimed: 0, failed: 0 }
+    for (const status of Object.keys(stats)) {
+      stats[status] = await this.countByStatus(status)
+    }
+    return stats
+  }
+}
+
 // ─── Provider Factory ───────────────────────────────────────────────────────
 
 export function createCloudBaseProvider(): DatabaseProvider {
@@ -1005,5 +1099,6 @@ export function createCloudBaseProvider(): DatabaseProvider {
     settings: new CloudBaseSettingRepository(),
     deployments: new CloudBaseDeploymentRepository(),
     adminLogs: new CloudBaseAdminLogRepository(),
+    envPool: new CloudBaseEnvPoolRepository(),
   }
 }

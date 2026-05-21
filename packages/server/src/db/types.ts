@@ -458,6 +458,53 @@ export interface AdminLogRepository {
   findAll(limit?: number, offset?: number): Promise<AdminLog[]>
 }
 
+// ─── Environment Pool ───────────────────────────────────────────────────────
+
+export interface EnvPoolEntry {
+  id: string
+  status: string // 'creating' | 'ready' | 'claimed' | 'failed'
+  envId: string | null
+  envAlias: string | null
+  envRegion: string | null
+  cosTagValue: string | null
+  policyHash: string | null
+  camUsername: string | null
+  camSecretId: string | null
+  camSecretKey: string | null
+  policyId: number | null
+  claimedByUserId: string | null
+  claimedByTaskId: string | null
+  claimedAt: number | null
+  failReason: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+export type NewEnvPoolEntry = Omit<EnvPoolEntry, 'createdAt' | 'updatedAt'> & {
+  createdAt?: number
+  updatedAt?: number
+}
+
+export interface EnvPoolRepository {
+  /** Find one ready entry (status='ready'), FIFO order */
+  findReady(): Promise<EnvPoolEntry | null>
+  /** CAS: claim a ready entry (status='ready' → 'claimed'). Returns null if already claimed by another pod. */
+  claimEntry(
+    id: string,
+    data: { claimedByUserId: string; claimedByTaskId: string | null; claimedAt: number },
+  ): Promise<EnvPoolEntry | null>
+  /** Find all entries by status */
+  findAllByStatus(status: string): Promise<EnvPoolEntry[]>
+  /** Count entries by status */
+  countByStatus(status: string): Promise<number>
+  /** Count all non-claimed/non-failed entries (creating + ready) */
+  countActive(): Promise<number>
+  create(entry: NewEnvPoolEntry): Promise<EnvPoolEntry>
+  update(id: string, data: Partial<Omit<EnvPoolEntry, 'id'>>): Promise<EnvPoolEntry | null>
+  /** Get pool stats: { creating, ready, claimed, failed } */
+  getStats(): Promise<Record<string, number>>
+}
+
 // ─── Database Provider ──────────────────────────────────────────────────────
 
 export interface DatabaseProvider {
@@ -473,4 +520,5 @@ export interface DatabaseProvider {
   settings: SettingRepository
   deployments: DeploymentRepository
   adminLogs: AdminLogRepository
+  envPool: EnvPoolRepository
 }

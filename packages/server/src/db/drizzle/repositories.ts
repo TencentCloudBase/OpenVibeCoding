@@ -1,4 +1,4 @@
-import { eq, and, isNull, desc, sql } from 'drizzle-orm'
+import { eq, and, isNull, desc, sql, asc } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
 import { drizzleDb } from './client'
 import {
@@ -14,6 +14,7 @@ import {
   settings,
   deployments,
   adminLogs,
+  envPool,
 } from '../schema'
 import type {
   User,
@@ -40,6 +41,8 @@ import type {
   NewDeployment,
   AdminLog,
   NewAdminLog,
+  EnvPoolEntry,
+  NewEnvPoolEntry,
   UserRepository,
   LocalCredentialRepository,
   TaskRepository,
@@ -52,6 +55,7 @@ import type {
   SettingRepository,
   DeploymentRepository,
   AdminLogRepository,
+  EnvPoolRepository,
   DatabaseProvider,
 } from '../types'
 
@@ -760,6 +764,94 @@ class DrizzleAdminLogRepository implements AdminLogRepository {
   }
 }
 
+// ─── EnvPool Repository ────────────────────────────────────────────────────
+
+class DrizzleEnvPoolRepository implements EnvPoolRepository {
+  async findReady(): Promise<EnvPoolEntry | null> {
+    const [row] = await drizzleDb
+      .select()
+      .from(envPool)
+      .where(eq(envPool.status, 'ready'))
+      .orderBy(asc(envPool.createdAt))
+      .limit(1)
+    return (row as EnvPoolEntry) ?? null
+  }
+
+  async claimEntry(
+    id: string,
+    data: { claimedByUserId: string; claimedByTaskId: string | null; claimedAt: number },
+  ): Promise<EnvPoolEntry | null> {
+    // CAS: only update if status is still 'ready'
+    const result = await drizzleDb
+      .update(envPool)
+      .set({ status: 'claimed', ...data, updatedAt: now() })
+      .where(and(eq(envPool.id, id), eq(envPool.status, 'ready')))
+    // SQLite: changes === 0 means row was already claimed by another pod
+    if ((result as any).changes === 0 && (result as any).rowsAffected === undefined) {
+      // Drizzle returns different shapes depending on driver; check by re-reading
+      const [row] = await drizzleDb.select().from(envPool).where(eq(envPool.id, id)).limit(1)
+      if (!row || row.status !== 'claimed' || row.claimedByUserId !== data.claimedByUserId) return null
+      return row as EnvPoolEntry
+    }
+    const [row] = await drizzleDb.select().from(envPool).where(eq(envPool.id, id)).limit(1)
+    if (!row || row.status !== 'claimed') return null
+    return row as EnvPoolEntry
+  }
+
+  async countByStatus(status: string): Promise<number> {
+    const [row] = await drizzleDb
+      .select({ count: sql<number>`count(*)` })
+      .from(envPool)
+      .where(eq(envPool.status, status))
+    return row?.count ?? 0
+  }
+
+  async findAllByStatus(status: string): Promise<EnvPoolEntry[]> {
+    const rows = await drizzleDb.select().from(envPool).where(eq(envPool.status, status))
+    return rows as EnvPoolEntry[]
+  }
+
+  async countActive(): Promise<number> {
+    const [row] = await drizzleDb
+      .select({ count: sql<number>`count(*)` })
+      .from(envPool)
+      .where(sql`${envPool.status} IN ('creating', 'ready')`)
+    return row?.count ?? 0
+  }
+
+  async create(entry: NewEnvPoolEntry): Promise<EnvPoolEntry> {
+    const ts = now()
+    const values = {
+      ...entry,
+      createdAt: entry.createdAt ?? ts,
+      updatedAt: entry.updatedAt ?? ts,
+    }
+    await drizzleDb.insert(envPool).values(values)
+    return values as EnvPoolEntry
+  }
+
+  async update(id: string, data: Partial<Omit<EnvPoolEntry, 'id'>>): Promise<EnvPoolEntry | null> {
+    await drizzleDb
+      .update(envPool)
+      .set({ ...data, updatedAt: data.updatedAt ?? now() })
+      .where(eq(envPool.id, id))
+    const [row] = await drizzleDb.select().from(envPool).where(eq(envPool.id, id)).limit(1)
+    return (row as EnvPoolEntry) ?? null
+  }
+
+  async getStats(): Promise<Record<string, number>> {
+    const rows = await drizzleDb
+      .select({ status: envPool.status, count: sql<number>`count(*)` })
+      .from(envPool)
+      .groupBy(envPool.status)
+    const stats: Record<string, number> = { creating: 0, ready: 0, claimed: 0, failed: 0 }
+    for (const row of rows) {
+      stats[row.status] = row.count
+    }
+    return stats
+  }
+}
+
 // ─── Provider Factory ───────────────────────────────────────────────────────
 
 export function createDrizzleProvider(): DatabaseProvider {
@@ -776,5 +868,6 @@ export function createDrizzleProvider(): DatabaseProvider {
     settings: new DrizzleSettingRepository(),
     deployments: new DrizzleDeploymentRepository(),
     adminLogs: new DrizzleAdminLogRepository(),
+    envPool: new DrizzleEnvPoolRepository(),
   }
 }

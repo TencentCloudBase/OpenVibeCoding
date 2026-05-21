@@ -16,6 +16,7 @@ const COLLECTION_NAMES = [
   'miniprogram_apps',
   'cron_tasks',
   'admin_logs',
+  'env_pool',
 ] as const
 
 /**

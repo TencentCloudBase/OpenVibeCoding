@@ -1053,4 +1053,46 @@ admin.delete('/system-settings/:key', async (c) => {
   }
 })
 
+// ─── Environment Pool ─────────────────────────────────────────────────────
+
+admin.get('/env-pool', async (c) => {
+  try {
+    const { getPoolStats } = await import('../cloudbase/env-lifecycle.js')
+    const stats = await getPoolStats()
+    const db = getDb()
+    const enabledSetting = await db.settings.findSystemSetting('env_pool_enabled')
+    const sizeSetting = await db.settings.findSystemSetting('env_pool_size')
+    const poolEnabled = enabledSetting?.value === 'true'
+    const poolSize = parseInt(sizeSetting?.value || '2', 10)
+    return c.json({ enabled: poolEnabled, targetSize: poolSize, stats })
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+admin.post('/env-pool/replenish', async (c) => {
+  try {
+    const db = getDb()
+    const enabledSetting = await db.settings.findSystemSetting('env_pool_enabled')
+    if (enabledSetting?.value !== 'true') {
+      return c.json({ error: '环境池未启用，请先在平台设置中开启' }, 400)
+    }
+    const { replenishPool } = await import('../cloudbase/env-pool.js')
+    void replenishPool()
+    return c.json({ success: true, message: 'Replenishment triggered' })
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
+admin.post('/env-pool/drain', async (c) => {
+  try {
+    const { drainPool } = await import('../cloudbase/env-pool.js')
+    const result = await drainPool()
+    return c.json({ success: true, ...result })
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500)
+  }
+})
+
 export default admin

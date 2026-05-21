@@ -310,3 +310,33 @@ export const adminLogs = sqliteTable(
     createdAtIdx: index('admin_logs_created_at_idx').on(table.createdAt),
   }),
 )
+
+// ─── Environment Pool ───────────────────────────────────────────────────────
+
+export const envPool = sqliteTable(
+  'env_pool',
+  {
+    id: text('id').primaryKey(),
+    // 'creating' → 'ready' → 'claimed' | 'failed'
+    status: text('status').notNull().default('creating'),
+    envId: text('env_id'),
+    envAlias: text('env_alias'),
+    envRegion: text('env_region'),
+    cosTagValue: text('cos_tag_value'),
+    policyHash: text('policy_hash'),
+    camUsername: text('cam_username'),
+    camSecretId: text('cam_secret_id'),
+    camSecretKey: text('cam_secret_key'),
+    policyId: integer('policy_id'),
+    // 认领信息
+    claimedByUserId: text('claimed_by_user_id'),
+    claimedByTaskId: text('claimed_by_task_id'),
+    claimedAt: integer('claimed_at'),
+    failReason: text('fail_reason'),
+    createdAt: integer('created_at').notNull().$defaultFn(now),
+    updatedAt: integer('updated_at').notNull().$defaultFn(now),
+  },
+  (table) => ({
+    statusIdx: index('env_pool_status_idx').on(table.status),
+  }),
+)

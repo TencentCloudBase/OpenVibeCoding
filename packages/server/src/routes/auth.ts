@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid'
 import { encryptJWE } from '../lib/session'
 import { requireAuth, type AppEnv, type AppSession } from '../middleware/auth'
 import { provisionUserResources, rollbackProvisionedResources } from '../cloudbase/provision.js'
+import { acquireEnv } from '../cloudbase/env-lifecycle.js'
 
 const SESSION_COOKIE_NAME = 'nex_session'
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year in seconds
@@ -74,11 +75,7 @@ auth.post('/register', async (c) => {
 
     const sessionValue = await encryptJWE(session, '1y')
 
-    // CloudBase 环境配置
-    // provision_mode:
-    //   - shared   → 不写 user_resources（运行时直接用支撑账号）
-    //   - isolated → 同步预建独立 env / CAM / AK / Policy（注册阻塞 ~30s）
-    //   - task     → 注册时不建，待用户首次创建 task 时为该 task 单独建
+    // CloudBase 环境配置 — 通过统一生命周期接口
     const { getProvisionMode } = await import('../lib/provision-config.js')
     const provisionMode = await getProvisionMode()
 
@@ -106,7 +103,7 @@ auth.post('/register', async (c) => {
           updatedAt: now,
         })
 
-        const result = await provisionUserResources(userId, trimmedUsername)
+        const result = await acquireEnv({ userId, username: trimmedUsername, mode: 'isolated' })
         await getDb().userResources.update(resourceId, {
           status: 'success',
           envId: result.envId,
@@ -139,9 +136,7 @@ auth.post('/register', async (c) => {
         return c.json({ error: 'Failed to create cloud environment, please try again later' }, 500)
       }
     }
-    // shared / task：注册不做 provision，user_resources 留空。
-    //   - shared 模式：middleware 直接用 TCB_SECRET_ID/KEY + TCB_ENV_ID
-    //   - task 模式：用户首次创建 task 时为该 task 单独建独立资源
+    // shared / task：注册不做 provision
 
     setCookie(c, SESSION_COOKIE_NAME, sessionValue, {
       path: '/',

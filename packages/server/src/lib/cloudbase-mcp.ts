@@ -245,14 +245,6 @@ export function createInjectCredentials(opts: CreateInjectCredentialsOptions): I
     }
     if (!creds) throw new Error('Failed to obtain user credentials for injection')
 
-    console.log('[createInjectCredentials] inject', {
-      conversationId,
-      envId,
-      userId,
-      source: resource ? (resource.scope === 'task' ? 'task-resource' : 'user-resource') : 'temp-credentials',
-      secretIdPrefix: creds.secretId.slice(0, 8),
-    })
-
     const res = await sandboxFetch('/api/workspace/env', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

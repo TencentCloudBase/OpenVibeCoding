@@ -15,7 +15,7 @@ import {
 } from '@coder/shared'
 import { CloudbaseAgentService, getSupportedModels } from '../agent/cloudbase-agent.service.js'
 import { persistenceService } from '../agent/persistence.service.js'
-import { getAgentRun, type StopReason } from '../agent/agent-registry.js'
+import { getAgentRun, removeAgent, type StopReason } from '../agent/agent-registry.js'
 import { agentRuntimeRegistry } from '../agent/runtime/index.js'
 import { emitForConversation, getAskUserToken } from '../agent/runtime/opencode-acp-runtime.js'
 import { registerPendingQuestion } from '../agent/runtime/pending-question-registry.js'
@@ -561,8 +561,9 @@ async function observeStream(
       // Replay failure is non-fatal
     }
 
-    // 2. Poll loop —— 同 observeStreamWithLiveCallback：SSE 寿命跟随 agent，
-    //    仅在 agent 真完成时才发 stopReason + [DONE]；客户端断流时静默 return。
+    // 2. Poll loop — SSE 寿命跟随 agent，仅在 agent 真完成时才发 stopReason + [DONE]；
+    //    客户端断流时静默 return。
+    //    run === undefined 意味着 registry 已被消费者清理（agent 已结束），直接视为完成。
     let agentDone = false
     while (true) {
       if (stream.closed || stream.aborted) {
@@ -623,6 +624,7 @@ async function observeStream(
       persistenceService.cleanupStreamEvents(sessionId, turnId).catch(() => {
         // Non-critical
       })
+      removeAgent(sessionId, turnId)
     }
   })
 }
@@ -736,6 +738,9 @@ async function observeStreamWithLiveCallback(
       }
 
       const run = getAgentRun(sessionId)
+      // run === undefined means the registry was already cleaned up by a previous
+      // SSE consumer (after sending [DONE]). Treat immediately as done.
+      // run.status !== 'running' means agent completed/errored/cancelled.
       const isDone = !run || run.status !== 'running'
 
       if (isDone && !firstIsDoneAt) {
@@ -860,6 +865,9 @@ async function observeStreamWithLiveCallback(
       persistenceService.cleanupStreamEvents(sessionId, turnId).catch(() => {
         // Non-critical
       })
+      // Registry entry is no longer needed — SSE has sent [DONE] and extracted
+      // all state. Remove immediately instead of relying on a 30s timer.
+      removeAgent(sessionId, turnId)
     }
   })
 }

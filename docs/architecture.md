@@ -13,10 +13,16 @@ graph TB
 
     subgraph Server["Server (Hono)"]
         Auth["Auth & User Env"]
-        AgentSvc["Agent Service"]
+        RuntimeMgr["ACP Runtime Manager"]
         TaskSvc["Task Service"]
         Persist["Persistence"]
-        MCP["MCP Proxy"]
+        MCPMiddleware["MCP Middleware"]
+    end
+
+    subgraph Runtimes["AI Runtimes"]
+        CodeBuddy["CodeBuddy Runtime"]
+        OpenCode["OpenCode Runtime"]
+        MiMo["MiMo Runtime"]
     end
 
     subgraph Infra["CloudBase Infrastructure"]
@@ -24,11 +30,7 @@ graph TB
         SCF["SCF Sandbox"]
         Storage["Cloud Storage"]
         TCR["TCR Registry"]
-    end
-
-    subgraph AI["AI Layer"]
-        SDK["CodeBuddy SDK"]
-        Models["GLM / DeepSeek / Kimi"]
+        EnvPool["Environment Pool"]
     end
 
     subgraph Git["Git Archive"]
@@ -37,16 +39,17 @@ graph TB
 
     Web --> Auth
     Dashboard --> Auth
-    Auth --> AgentSvc
+    Auth --> RuntimeMgr
     Auth --> TaskSvc
-    AgentSvc --> SDK --> Models
-    AgentSvc --> MCP
-    MCP --> SCF
+    RuntimeMgr --> CodeBuddy & OpenCode & MiMo
+    CodeBuddy & OpenCode & MiMo --> MCPMiddleware
+    MCPMiddleware --> SCF
     TaskSvc --> SCF
-    AgentSvc --> Persist --> DB
+    RuntimeMgr --> Persist --> DB
     SCF --> CNB
     SCF --> TCR
     TaskSvc --> Storage
+    Auth --> EnvPool --> DB
 ```
 
 ## Project Structure
@@ -81,7 +84,7 @@ packages/
 | 本地账密 | 用户名 + bcrypt 密码 | `routes/auth.ts` POST `/register`, `/login` |
 | GitHub OAuth | OAuth 2.0 登录或账号关联 | `routes/github-auth.ts` GET `/login`, `/callback` |
 | CloudBase 身份 | CloudBase 身份源登录 | `routes/cloudbase-auth.ts` POST `/login` |
-| API Key | Bearer `sak_xxx` 头部鉴权 | `middleware/auth.ts:49` |
+| API Key | Bearer `sak_xxx` 头部鉴权 | `middleware/auth.ts` |
 
 ### Cloud Environment Binding
 
@@ -114,20 +117,50 @@ sequenceDiagram
     end
 ```
 
-**Environment Provisioning Modes:**
+### Environment Provisioning Modes
 
-| Mode | Description |
-| --- | --- |
-| `shared` | 所有用户共用一个 CloudBase 支撑环境（默认） |
-| `isolated` | 每个用户自动分配独立 CloudBase 环境 |
+系统支持三种环境隔离粒度，可在 `/admin/settings` 动态切换（DB 配置优先级高于环境变量默认值）：
 
-注册时系统根据 `TCB_PROVISION_MODE` 自动完成环境分配。下游所有需要 CloudBase 能力的路由都通过 `requireUserEnv()` 中间件获取 `{ envId, userId, credentials }`。
+| Mode | Description | CAM 行为 |
+| --- | --- | --- |
+| `shared` | 所有用户共用支撑 CloudBase 环境（默认） | 注册不写 user_resources；middleware 直接用 `TCB_SECRET_ID/KEY` + `TCB_ENV_ID` |
+| `isolated` | 每个用户分配独立 CloudBase 环境 | 注册时同步预建 user-level env / CAM / AK / Policy；该用户所有 task 共享此 env |
+| `task` | 每个任务独立环境 + 独立 CAM 子账号 | 注册不建；task 创建时同步建独立 env + CAM 子账号 `vibe_t_{taskId}` + AK + Policy |
+
+`requireUserEnv` 中间件按 mode 短路解析，支持 taskId hint / envId hint 三级解析路径。
+
+### Environment Pool
+
+为降低 `isolated` / `task` 模式下的环境获取延迟，系统支持环境池预创建：
+
+- 预创建 CloudBase 环境 + CAM + Policy，获取环境从分钟级降至毫秒级
+- 统一生命周期接口 `acquireEnv()` / `releaseEnv()`，屏蔽池化实现细节
+- 池空时自动回退实时创建，零停机降级
+- 多 Pod 安全：认领使用 CAS 原子操作，补充使用分布式锁（settings 表 TTL 锁）
+- 管理后台 `/admin/env-pool`：池配置（开关 + 容量）、实时状态监控、手动补充 / 释放
+- 配置存 DB（`env_pool_enabled` / `env_pool_size`），可动态修改无需重启
 
 ---
 
 ## Agent Module
 
 Agent 模块负责 AI 编程助手的会话管理、模型调用和流式交互。
+
+### ACP Runtime 抽象层
+
+系统通过 `IAgentRuntime` 接口统一多个 AI Agent 运行时，支持并行运行：
+
+| Runtime ID | 实现 | 特点 |
+| --- | --- | --- |
+| `codebuddy` | `@tencent-ai/agent-sdk` | 支持 Claude、GPT、Gemini、DeepSeek 等；Plan 模式；Subagent 嵌套 |
+| `opencode` | OpenCode ACP runtime | 项目级配置隔离（`.opencode/tools/`） |
+| `mimo` | MiMo provider | mimo-v2.5-pro（图片理解）、mimo-v2.5、TTS 系列 |
+
+`opencode` 和 `mimo` 共享 `opencode-acp` runtime 实现。
+
+**`GET /api/agent/runtimes`** 返回每个 runtime 的可用状态和模型列表，前端据此驱动 disabled 状态。
+
+切换 agent 时，前端自动校验 `selectedModel` 是否在目标 runtime 的模型列表中，不存在则选第一个。
 
 ### ACP Protocol
 
@@ -141,15 +174,43 @@ Agent 通过 ACP (Agent Communication Protocol) 与前端交互，基于 JSON-RP
 | `session/prompt` | 发送用户消息，触发 Agent 执行 |
 | `session/cancel` | 取消当前执行 |
 
+前端通过 `AcpClient` 类封装所有协议交互：`initializeSession` / `request` / `notify` / `stream`（AsyncIterable）/ `observe`（AsyncIterable）/ `cancel`。网络错误和 5xx 响应会自动指数退避重试。
+
 流式响应通过 SSE (Server-Sent Events) 返回，支持以下事件类型：
 
-- `text` — Agent 文本输出
-- `thinking` — 推理过程
-- `tool_use` / `tool_result` — 工具调用与结果
-- `log` — 日志输出
-- `ask_user` — Agent 向用户提问
-- `tool_confirm` — 敏感工具调用需用户确认
-- `artifact` — 结构化产物（部署 URL、小程序二维码、上传结果等）
+| Event | Description |
+| --- | --- |
+| `text` | Agent 文本输出 |
+| `thinking` | 推理过程（discriminator: `'thinking'`） |
+| `tool_use` / `tool_result` | 工具调用与结果 |
+| `log` | 日志输出 |
+| `ask_user` | Agent 向用户提问（触发 Human-in-Loop） |
+| `tool_confirm` | 敏感工具调用需用户确认 |
+| `agent_phase` | 执行阶段：preparing / model_responding / tool_executing / compacting / idle |
+| `artifact` | 结构化产物（部署 URL、小程序二维码、上传结果等） |
+| `stop_reason` | 停止原因透传（refusal / max_tokens / error 等） |
+
+服务端在 5 处边界通过 `emitPhase()` helper 发射 `agent_phase` 事件，前端 `AgentStatusIndicator` 按阶段显示对应图标（Rocket / Sparkles / Hammer / Archive）。
+
+### Human-in-Loop（权限模型）
+
+系统实现了四值 `PermissionAction`：`allow` / `allow_always` / `deny` / `reject_and_exit_plan`。
+
+**ToolConfirm 流程：**
+1. Agent 调用敏感工具时，服务端发出 `tool_confirm` SSE 事件，流暂停
+2. 前端渲染 `InterruptionCard`（消息流内，不打断上下文）
+3. 用户点击允许/拒绝后，前端立即本地乐观更新 UI，再发送 resume 请求
+4. `sessionPermissions` 维护"本会话始终允许"的工具名白名单，`canUseTool` 命中白名单直接放行
+
+**AskUserQuestion 流程：**
+1. Agent 发出 `ask_user` 事件，携带问题和选项
+2. 前端渲染内联表单，用户提交后流恢复执行
+
+**Plan 模式：**
+- 前端传 `permissionMode: 'plan'`，SDK 切入 Plan 模式
+- 除只读工具（Read / Glob / Grep / ExitPlanMode）外，写操作被拦截
+- 前端渲染 `PlanModeCard`（三按钮：允许执行 / 继续完善 / 拒绝退出）
+- `planModeAtomFamily` 原子跨组件共享 plan 状态
 
 ### Memory & Persistence
 
@@ -162,21 +223,28 @@ Local .jsonl (~/.codebuddy/projects/)  ← 本地备份
   └─ 按 projectHash + sessionId 存储
 ```
 
-**持久化内容包括：**
-- 用户消息和 Agent 回复
-- 工具调用及其结果
-- 思考过程
-- AskUserQuestion / ToolConfirm 的交互状态
-- 流式事件（`vibe_agent_stream_events` 集合）
+持久化内容包括：用户消息和 Agent 回复、工具调用及其结果、思考过程、AskUserQuestion / ToolConfirm 的交互状态、流式事件（`vibe_agent_stream_events` 集合）。
 
-会话可在中断后恢复：通过 `session/load` 从数据库加载历史记录并重建上下文。
+会话可在中断后恢复：通过 `session/load` 从数据库加载历史记录并重建上下文。刷新后 `InterruptionCard` 从 DB `tool_result.metadata.status === 'incomplete'` 重建。
+
+### Tool Renderers
+
+前端通过 `TOOL_RENDERERS` 注册表为每种工具提供专属渲染器：
+
+- 覆盖工具：Bash / Read / Write / Edit / Grep / Glob / Web / Todo / Task（10 个）
+- 每个渲染器提供 `Icon`、`getSummary`、`renderInput`、`renderOutput`
+- Edit 渲染器集成 git-diff-view，显示 before/after unified diff
+- Default 渲染器剥 MCP 外壳，JSON 参数折叠展开
+- DEV 预览页：`/__preview/tool-renderers` 可视化检查所有渲染器效果
+
+### Subagent 嵌套
+
+Agent 调用子 Agent 时，`parent_tool_use_id` 从 SDK 顶层透传至前端 `MessagePart.parentToolCallId`，前端 `SubagentCard` 递归渲染（紫色边框 + Bot 图标 + 子工具数量徽章），支持多层嵌套。
 
 ### Cron Tasks
 
 支持定时触发 Agent 执行：
-
-- 创建 / 更新 / 删除 / 启停定时任务
-- 基于 cron 表达式调度
+- 创建 / 更新 / 删除 / 启停定时任务，基于 cron 表达式调度
 - 服务端 `cron-scheduler.ts` 在启动时加载并按计划触发
 
 ---
@@ -189,11 +257,12 @@ Sandbox 模块为每个任务 / 会话提供隔离的执行环境。
 
 ```mermaid
 flowchart LR
-    Agent["Agent Service"] --> Manager["ScfSandboxManager"]
+    Agent["Agent Runtime"] --> Manager["ScfSandboxManager"]
     Manager --> SCF["SCF Container"]
     SCF --> FS["File System"]
-    SCF --> Bash["Bash Execution"]
+    SCF --> Bash["Bash / PTY"]
     SCF --> MCPServer["MCP Server"]
+    SCF --> PreviewBridge["Preview Bridge"]
     SCF --> Git["Git Archive"]
     MCPServer --> CloudBase["CloudBase Tools"]
     MCPServer --> Deploy["Deployment Tools"]
@@ -202,10 +271,19 @@ flowchart LR
 ### SCF Sandbox Lifecycle
 
 1. **Create or Reuse** — `scfSandboxManager` 根据 conversationId 创建或复用云函数容器
-2. **Health Check** — 轮询 `/health` 等待容器就绪
-3. **Init Workspace** — 通过 `/api/session/init` 注入 CloudBase 凭证和环境变量
+2. **Health Check** — 轮询 `/health` 等待容器就绪（进度细分：镜像拉取 → 容器就绪 → 工作区初始化）
+3. **Init Workspace** — 通过 `ensureSessionRoot(sessionId)` 注入 CloudBase 凭证和环境变量
 4. **Execute** — Agent 通过 HTTP 调用容器内的工具接口
-5. **Archive** — 任务结束时通过 Git 归档工作区
+5. **Archive** — 任务结束（包括 error / cancel）时通过 Git 归档工作区
+
+### Workspace Provisioning API
+
+Sandbox 内部使用语义化 Provisioning API 管理工作区层级：
+
+| API | Description |
+| --- | --- |
+| `ensureSessionRoot(sessionId)` | 确保 session 根目录就绪，不触发 vite 启动 |
+| `ensureWorkspaceFor(sessionId, scopeId?, template)` | 确保工作区就绪，可选挂载 Scope |
 
 ### Sandbox Capabilities
 
@@ -220,20 +298,42 @@ flowchart LR
 | Git Push | `POST /api/extend/git_push` | 将工作区变更推送到远端（`ENABLE_GIT_ARCHIVE`） |
 | MCP Server | In-memory transport | CloudBase 工具和部署工具 |
 | Health | `/health` | 容器健康检查 |
+| Scope Info | `/api/scope/info` | 子工作区路径和 vite 状态 |
+
+### Scope API（子工作区隔离）
+
+同一 session 内支持多个相互隔离的子工作区：
+
+- 通过请求头 `X-Scope-Id` / `X-Scope-Template` 控制
+- 每个 scope 独立运行 vite dev server，端口 5173-5199 动态分配
+- `GET /api/scope/info` 返回工作区路径和 vite 状态（`viteState: "starting" | "ready" | "failed"`）
+- `spawnVite` 将 tar 解压 + npm install 在 `setImmediate` 中异步执行，HTTP handler 立即返回，不阻塞
 
 ### MCP Tool Proxy
 
-Sandbox 内通过 MCP (Model Context Protocol) 向 Agent 提供工具能力：
+Sandbox 内通过 MCP (Model Context Protocol) 向 Agent 提供工具能力。
 
-**动态工具** — 从 CloudBase mcporter 获取 schema，自动注册为 MCP tools：
-- 数据库操作（NoSQL CRUD、SQL 执行）
-- 存储操作（文件上传 / 删除）
-- 云函数操作（创建 / 更新 / 调用）
-- 域名管理、安全规则等
+**CloudBase MCP（内置）** — 全局 CloudBase MCP HTTP server，复用 Express 端口，零额外 TCP 开销；支持 stdio 和 HTTP 两种模式。工具通过 `lib/mcp-middleware/` 的 koa 风格中间件框架进行拦截 / 新增 / 过滤，policy 文件按工具名平铺在 `middleware/mcp/cloudbase/`：
 
-**静态工具：**
-- `publishMiniprogram` — 小程序构建与发布
-- `getDeployJobStatus` — 查询部署任务状态
+| Policy | Description |
+| --- | --- |
+| `auth` | 认证鉴权工具 |
+| `cronTask` | 定时任务管理 |
+| `uploadFiles` | 文件上传（后端签发 STS 临时凭证） |
+| `publishMiniprogram` | 小程序构建与发布 |
+| `downloadTemplate` | 模板下载 |
+| `getDeployJobStatus` | 部署任务状态查询 |
+| ... | 共 13 个 policy |
+
+**用户自定义连接器** — 用户可配置额外的 MCP Server（`local` 进程 / `remote` HTTP），在任务执行时注入 Agent。支持 OAuth 认证和环境变量注入，敏感数据加密存储。
+
+### Preview Bridge
+
+Preview iframe 通过 `usePreviewBridge` hook 与父页面通信：
+- 封装事件监听 + 指令发送 + RPC（`bridge.ping` health check）
+- BrowserControls 改用 postMessage 指令，替代 `contentWindow.history` API
+- 新增 HMR 状态指示灯、URL 同步
+- vite 配置自动 patch：`hmr: { clientPort: 443, protocol: 'wss' }` 适配 CloudBase gateway
 
 ### Workspace Persistence (Git Archive)
 
@@ -245,33 +345,20 @@ Git Remote (GIT_ARCHIVE_REPO)
 │   ├── {conversationId-1}/
 │   │   ├── src/
 │   │   └── package.json
-│   ├── {conversationId-2}/
-│   │   └── ...
+│   └── {conversationId-2}/
+│       └── ...
 ```
 
 - **分支策略**：每个用户环境 (`envId`) 对应一个分支
 - **目录策略**：每个会话 (`conversationId`) 对应分支下的一个目录
-- **推送方式**：通过 Sandbox 内的 `/api/tools/git_push` 执行
+- **归档时机**：任务结束时（含 error / cancel），在 `finally` 块中执行
 - **清理方式**：通过 CNB Gateway API 删除远端目录或分支
-
-### Connector Management
-
-用户可配置额外的 MCP Server 连接器，在任务执行时注入 Agent：
-
-| Type | Description |
-| --- | --- |
-| `local` | 本地进程启动的 MCP Server |
-| `remote` | HTTP 远程 MCP Server |
-
-支持 OAuth 认证和环境变量注入，敏感数据加密存储。
 
 ---
 
 ## Artifact & Deployment Module
 
-所有 Agent 产出（部署 URL、小程序二维码、上传结果等）统一通过 `artifact` 事件传递。每个 artifact 同时创建一条 deployment 记录持久化到数据库。
-
-### Artifact 结构
+所有 Agent 产出统一通过 `artifact` SSE 事件传递，同时创建 deployment 记录持久化到数据库。
 
 ```typescript
 interface Artifact {
@@ -283,69 +370,38 @@ interface Artifact {
 }
 ```
 
-### Web Deployment
+| 部署类型 | 触发方式 | Artifact contentType |
+| --- | --- | --- |
+| Web 静态托管 | `uploadFiles` 工具检测到静态托管 URL | `'link'` |
+| 微信小程序 | MCP 工具 `publishMiniprogram` | `'image'`（预览二维码）/ `'json'`（上传结果） |
+| 图片生成 | Default 模式 ImageGen tool | `'link'`（CDN URL） |
 
-当 `uploadFiles` 工具检测到静态托管 URL 时，产生 `contentType: 'link'` 的 artifact：
-- Agent 将构建产物上传到 CloudBase Storage
-- 自动提取并返回静态托管 URL
-- 创建 `type: 'web'` 的 deployment 记录
-
-### MiniProgram Deployment
-
-通过 MCP 工具 `publishMiniprogram` 发布微信小程序，产生 `contentType: 'image'` 或 `contentType: 'json'` 的 artifact：
-- 管理小程序 AppId 和私钥
-- 触发 CI 构建
-- 返回预览二维码（image artifact）和上传结果（json artifact）
-- 通过 `getDeployJobStatus` 轮询发布状态
-- 创建 `type: 'miniprogram'` 的 deployment 记录
-
-### Deployment 记录
-
-所有 artifact 都会创建 deployment 记录，包含：
-- URL（link 类型）或 QR Code URL（image 类型）
-- 标签、页面路径、AppId
-- 原始 metadata
+小程序部署超过 60s 时接口异步返回 `{ async: true, jobId }`，客户端轮询 `GET /api/miniprogram/deploy/:jobId` 获取实时构建日志。
 
 前端 Deployments 标签页统一渲染所有 deployment 记录，根据字段自动选择卡片样式（链接卡片 / 二维码卡片 / 通用卡片）。
 
 ---
 
-## Admin Module
+## CloudBase Dashboard
 
-管理后台提供平台治理能力，仅限 `role=admin` 的用户访问。
-
-### Capabilities
-
-| Feature | Description |
-| --- | --- |
-| User Management | 用户列表、创建、禁用 / 启用、角色设置、密码重置 |
-| Task Inspection | 全量任务查看、按用户筛选、消息详情 |
-| Environment Overview | 所有用户的 CloudBase 环境列表 |
-| Resource Proxy | 按 envId 代理访问 database / storage / functions / capi |
-| Audit Log | 管理员操作日志记录与查询 |
-
-### Resource Proxy
-
-管理员可通过 `/api/admin/proxy/:envId/*` 以指定用户环境的身份访问 CloudBase 资源，覆盖：
-- Database（集合与文档操作）
-- Storage（文件管理）
-- Functions（云函数调用）
-- CAPI（通用腾讯云 API）
+task 详情页内嵌 CloudBase 资源管理 Dashboard，envId/taskId 通过 Context 强制参数化，所有请求自动携带 `?envId=` 与 `X-Task-Id`。
 
 ---
 
-## CloudBase Resource Management
+## Admin Module
 
-平台内置 CloudBase 资源管理能力，面向用户自己的云开发环境：
+管理后台提供平台治理能力，仅限 `role=admin` 的用户访问（`requireAdmin` 中间件保护）。
 
-| Resource | Capabilities |
+| Feature | Description |
 | --- | --- |
-| Database | 集合 CRUD、文档分页查询 / 增删改 |
-| Storage | 文件列表、上传 / 下载 / 删除、静态托管 |
-| Functions | 云函数列表、调用 |
-| CAPI | 通用腾讯云 API 代理 |
+| User Management | 用户列表、创建、禁用 / 启用、角色设置、密码重置、API Key 管理 |
+| Task Inspection | 全量任务查看、按用户筛选、消息详情 |
+| Environment Settings | provision mode 切换、环境池配置 |
+| Environment Pool | `/admin/env-pool`：实时状态监控、手动补充 / 释放 |
+| Resource Proxy | 按 envId 代理访问 database / storage / functions / capi |
+| Audit Log | 管理员操作日志记录与查询 |
 
-`packages/dashboard` 提供独立的管理 UI，也可嵌入到主应用的管理后台中。
+管理员操作记录到 `adminLogs` 表，包含操作类型、目标用户、IP 和 User-Agent。代理访问用户环境时使用系统级凭证，不继承用户凭证。
 
 ---
 
@@ -358,31 +414,37 @@ sequenceDiagram
     participant User
     participant Web
     participant Server
-    participant Agent as Agent Service
+    participant Runtime as ACP Runtime
     participant Sandbox as SCF Sandbox
     participant DB as CloudBase DB
     participant Git as Git Archive
 
-    User->>Web: Create task with prompt
+    User->>Web: Create task (select agent + model)
     Web->>Server: POST /api/agent/chat
     Server->>Server: authMiddleware + requireUserEnv
-    Server->>Agent: chatStream(prompt, options)
-    Agent->>Sandbox: Create or reuse sandbox
-    Sandbox-->>Agent: Health check OK
-    Agent->>Sandbox: Init workspace (inject credentials)
-    Agent->>Agent: Call LLM via CodeBuddy SDK
+    Server->>Runtime: chatStream(prompt, options)
+    Runtime->>Sandbox: Create or reuse sandbox
+    Sandbox-->>Runtime: Health check OK
+    Runtime->>Sandbox: ensureSessionRoot (inject credentials)
+    Runtime->>Runtime: Call LLM via selected runtime
 
     loop Agent execution
-        Agent->>Sandbox: Tool call (bash / file / mcp)
-        Sandbox-->>Agent: Tool result
-        Agent-->>Web: SSE event (text / tool / thinking)
-        Agent->>DB: Persist message
+        Runtime->>Sandbox: Tool call (bash / file / mcp)
+        Sandbox-->>Runtime: Tool result
+        Runtime-->>Web: SSE event (text / tool / phase / artifact)
+        Runtime->>DB: Persist message
+        opt Human-in-Loop
+            Runtime-->>Web: SSE ask_user / tool_confirm
+            Web-->>User: InterruptionCard / AskUserForm
+            User-->>Web: Submit response
+            Web->>Runtime: Resume stream
+        end
     end
 
-    Agent->>Sandbox: Git archive workspace
+    Runtime->>Sandbox: Git archive workspace
     Sandbox->>Git: git push
-    Agent-->>Web: SSE complete
-    Agent->>DB: Finalize messages
+    Runtime-->>Web: SSE [DONE]
+    Runtime->>DB: Finalize messages (status=done)
 ```
 
 ---
@@ -394,10 +456,11 @@ sequenceDiagram
 | Frontend | React 19, Vite, Tailwind CSS 4, shadcn/ui, Jotai |
 | Backend | Hono, Node.js, Drizzle ORM |
 | Database | CloudBase DB (primary), SQLite (local fallback) |
-| AI | CodeBuddy SDK (`@tencent-ai/agent-sdk`), MCP |
+| AI | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP, MiMo |
 | Sandbox | CloudBase SCF, TCR container images |
 | Auth | JWE session, bcrypt, Arctic (OAuth) |
 | Persistence | CloudBase DB, local .jsonl, Git archive |
+| Protocol | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |
 
 ---
 
@@ -408,7 +471,7 @@ sequenceDiagram
 | Route | Module | Auth | Description |
 | --- | --- | --- | --- |
 | `GET /health` | inline | None | 健康检查 |
-| `/api/auth/*` | `routes/auth.ts` | None / Cookie | 注册、登录、登出、用户信息、速率限制、API Key |
+| `/api/auth/*` | `routes/auth.ts` | None / Cookie | 注册、登录、登出、用户信息、API Key |
 | `/api/auth/github/*` | `routes/github-auth.ts` | Cookie | GitHub OAuth 登录、回调、关联、断开 |
 | `/api/auth/cloudbase/*` | `routes/cloudbase-auth.ts` | None | CloudBase 身份登录 |
 | `/api/agent/*` | `routes/acp.ts` | Cookie + UserEnv | ACP 协议、会话 CRUD、SSE chat、消息记录 |
@@ -416,16 +479,15 @@ sequenceDiagram
 | `/api/github/*` | `routes/github.ts` | Cookie | GitHub 用户、仓库、组织 |
 | `/api/repos/*` | `routes/repos.ts` | Cookie | 仓库 commits / issues / PRs 查询 |
 | `/api/connectors/*` | `routes/connectors.ts` | Cookie | MCP 连接器 CRUD |
-| `/api/miniprogram/*` | `routes/miniprogram.ts` | Cookie | 小程序应用管理 |
+| `/api/miniprogram/*` | `routes/miniprogram.ts` | Cookie | 小程序应用管理、部署轮询 |
 | `/api/crontask/*` | `routes/crontask.ts` | Cookie | 定时任务 CRUD |
 | `/api/api-keys/*` | `routes/api-keys.ts` | Cookie | 用户 API Key 管理 |
 | `/api/database/*` | `routes/database.ts` | Cookie + UserEnv | CloudBase 集合与文档操作 |
-| `/api/storage/*` | `routes/storage.ts` | Cookie + UserEnv | CloudBase 文件管理 |
+| `/api/storage/*` | `routes/storage.ts` | Cookie + UserEnv | CloudBase 文件管理、上传凭证签发 |
 | `/api/functions/*` | `routes/functions.ts` | Cookie + UserEnv | CloudBase 云函数列表与调用 |
-| `/api/sql/*` | `routes/sql.ts` | Cookie + UserEnv | SQL 查询（预留） |
+| `/api/sql/*` | `routes/sql.ts` | Cookie + UserEnv | SQL 查询 |
 | `/api/capi` | `routes/capi.ts` | Cookie + UserEnv | 通用腾讯云 API 代理 |
-| `/api/admin/*` | `routes/admin.ts` | Cookie + Admin | 用户管理、任务巡检、环境代理、审计日志 |
-| `/api/github-stars` | `routes/misc.ts` | None | GitHub Star 数（缓存） |
+| `/api/admin/*` | `routes/admin.ts` | Cookie + Admin | 用户管理、任务巡检、环境代理、审计日志、环境池 |
 | `/api/sandboxes` | `routes/misc.ts` | Cookie + UserEnv | 活跃 Sandbox 列表 |
 
 **Auth 列说明：**
@@ -448,7 +510,7 @@ erDiagram
     users ||--o{ cronTasks : owns
     users ||--o{ accounts : has
     users ||--o{ keys : stores
-    users ||--o| userResources : binds
+    users ||--o{ userResources : binds
     users ||--o{ settings : configures
     users ||--o| localCredentials : authenticates
     tasks ||--o{ deployments : produces
@@ -456,12 +518,12 @@ erDiagram
 
     users {
         text id PK
-        text provider "github | local"
+        text provider "github | local | cloudbase"
         text username
         text email
         text role "user | admin"
         text status "active | disabled"
-        text apiKey "encrypted sak_xxx"
+        text apiKey "sak_xxx (plain, DB has ADMINONLY rule)"
         integer createdAt
     }
 
@@ -474,9 +536,11 @@ erDiagram
         text id PK
         text userId FK
         text prompt
+        text mode "default | coding"
         text status "pending | processing | completed | error"
         text sandboxId
-        text selectedAgent
+        text sandboxMode "shared | isolated"
+        text selectedAgent "codebuddy | opencode | mimo"
         text selectedModel
         text mcpServerIds "JSON array"
         text prUrl
@@ -524,6 +588,7 @@ erDiagram
     userResources {
         text id PK
         text userId FK
+        text scope "user | task"
         text envId "CloudBase env"
         text camSecretId
         text camSecretKey
@@ -540,7 +605,7 @@ erDiagram
     keys {
         text id PK
         text userId FK
-        text provider "anthropic | openai | gemini..."
+        text provider "anthropic | openai | gemini | ..."
         text value "encrypted"
     }
 
@@ -549,6 +614,7 @@ erDiagram
         text userId FK
         text key
         text value
+        integer expiresAt "for distributed lock TTL"
     }
 
     adminLogs {
@@ -580,13 +646,13 @@ erDiagram
 
 | Data | Storage |
 | --- | --- |
-| 用户 API Key (`sak_xxx`) | `users.apiKey` — 加密存储 |
 | GitHub Access Token | `accounts.accessToken` — 加密存储 |
 | MCP Connector OAuth Secret | `connectors.oauthClientSecret` — 加密存储 |
 | MCP Connector Env Vars | `connectors.env` — 加密存储 |
 | 小程序私钥 | `miniprogramApps.privateKey` — 加密存储 |
 | 用户 AI API Keys | `keys.value` — 加密存储 |
 | 本地用户密码 | `localCredentials.passwordHash` — bcrypt 哈希 |
+| 用户 API Key | `users.apiKey` — 明文存储（`sak_xxx`，DB 层有 ADMINONLY 安全规则保护，可吊销） |
 
 加密密钥通过 `ENCRYPTION_KEY` 环境变量配置（32 字节 hex），init 脚本自动生成。
 
@@ -600,18 +666,22 @@ erDiagram
 
 - 系统级密钥（`TCB_SECRET_ID` / `TCB_SECRET_KEY`）仅用于支撑环境操作
 - 用户级操作通过 STS 签发临时凭证，scope 限定在用户自己的 `envId` 内
-- 临时凭证有效期 2 小时，提前 5 分钟自动刷新，内存缓存
-- `isolated` 模式下每个用户拥有独立 CAM 子用户和密钥
+- 临时凭证内存缓存，cache key 为 `userId:envId`（含 envId 避免跨环境拿错 token）
+- `task` 模式下每个 task 独立 CAM 子账号 `vibe_t_{taskId}`，避免密钥轮换影响其他 task
+- 上传文件使用后端签发的 STS 临时凭证（`POST /api/storage/upload-credential`），规避子账号 GetFederationToken 限制
+- Git remote URL 不嵌入 token，改用内存 credential helper 在 push/fetch 时动态注入
+
+### CloudBase Database Security
+
+所有系统集合（users / tasks / keys 等）在首次访问时自动通过 `ModifySafeRule(AclTag=ADMINONLY)` 设为管理员专用，阻止前端 Web SDK 直接读写。
 
 ### Log Security
 
-所有日志输出必须使用静态字符串，禁止包含动态值（详见 `AGENTS.md`）。`redactSensitiveInfo()` 函数作为二级防护，自动脱敏已知敏感模式（API Key、Token、密钥等）。
+所有日志输出必须使用静态字符串，禁止包含动态值（详见 `AGENTS.md`）。`redactSensitiveInfo()` 函数作为二级防护，自动脱敏已知敏感模式。
 
-### Admin Access Control
+### Resource Destruction Safety
 
-- 管理后台路由通过 `requireAdmin` 中间件保护
-- 管理员操作记录到 `adminLogs` 表，包含操作类型、目标用户、IP 和 User-Agent
-- 管理员代理访问用户环境时使用系统级凭证，不继承用户凭证
+`destroyProvisionedResources` 返回 `{ steps, failed }`，NotFound 类错误视为幂等成功；资源未清完时返回 409，DB row 保留可重试（如 env "云存储域名尚在初始化中" 场景）。
 
 ---
 
@@ -620,3 +690,4 @@ erDiagram
 - [Setup Guide](./setup.md) — 初始化流程、环境变量、验证与排障
 - [SCF Session Sharing](./scf-session-sharing.md) — 沙箱会话共享方案
 - [Cron Task Plan](./crontask-cloudfunction-plan.md) — 定时任务云函数演进规划
+- [ACP Runtime Abstraction](./acp-runtime-abstraction.md) — ACP Runtime 抽象层设计

@@ -36,6 +36,7 @@ import {
   provisionUserResources,
   rollbackProvisionedResources,
 } from '../cloudbase/provision.js'
+import { acquireEnv, releaseEnv } from '../cloudbase/env-lifecycle.js'
 import { getProvisionMode } from '../lib/provision-config.js'
 import type { Octokit as OctokitType } from '@octokit/rest'
 import type { Task } from '../db/types.js'
@@ -257,13 +258,17 @@ tasksRouter.post('/', async (c) => {
   let provisionedCamUsername: string | null = null
 
   if (provisionMode === 'task') {
-    // 同步创建 task 级独立环境
+    // 同步获取 task 级独立环境（池化开启时从池认领，否则实时创建）
     if (!process.env.TCB_SECRET_ID || !process.env.TCB_SECRET_KEY) {
       return c.json({ error: 'TCB_SECRET_ID/KEY 未配置，无法创建 task 级环境' }, 500)
     }
     try {
-      console.log('[tasks.create] provisioning task env synchronously', { taskId })
-      const result = await provisionUserResources(session.user.id, session.user.username, { taskId })
+      const result = await acquireEnv({
+        userId: session.user.id,
+        username: session.user.username,
+        taskId,
+        mode: 'task',
+      })
       provisionedCamUsername = result.camUsername
       // 写入 user_resources（scope='task'）
       provisionedResourceId = nanoid()
@@ -295,7 +300,7 @@ tasksRouter.post('/', async (c) => {
       })
       console.log('[tasks.create] task env ready', { taskId, envId: result.envId })
     } catch (err) {
-      console.error('[tasks.create] task env provision failed:', (err as Error).message)
+      console.error('[tasks.create] task env acquire failed:', (err as Error).message)
       // 回滚已创建的腾讯云资源（best-effort）
       try {
         await rollbackProvisionedResources({
@@ -324,7 +329,6 @@ tasksRouter.post('/', async (c) => {
         if (!process.env.TCB_SECRET_ID || !process.env.TCB_SECRET_KEY) {
           return c.json({ error: 'TCB_SECRET_ID/KEY 未配置，无法创建 user-level 环境' }, 500)
         }
-        console.log('[tasks.create] lazily provisioning user-level env for isolated mode')
         const result = await provisionUserResources(session.user.id, session.user.username)
         if (resource?.id) {
           await getDb().userResources.update(resource.id, {
@@ -501,16 +505,9 @@ async function deleteTaskForUser(
 
   const taskResource = await getDb().userResources.findByTaskId(taskId)
   if (taskResource && taskResource.scope === 'task') {
-    console.log('[task-delete] destroying task-scoped resources', {
-      resourceId: taskResource.id,
-      envId: taskResource.envId,
-      camUsername: taskResource.camUsername,
-      policyId: taskResource.policyId,
-      cosTagValue: taskResource.cosTagValue,
-    })
-    let result: Awaited<ReturnType<typeof destroyProvisionedResources>>
+    let result: Awaited<ReturnType<typeof releaseEnv>>
     try {
-      result = await destroyProvisionedResources({
+      result = await releaseEnv({
         camUsername: taskResource.camUsername,
         policyId: taskResource.policyId,
         envId: taskResource.envId,
@@ -518,7 +515,7 @@ async function deleteTaskForUser(
       })
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
-      console.warn('[task-delete] destroyProvisionedResources threw', { message })
+      console.warn('[task-delete] releaseEnv threw', { message })
       return {
         ok: false,
         failure: {

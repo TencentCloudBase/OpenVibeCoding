@@ -108,7 +108,7 @@ flowchart TD
 | `TCB_SECRET_ID` | 是 | 腾讯云 API 密钥 ID |
 | `TCB_SECRET_KEY` | 是 | 腾讯云 API 密钥 Key |
 | `TCB_REGION` | 否 | 默认是 `ap-shanghai` |
-| `TCB_PROVISION_MODE` | 否 | 用户环境模式，支持 `shared` 和 `isolated` |
+| `TCB_PROVISION_MODE` | 否 | 用户环境模式，支持 `shared` / `isolated` / `task`，默认 `shared` |
 
 ### CodeBuddy 认证
 
@@ -131,17 +131,23 @@ flowchart TD
 
 ## 用户环境模式
 
-初始化时需要选择 `TCB_PROVISION_MODE`。
+初始化时需要选择 `TCB_PROVISION_MODE`，也可在 `/admin/settings` 运行时动态切换。
 
 ### `shared`
 - 默认推荐模式
 - 所有用户复用同一个 CloudBase 环境
-- 配置简单，适合作为默认启动方式
+- 配置简单，适合个人使用或快速试用
 
 ### `isolated`
-- 每个用户单独分配环境
+- 每个用户单独分配独立 CloudBase 环境 + CAM 子账号
 - 对账号余额、权限和环境创建能力有更高要求
-- 适合需要更强隔离性的场景
+- 适合多用户 SaaS 部署
+
+### `task`
+- 每个任务创建独立 CloudBase 环境 + 独立 CAM 子账号（`vibe_t_{taskId}`）
+- 任务间完全隔离，互不影响密钥
+- 适合高安全隔离需求场景
+- 配合环境池（`env_pool_enabled=true`）可将获取延迟降至毫秒级
 
 服务端会在请求进入需要环境能力的路由时，通过 `requireUserEnv()` 检查用户是否已经具备 `envId`。如果没有，会返回 `User environment not ready`。
 
@@ -253,6 +259,55 @@ pnpm setup:tcr
 pnpm rebuild better-sqlite3
 ```
 
+## OpenCode Agent 配置（可选）
+
+如果需要在前端使用 OpenCode agent（基于 [opencode-ai](https://github.com/sst/opencode) 的 ACP runtime），需要额外配置 LLM provider。
+
+### 前置：安装 opencode CLI
+
+```bash
+npm i -g opencode-ai
+opencode --version   # 验证安装
+```
+
+### 配置 provider
+
+```bash
+pnpm opencode:setup
+```
+
+脚本会自动完成以下操作：
+
+1. 调用 腾讯云开发 AI+ 接口 [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) 拉取模型
+2. 引导并配置腾讯云开发 API Key
+3. 从 catalog 取完整配置写入 `.opencode/opencode.json`（含 npm/baseURL/models 等）
+4. 把 API Key 写入 `packages/server/.env`
+
+配置完成后**必须重启 server**（Node.js 的 `--env-file` 只在启动时加载一次）。
+
+### 涉及的文件
+
+| 文件 | 作用 | 是否 gitignore |
+|---|---|---|
+| `.opencode/opencode.json` | provider + model 定义（opencode 子进程 + server 均读取） | 否（应提交） |
+| `packages/server/.env` | API Key 等凭证 | 是 |
+
+### 常见问题
+
+| 问题 | 原因 | 解决 |
+|---|---|---|
+| 前端 OpenCode agent 模型列表为空 | `opencode.json` 未配置 provider 或对应 env 未设置 | 运行 `pnpm opencode:setup` |
+| 前端有模型但选中后 agent 无输出 | opencode.json 中 provider 字段不完整 | 重跑 `pnpm opencode:setup`，或手动补齐 npm/baseURL/models |
+| 出现不应该有的模型（如未配置的 OpenAI） | `.env` 中有通用 env 名（如 `OPENAI_API_KEY`）被 catalog 错误匹配 | 删除或注释 `.env` 中不需要的 key |
+| 配置后前端没变化 | server 未重启 | 重启 `pnpm dev:server` |
+
+### 更多文档
+
+- [OpenCode 配置](https://opencode.ai/docs/zh-cn/config/)
+- [OpenCode 模型](https://opencode.ai/docs/zh-cn/models/)
+- [OpenCode Provider](https://opencode.ai/docs/zh-cn/providers/)
+- [models.dev catalog](https://models.dev)
+
 ## 手动初始化的推荐顺序
 
 如果不使用交互式脚本，建议按照以下顺序手动处理：
@@ -263,7 +318,8 @@ pnpm rebuild better-sqlite3
 4. 配置 CodeBuddy 认证
 5. 配置 TCR 镜像
 6. 初始化数据库
-7. 运行构建或启动命令验证环境
+7. （可选）配置 OpenCode provider：`pnpm opencode:setup`
+8. 运行构建或启动命令验证环境
 
 ## 延伸阅读
 

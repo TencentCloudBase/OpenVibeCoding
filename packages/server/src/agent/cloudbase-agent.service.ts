@@ -22,14 +22,7 @@ import { STATEFUL_WORKSPACE_ROOT, resolveSandboxConfig, backfillSandboxConfig } 
 import { decrypt } from '../lib/crypto.js'
 import { encryptJWE } from '../lib/session.js'
 import type { AgentCallbackMessage, AgentOptions, CodeBuddyMessage, ExtendedSessionUpdate } from '@coder/shared'
-import {
-  registerAgent,
-  getAgentRun,
-  completeAgent,
-  removeAgent,
-  isAgentRunning,
-  type StopReason,
-} from './agent-registry.js'
+import { registerAgent, getAgentRun, completeAgent, isAgentRunning, type StopReason } from './agent-registry.js'
 import { EventBuffer } from './event-buffer.js'
 import { sessionPermissions, normalizeToolName } from './session-permissions.js'
 import { initRepo, pushToUserGit } from '../sandbox/git-personal'
@@ -40,6 +33,7 @@ const DEFAULT_MODEL = 'glm-5.1'
 const OAUTH_TOKEN_ENDPOINT = 'https://copilot.tencent.com/oauth2/token'
 const CONNECT_TIMEOUT_MS = 60_000
 const ITERATION_TIMEOUT_MS = 2 * 60 * 1000
+const DEBUG_JSONL = process.env.AGENT_DEBUG_JSONL === '1' || process.env.AGENT_DEBUG_JSONL === 'true'
 
 /**
  * 把 CodeBuddy SDK 的 result subtype + stream stop_reason 映射成 ACP stopReason。
@@ -613,11 +607,11 @@ export class CloudbaseAgentService {
     }
 
     // Coding 模式：自动放行所有写工具（agent 需要自由操作数据库和部署）
-    if (isCodingMode && conversationId) {
-      for (const tool of WRITE_TOOLS) {
-        sessionPermissions.allowAlways(conversationId, tool)
-      }
-    }
+    // if (isCodingMode && conversationId) {
+    //   for (const tool of WRITE_TOOLS) {
+    //     sessionPermissions.allowAlways(conversationId, tool)
+    //   }
+    // }
 
     // ── 创建 EventBuffer 用于持久化 ACP 事件 ─────────────────────────
     const eventBuffer = new EventBuffer(conversationId, assistantMessageId, userContext.envId, userContext.userId)
@@ -725,10 +719,13 @@ export class CloudbaseAgentService {
     // 见下方 "Resume toolConfirmation: 真实执行" 块
     let preSavedUserRecordId: string | null = null
 
-    // DEBUG: ACP SSE event log path (shared with message loop debug dir)
-    const debugAcpLogDir = path.resolve(localCwd, 'debug-jsonl')
-    mkdirSync(debugAcpLogDir, { recursive: true })
-    const debugAcpLogPath = path.join(debugAcpLogDir, `${conversationId}_acp_${Date.now()}.jsonl`)
+    // DEBUG: ACP SSE event log (enabled via AGENT_DEBUG_JSONL=1)
+    let debugAcpLogPath: string | null = null
+    if (DEBUG_JSONL) {
+      const debugAcpLogDir = path.resolve(localCwd, 'debug-jsonl')
+      mkdirSync(debugAcpLogDir, { recursive: true })
+      debugAcpLogPath = path.join(debugAcpLogDir, `${conversationId}_acp_${Date.now()}.jsonl`)
+    }
 
     const wrappedCallback: AgentCallback = (msg) => {
       // Enrich message with assistantMessageId
@@ -745,10 +742,12 @@ export class CloudbaseAgentService {
       }
 
       // DEBUG: log raw AgentCallbackMessage and converted ACP event
-      try {
-        appendFileSync(debugAcpLogPath, JSON.stringify({ ts: Date.now(), raw: enrichedMsg, acp: acpEvent }) + '\n')
-      } catch {
-        // ignore
+      if (debugAcpLogPath) {
+        try {
+          appendFileSync(debugAcpLogPath, JSON.stringify({ ts: Date.now(), raw: enrichedMsg, acp: acpEvent }) + '\n')
+        } catch {
+          // ignore
+        }
       }
 
       // 2. Persist deployment records (side-effect, fire-and-forget)
@@ -1492,7 +1491,7 @@ export class CloudbaseAgentService {
           },
           settingSources: ['project'],
           // P2: 移除 EnterPlanMode 的禁用——Plan 模式现改由显式 permissionMode='plan' + ExitPlanMode 工具驱动
-          disallowedTools: ['AskUserQuestion'],
+          // disallowedTools: ['AskUserQuestion'],
         },
       }
 
@@ -1517,19 +1516,24 @@ export class CloudbaseAgentService {
       try {
         console.log('[Agent] starting for-await loop...')
 
-        // DEBUG: log all messages from messageLoop to a file
-        const debugMsgLogDir = path.resolve(localCwd, 'debug-jsonl')
-        mkdirSync(debugMsgLogDir, { recursive: true })
-        const debugMsgLogPath = path.join(debugMsgLogDir, `${conversationId}_messageloop_${Date.now()}.jsonl`)
+        // DEBUG: log all messages from messageLoop to a file (enabled via AGENT_DEBUG_JSONL=1)
+        let debugMsgLogPath: string | null = null
+        if (DEBUG_JSONL) {
+          const debugMsgLogDir = path.resolve(localCwd, 'debug-jsonl')
+          mkdirSync(debugMsgLogDir, { recursive: true })
+          debugMsgLogPath = path.join(debugMsgLogDir, `${conversationId}_messageloop_${Date.now()}.jsonl`)
+        }
 
         messageLoop: for await (const message of q) {
           console.log('[Agent] message type:', message.type, JSON.stringify(message).slice(0, 300))
 
           // DEBUG: write full message to log file
-          try {
-            appendFileSync(debugMsgLogPath, JSON.stringify({ ts: Date.now(), ...message }) + '\n')
-          } catch {
-            // ignore debug log errors
+          if (debugMsgLogPath) {
+            try {
+              appendFileSync(debugMsgLogPath, JSON.stringify({ ts: Date.now(), ...message }) + '\n')
+            } catch {
+              // ignore debug log errors
+            }
           }
 
           // Tool result (user message) means tool execution completed — resume timeout
@@ -1662,10 +1666,12 @@ export class CloudbaseAgentService {
           let resumeHadContent = false // 追踪本次 resume 是否产出了有意义的内容
           for await (const message of q2) {
             console.log('[Agent] [resume] message type:', message.type, JSON.stringify(message).slice(0, 300))
-            try {
-              appendFileSync(debugMsgLogPath, JSON.stringify({ ts: Date.now(), resumed: true, ...message }) + '\n')
-            } catch {
-              /* ignore */
+            if (debugMsgLogPath) {
+              try {
+                appendFileSync(debugMsgLogPath, JSON.stringify({ ts: Date.now(), resumed: true, ...message }) + '\n')
+              } catch {
+                /* ignore */
+              }
             }
 
             // assistant / stream_event 表示模型产出了内容（非空 resume）
@@ -1816,7 +1822,7 @@ export class CloudbaseAgentService {
         // ignore cleanup errors
       }
 
-      // Flush remaining events to DB FIRST — this must happen before cleanup,
+      // Flush remaining events to DB FIRST — this must happen before completeAgent,
       // so any in-flight events are persisted for SSE replay on reconnect.
       try {
         await eventBuffer.close()
@@ -1824,9 +1830,37 @@ export class CloudbaseAgentService {
         // Non-critical
       }
 
-      // Cleanup stream events AFTER flushing the buffer and AFTER completeAgent()
-      // is called below, so the poll loop sees isDone=true before events are removed.
-      // (moved down — see cleanup call after completeAgent)
+      // ── 判断是否被用户取消 ──
+      const wasCancelled = getAgentRun(conversationId)?.status === 'cancelled'
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // CRITICAL: Call completeAgent EARLY — right after eventBuffer flush.
+      //
+      // Without this, the finally block spends 5-15s on syncMessages/git etc.
+      // while the registry still shows status='running'. If the user confirms
+      // a tool during this window, chatStream() sees isAgentRunning()=true
+      // and silently drops the confirmation.
+      //
+      // Strategy: complete now with what we know (runtimeError). If syncError
+      // occurs later, upgrade the status to 'error' via a second completeAgent.
+      // ═══════════════════════════════════════════════════════════════════════
+      const earlyStatus: 'completed' | 'error' | 'cancelled' = wasCancelled
+        ? 'cancelled'
+        : runtimeError
+          ? 'error'
+          : 'completed'
+      const earlyStopReason: StopReason | undefined = wasCancelled ? 'cancelled' : runtimeStopReason
+      completeAgent(conversationId, earlyStatus, runtimeError?.message, earlyStopReason)
+      // Cleanup stream events NOW — after completeAgent() so the poll loop sees
+      // isDone=true and drains remaining events before we remove them from DB.
+      // Give poll loop one cycle (500ms) to drain before cleaning.
+      setTimeout(() => {
+        persistenceService.cleanupStreamEvents(conversationId, assistantMessageId).catch(() => {
+          // Non-critical
+        })
+      }, 600)
+
+      // ── Post-run cleanup (SSE can now detect completion) ────────────────
 
       // Archive to git if sandbox was used
       if (sandboxInstance) {
@@ -1852,11 +1886,6 @@ export class CloudbaseAgentService {
         }
       }
 
-      // ── 判断是否被用户取消 ──
-      // handleSessionCancel 已在 registry 中标记 status='cancelled'，
-      // 此处检测并决定 DB 记录的最终状态。
-      const wasCancelled = getAgentRun(conversationId)?.status === 'cancelled'
-
       // 同步消息 + 清理本地文件
       let syncError: Error | undefined
       let finalStatus: 'completed' | 'error' = 'completed'
@@ -1872,7 +1901,6 @@ export class CloudbaseAgentService {
           isResumeFromInterrupt,
           preSavedUserRecordId,
         )
-        // 取消时用 'cancel' 而非 'done'，这样 restoreMessages 能识别并跳过被取消的 turn
         await persistenceService.finalizePendingRecords(assistantMessageId, wasCancelled ? 'cancel' : 'done')
       } catch (err) {
         syncError = err instanceof Error ? err : new Error(String(err))
@@ -1888,13 +1916,11 @@ export class CloudbaseAgentService {
         }
       }
 
-      // message loop 中捕获到的 runtime 错误（非用户 cancel）也算 error 状态
       if (runtimeError && !syncError) {
         finalStatus = 'error'
       }
 
       // Update task status in DB
-      // 被取消的 turn: handleSessionCancel 已写 status='stopped'，不再覆写回 'completed'
       if (!wasCancelled) {
         try {
           await getDb().tasks.update(conversationId, {
@@ -1907,48 +1933,20 @@ export class CloudbaseAgentService {
         }
       }
 
-      // 兜底: 如果 finalizePendingRecords 在上面因网络问题失败,延迟重试一次
-      // 防止 record 状态卡在 pending 导致后续对话被 "already in progress" 拦截
+      // 兜底: finalizePendingRecords 失败时延迟重试
       if (syncError) {
         setTimeout(async () => {
           try {
             await persistenceService.finalizePendingRecords(assistantMessageId, 'error')
             console.log('[Agent] Deferred finalize succeeded for', conversationId)
           } catch {
-            // 彻底放弃——需要人工修复
             console.error('[Agent] Deferred finalize also failed for', conversationId)
           }
         }, 5000)
+
+        // Upgrade the early-completed status to 'error'
+        completeAgent(conversationId, 'error', syncError.message, 'refusal')
       }
-
-      // Update agent registry — 让 routes/acp.ts 终结报文据此选 stopReason
-      // run.error 用 runtimeError.message 优先（用户可见的错误根因），
-      // 没有就退回 syncError.message
-      // run.stopReason 由 runtime 在 message loop 中根据 result.subtype / stream stop_reason /
-      // ExecutionError.subtype 推导（见 mapCodebuddyStopReason / mapExecutionErrorStopReason）
-      const agentRunStatus: 'completed' | 'error' | 'cancelled' = wasCancelled
-        ? 'cancelled'
-        : runtimeError || syncError
-          ? 'error'
-          : 'completed'
-      const agentStopReason: StopReason | undefined = wasCancelled
-        ? 'cancelled'
-        : syncError && !runtimeStopReason
-          ? 'refusal' // sync 层异常按 refusal 上报（ACP 合法值）
-          : runtimeStopReason
-      completeAgent(conversationId, agentRunStatus, runtimeError?.message ?? syncError?.message, agentStopReason)
-
-      // Cleanup stream events NOW — after completeAgent() so the poll loop sees
-      // isDone=true and drains remaining events before we remove them from DB.
-      // Give poll loop one cycle (500ms) to drain before cleaning.
-      setTimeout(() => {
-        persistenceService.cleanupStreamEvents(conversationId, assistantMessageId).catch(() => {
-          // Non-critical
-        })
-      }, 600)
-
-      // Schedule registry cleanup after observers have time to detect completion
-      setTimeout(() => removeAgent(conversationId, assistantMessageId), 30_000)
 
       if (syncError) {
         throw syncError
