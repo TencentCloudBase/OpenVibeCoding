@@ -2477,9 +2477,7 @@ export function TaskDetails({
                       <BrowserControls
                         previewUrl={
                           previewGatewayUrl ||
-                          (codingPreviewCanLoad
-                            ? `/api/tasks/${task.id}/preview/5173/`
-                            : 'http://localhost:5173')
+                          (codingPreviewCanLoad ? `/api/tasks/${task.id}/preview/5173/` : 'http://localhost:5173')
                         }
                         bridge={previewBridge}
                         onHardRefresh={() => {
@@ -2587,26 +2585,26 @@ export function TaskDetails({
                     {/* 内容区 */}
                     <div className="relative flex-1 min-h-0">
                       {/* 沙箱尚未分配 */}
-                      {!codingPreviewCanLoad && !previewGatewayLoading && !previewGatewayUrl && !previewGatewayError && (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground text-center">
-                            <Loader2 className="h-5 w-5 animate-spin" />
-                            <span>AI 正在初始化项目，请稍候...</span>
-                          </div>
-                        </div>
-                      )}
-                      {/* 沙箱已有但 preview-url 尚未返回（避免空白 + 地址栏假 /） */}
-                      {codingPreviewCanLoad &&
+                      {!codingPreviewCanLoad &&
                         !previewGatewayLoading &&
                         !previewGatewayUrl &&
                         !previewGatewayError && (
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5]">
-                            <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground bg-background/80 backdrop-blur rounded-md px-4 py-3 shadow text-center">
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground text-center">
                               <Loader2 className="h-5 w-5 animate-spin" />
-                              <span>正在连接预览网关…</span>
+                              <span>AI 正在初始化项目，请稍候...</span>
                             </div>
                           </div>
                         )}
+                      {/* 沙箱已有但 preview-url 尚未返回（避免空白 + 地址栏假 /） */}
+                      {codingPreviewCanLoad && !previewGatewayLoading && !previewGatewayUrl && !previewGatewayError && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5]">
+                          <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground bg-background/80 backdrop-blur rounded-md px-4 py-3 shadow text-center">
+                            <Loader2 className="h-5 w-5 animate-spin" />
+                            <span>正在连接预览网关…</span>
+                          </div>
+                        </div>
+                      )}
                       {/* Loading 状态：实时显示后端推送的进度 */}
                       {previewGatewayLoading && (
                         <>

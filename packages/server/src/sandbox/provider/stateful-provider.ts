@@ -37,6 +37,7 @@ import type {
 } from './types.js'
 import { STATEFUL_WORKSPACE_ROOT } from '../../lib/sandbox-config.js'
 import { ensureStatefulTool, resolveStatefulGatewayUrl } from '../ensure-stateful-tool.js'
+import { startStatefulInstanceWithWarmup } from '../stateful-tool-warmup.js'
 import { buildDataPlaneHeaders, TRW_SERVICE_PORT } from '../stateful/gateway.js'
 import { createStatefulMcpClient } from '../stateful/stateful-mcp-client.js'
 
@@ -266,12 +267,16 @@ function pickPrimaryInstance(candidates: StatefulInstanceStatus[]): StatefulInst
 async function ensureSingleEnvInstance(
   cfg: StatefulRuntimeConfig,
   toolId: string,
+  onProgress?: SandboxProgressCallback,
 ): Promise<{ sandboxId: string; created: boolean }> {
   const discover = await describeAgsInstances(cfg, { toolId })
   const active = discover.filter((it) => ['RUNNING', 'PAUSED', 'RESUME_FAILED'].includes(it.status))
   const primary = pickPrimaryInstance(active)
   if (!primary) {
-    const sandboxId = await startStatefulInstance(cfg, toolId)
+    const sandboxId = await startStatefulInstanceWithWarmup(
+      () => startStatefulInstance(cfg, toolId),
+      onProgress,
+    )
     return { sandboxId, created: true }
   }
 
@@ -296,6 +301,7 @@ async function ensureTaskInstance(
   cfg: StatefulRuntimeConfig,
   toolId: string,
   preferredInstanceId?: string | null,
+  onProgress?: SandboxProgressCallback,
 ): Promise<{ sandboxId: string; created: boolean }> {
   if (preferredInstanceId) {
     const listed = await describeAgsInstances(cfg, { instanceIds: [preferredInstanceId] })
@@ -308,7 +314,10 @@ async function ensureTaskInstance(
     }
   }
 
-  const sandboxId = await startStatefulInstance(cfg, toolId)
+  const sandboxId = await startStatefulInstanceWithWarmup(
+    () => startStatefulInstance(cfg, toolId),
+    onProgress,
+  )
   return { sandboxId, created: true }
 }
 
@@ -353,7 +362,11 @@ class StatefulProvider implements SandboxProvider {
     const userId = typeof ctx.meta?.userId === 'string' ? ctx.meta.userId : undefined
     const sandboxMode = resolveAcquireSandboxMode(ctx)
     const preferredSandboxId = typeof ctx.meta?.preferredSandboxId === 'string' ? ctx.meta.preferredSandboxId : null
-    const toolId = await ensureStatefulTool(ctx.envId, { userId, taskId: ctx.conversationId })
+    const toolId = await ensureStatefulTool(ctx.envId, {
+      userId,
+      taskId: ctx.conversationId,
+      onProgress,
+    })
     const cfg = readStatefulRuntimeConfig(ctx.envId, toolId)
     const key = this.cacheKey(ctx, sandboxMode)
 
@@ -375,10 +388,10 @@ class StatefulProvider implements SandboxProvider {
     } else {
       onProgress?.({ phase: 'create', message: '正在启动云端沙箱实例...\n' })
       if (sandboxMode === 'isolated') {
-        const ensured = await ensureTaskInstance(cfg, cfg.toolId, preferredSandboxId)
+        const ensured = await ensureTaskInstance(cfg, cfg.toolId, preferredSandboxId, onProgress)
         sandboxId = ensured.sandboxId
       } else {
-        const ensured = await ensureSingleEnvInstance(cfg, cfg.toolId)
+        const ensured = await ensureSingleEnvInstance(cfg, cfg.toolId, onProgress)
         sandboxId = ensured.sandboxId
       }
       onProgress?.({ phase: 'wait_ready', message: '等待沙箱实例就绪...\n' })

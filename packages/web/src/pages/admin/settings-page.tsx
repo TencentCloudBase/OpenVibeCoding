@@ -262,16 +262,12 @@ export function AdminSettingsPage() {
               控制同一 CloudBase 环境下，多个任务是否共用同一个 AGS 运行时实例（与上方「环境隔离」正交）
             </p>
             <p className="text-xs text-muted-foreground">
-              优先级：管理员设置（DB） &gt; <code className="px-1 rounded bg-muted">SANDBOX_INSTANCE_MODE</code>{' '}
-              &gt; 默认（provision=task 时为 isolated，否则 shared）
+              优先级：管理员设置（DB） &gt; <code className="px-1 rounded bg-muted">SANDBOX_INSTANCE_MODE</code> &gt;
+              默认（provision=task 时为 isolated，否则 shared）
             </p>
           </div>
 
-          <RadioGroup
-            value={sandboxInstanceMode}
-            onValueChange={setSandboxInstanceMode}
-            className="space-y-3"
-          >
+          <RadioGroup value={sandboxInstanceMode} onValueChange={setSandboxInstanceMode} className="space-y-3">
             {SANDBOX_INSTANCE_MODES.map((mode) => (
               <label
                 key={mode.value}

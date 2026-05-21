@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { loadConfig } from '../config/store.js'
 import { persistenceService } from './persistence.service.js'
 import { buildStatefulAcquireContext } from '../sandbox/acquire-context.js'
+import { formatAgsManagerError, formatAgsUserFacingError } from '../sandbox/ags-error.js'
 import { getSandboxProvider } from '../sandbox/index.js'
 import type {
   SandboxInstance,
@@ -17,11 +18,7 @@ import type {
 import { archiveToGit } from '../sandbox/git-archive.js'
 import { getCodingSystemPrompt } from './coding-mode.js'
 import { getDb } from '../db/index.js'
-import {
-  STATEFUL_WORKSPACE_ROOT,
-  resolveSandboxConfig,
-  backfillSandboxConfig,
-} from '../lib/sandbox-config.js'
+import { STATEFUL_WORKSPACE_ROOT, resolveSandboxConfig, backfillSandboxConfig } from '../lib/sandbox-config.js'
 import { decrypt } from '../lib/crypto.js'
 import { encryptJWE } from '../lib/session.js'
 import type { AgentCallbackMessage, AgentOptions, CodeBuddyMessage, ExtendedSessionUpdate } from '@coder/shared'
@@ -195,7 +192,12 @@ export function clearModelsCache(): void {
 
 // ─── Sandbox & Prompt Helpers (imported from base-runtime) ───────────────
 // 集中在 base-runtime.ts 维护，所有 runtime 共用。
-import { WRITE_TOOLS, buildAppendPrompt, getPublishableKey, persistDeploymentFromArtifact } from './runtime/base-runtime.js'
+import {
+  WRITE_TOOLS,
+  buildAppendPrompt,
+  getPublishableKey,
+  persistDeploymentFromArtifact,
+} from './runtime/base-runtime.js'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -561,7 +563,9 @@ export class CloudbaseAgentService {
       sandboxConfig = resolveSandboxConfig({ envId: userContext.envId, taskId: conversationId })
     }
 
-    const taskForAcquire = await getDb().tasks.findById(conversationId).catch(() => null)
+    const taskForAcquire = await getDb()
+      .tasks.findById(conversationId)
+      .catch(() => null)
 
     const { sandboxCwd: resolvedCwd } = sandboxConfig
     // Remote TRW workspace path (semantic only on stateful; tools run in sandbox via MCP).
@@ -571,9 +575,7 @@ export class CloudbaseAgentService {
       workspaceCwd === STATEFUL_WORKSPACE_ROOT || workspaceCwd.startsWith('/home/user')
         ? path.join(os.tmpdir(), 'ovc-agent', conversationId)
         : workspaceCwd
-    console.log(
-      `[Agent] sandboxConfig: workspaceCwd=${workspaceCwd}, localCwd=${localCwd}, cwd=${cwd ?? '(none)'}`,
-    )
+    console.log(`[Agent] sandboxConfig: workspaceCwd=${workspaceCwd}, localCwd=${localCwd}, cwd=${cwd ?? '(none)'}`)
     mkdirSync(localCwd, { recursive: true })
 
     // ── 复制 .codebuddy/models.json 模板供 SDK 读取自定义模型 ────────────
@@ -917,10 +919,12 @@ export class CloudbaseAgentService {
           }
         }
       } catch (err) {
-        console.error('[Agent] Sandbox creation failed:', (err as Error).message)
+        const detail = formatAgsManagerError(err, 'sandbox.acquire')
+        const userDetail = formatAgsUserFacingError(err)
+        console.error('[Agent] Sandbox creation failed:', detail)
         wrappedCallback({
           type: 'text',
-          content: `【沙箱环境创建失败】${(err as Error).message}。将使用受限模式继续对话。\n\n`,
+          content: `【沙箱环境创建失败】\n${userDetail}\n\n将使用受限模式继续对话。\n\n`,
         })
         // Continue without sandbox
       }
@@ -1254,20 +1258,8 @@ export class CloudbaseAgentService {
             append: isCodingMode
               ? getCodingSystemPrompt(userContext.envId, publishableKey) +
                 '\n\n' +
-                buildAppendPrompt(
-                  workspaceCwd,
-                  conversationId,
-                  userContext.envId,
-                  sandboxConfig.sandboxMode,
-                  true,
-                )
-              : buildAppendPrompt(
-                  workspaceCwd,
-                  conversationId,
-                  userContext.envId,
-                  sandboxConfig.sandboxMode,
-                  false,
-                ),
+                buildAppendPrompt(workspaceCwd, conversationId, userContext.envId, sandboxConfig.sandboxMode, true)
+              : buildAppendPrompt(workspaceCwd, conversationId, userContext.envId, sandboxConfig.sandboxMode, false),
           },
           mcpServers,
           abortController,

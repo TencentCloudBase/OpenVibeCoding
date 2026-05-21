@@ -26,8 +26,7 @@ async function callAgs(action: string, param: Record<string, unknown>) {
     context: object
   }
   const CloudService = ((managerUtilsModule as { CloudService?: unknown; default?: { CloudService?: unknown } })
-    .CloudService ||
-    (managerUtilsModule as { default?: { CloudService?: unknown } }).default?.CloudService) as new (
+    .CloudService || (managerUtilsModule as { default?: { CloudService?: unknown } }).default?.CloudService) as new (
     ctx: object,
     svc: string,
     ver: string,
@@ -87,10 +86,7 @@ async function main() {
     try {
       const resp = await callAgs(action, param)
       console.log(`[update-stateful-tool-ports] ${action} ok`, JSON.stringify(resp).slice(0, 400))
-      console.log(
-        'Ports now:',
-        ports.map((p) => p.Port).join(', '),
-      )
+      console.log('Ports now:', ports.map((p) => p.Port).join(', '))
       return
     } catch (err) {
       console.warn(`[update-stateful-tool-ports] ${action} failed:`, (err as Error).message)

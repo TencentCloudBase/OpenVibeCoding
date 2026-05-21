@@ -80,10 +80,7 @@ async function main() {
   emit('config_tool_id', !!(process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID))
   emit(
     'config_gateway_url',
-    !!(
-      process.env.STATEFUL_GATEWAY_URL?.includes('tcloudbasegateway.com') ||
-      process.env.TCB_ENV_ID
-    ),
+    !!(process.env.STATEFUL_GATEWAY_URL?.includes('tcloudbasegateway.com') || process.env.TCB_ENV_ID),
   )
   emit('config_tcb_api_key', !!process.env.TCB_API_KEY)
 
@@ -103,18 +100,15 @@ async function main() {
 
   try {
     const tInit = Date.now()
-    const session = await provider.prepare(
-      inst,
-      {
-        credentials: {
-          envId: process.env.TCB_ENV_ID || '',
-          secretId: process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || '',
-          secretKey: process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || '',
-        },
-        codingMode: true,
-        backendOptions: { backend: 'stateful' },
+    const session = await provider.prepare(inst, {
+      credentials: {
+        envId: process.env.TCB_ENV_ID || '',
+        secretId: process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || '',
+        secretKey: process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || '',
       },
-    )
+      codingMode: true,
+      backendOptions: { backend: 'stateful' },
+    })
     emit('workspace_init', !!session.workspace, session.workspace, Date.now() - tInit)
   } catch (e) {
     emit('workspace_init', false, (e as Error).message)
@@ -144,27 +138,21 @@ async function main() {
   }
 
   try {
-    const previewRes = await inst.request(`/preview/${VITE_PORT}/`, {
+    const { buildPreviewGatewayHeaders } = await import('../src/sandbox/stateful/gateway.js')
+    const headers = buildPreviewGatewayHeaders(inst, VITE_PORT)
+    const previewRes = await fetch(`${inst.baseUrl}/`, {
       method: 'GET',
+      headers,
       signal: AbortSignal.timeout(15_000),
     })
     const body = await previewRes.text()
     emit(
-      'trw_preview_vite',
-      previewRes.status < 500 && body.length > 0,
+      'gateway_vite_root',
+      previewRes.status >= 200 && previewRes.status < 400 && body.length > 0,
       `status=${previewRes.status} bytes=${body.length}`,
     )
   } catch (e) {
-    emit('trw_preview_vite', false, (e as Error).message)
-  }
-
-  try {
-    const portsRes = await inst.request('/preview/ports', { signal: AbortSignal.timeout(10_000) })
-    const portsJson = (await portsRes.json()) as { ports?: Array<{ port: number }> }
-    const hasVite = Array.isArray(portsJson.ports) && portsJson.ports.some((p) => p.port === VITE_PORT)
-    emit('trw_preview_ports', portsRes.ok && hasVite, JSON.stringify(portsJson.ports?.map((p) => p.port) ?? []))
-  } catch (e) {
-    emit('trw_preview_ports', false, (e as Error).message)
+    emit('gateway_vite_root', false, (e as Error).message)
   }
 
   const healthRes = await inst.request('/health', { signal: AbortSignal.timeout(10_000) })

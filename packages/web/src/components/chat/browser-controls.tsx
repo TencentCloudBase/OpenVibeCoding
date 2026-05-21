@@ -165,8 +165,7 @@ function HmrIndicator({ status }: { status: HmrStatus }) {
  */
 function extractDisplayPath(url: string): string {
   try {
-    const base =
-      typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
     const u = new URL(url, base)
     const proxyMatch = /^\/api\/tasks\/[^/]+\/preview\/\d+/.exec(u.pathname)
     if (proxyMatch) {

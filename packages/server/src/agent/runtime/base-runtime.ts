@@ -19,6 +19,7 @@ import type { AgentCallback, AgentCallbackMessage, AgentOptions } from '@coder/s
 import type { ChatStreamResult, IAgentRuntime } from './types.js'
 import type { ModelInfo } from '../cloudbase-agent.service.js'
 import { buildStatefulAcquireContext } from '../../sandbox/acquire-context.js'
+import { formatAgsManagerError, formatAgsUserFacingError } from '../../sandbox/ags-error.js'
 import { getSandboxProvider } from '../../sandbox/index.js'
 import type {
   SandboxInstance,
@@ -28,11 +29,7 @@ import type {
 } from '../../sandbox/provider/types.js'
 import { getDb } from '../../db/index.js'
 import type { Task } from '../../db/types.js'
-import {
-  STATEFUL_WORKSPACE_ROOT,
-  resolveSandboxConfig,
-  backfillSandboxConfig,
-} from '../../lib/sandbox-config.js'
+import { STATEFUL_WORKSPACE_ROOT, resolveSandboxConfig, backfillSandboxConfig } from '../../lib/sandbox-config.js'
 import { getCodingSystemPrompt } from '../coding-mode.js'
 import { decrypt } from '../../lib/crypto.js'
 import { encryptJWE } from '../../lib/session.js'
@@ -471,11 +468,13 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
         }
       }
     } catch (err) {
-      console.error('[BaseRuntime] Sandbox creation failed:', (err as Error).message)
+      const detail = formatAgsManagerError(err, 'sandbox.acquire')
+      const userDetail = formatAgsUserFacingError(err)
+      console.error('[BaseRuntime] Sandbox creation failed:', detail)
       if (callback) {
         callback({
           type: 'text',
-          content: `【沙箱环境创建失败】${(err as Error).message}。将使用受限模式继续对话。\n\n`,
+          content: `【沙箱环境创建失败】\n${userDetail}\n\n将使用受限模式继续对话。\n\n`,
         })
       }
     }

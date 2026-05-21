@@ -4,10 +4,7 @@ import { requireAdmin, type AppEnv } from '../middleware/admin'
 import { issueTempCredentials } from '../middleware/auth.js'
 import { provisionUserResources, destroyProvisionedResources } from '../cloudbase/provision.js'
 import { getProvisionMode, isValidProvisionMode, resolveProvisionMode } from '../lib/provision-config.js'
-import {
-  isValidSandboxInstanceMode,
-  resolveSandboxInstanceMode,
-} from '../lib/sandbox-config.js'
+import { isValidSandboxInstanceMode, resolveSandboxInstanceMode } from '../lib/sandbox-config.js'
 import { persistenceService } from '../agent/persistence.service.js'
 import { nanoid } from 'nanoid'
 import bcrypt from 'bcryptjs'

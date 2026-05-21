@@ -18,8 +18,7 @@ async function callAgs(action: string, param: Record<string, unknown>) {
     context: object
   }
   const CloudService = ((managerUtilsModule as { CloudService?: unknown; default?: { CloudService?: unknown } })
-    .CloudService ||
-    (managerUtilsModule as { default?: { CloudService?: unknown } }).default?.CloudService) as new (
+    .CloudService || (managerUtilsModule as { default?: { CloudService?: unknown } }).default?.CloudService) as new (
     ctx: object,
     svc: string,
     ver: string,

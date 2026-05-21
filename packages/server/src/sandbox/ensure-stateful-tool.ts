@@ -6,6 +6,8 @@
 import { nanoid } from 'nanoid'
 import { getDb } from '../db/index.js'
 import { getProvisionMode } from '../lib/provision-config.js'
+import type { SandboxProgressCallback } from './provider/types.js'
+import { waitStatefulToolImageWarmup } from './stateful-tool-warmup.js'
 
 export const STATEFUL_TOOL_SETTINGS_KEY = 'stateful_tool_id'
 
@@ -139,15 +141,23 @@ async function persistToolId(envId: string, toolId: string, userId?: string, tas
 /**
  * Resolve ToolId for envId: DB → env override → CreateTool.
  */
-export async function ensureStatefulTool(envId: string, opts?: { userId?: string; taskId?: string }): Promise<string> {
+export async function ensureStatefulTool(
+  envId: string,
+  opts?: { userId?: string; taskId?: string; onProgress?: SandboxProgressCallback },
+): Promise<string> {
   const override = process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID || ''
   if (override) return override
 
   const existing = await readStoredToolId(envId, opts?.userId, opts?.taskId)
   if (existing) return existing
 
+  opts?.onProgress?.({
+    phase: 'template_create',
+    message: '正在创建沙箱模板（本环境仅首次，后续任务直接复用）...\n',
+  })
   const toolId = await createSandboxTool(envId)
   await persistToolId(envId, toolId, opts?.userId, opts?.taskId)
+  await waitStatefulToolImageWarmup(opts?.onProgress)
   return toolId
 }
 

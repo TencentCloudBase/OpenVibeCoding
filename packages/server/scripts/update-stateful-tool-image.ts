@@ -20,8 +20,7 @@ async function callAgs(action: string, param: Record<string, unknown>) {
     context: object
   }
   const CloudService = ((managerUtilsModule as { CloudService?: unknown; default?: { CloudService?: unknown } })
-    .CloudService ||
-    (managerUtilsModule as { default?: { CloudService?: unknown } }).default?.CloudService) as new (
+    .CloudService || (managerUtilsModule as { default?: { CloudService?: unknown } }).default?.CloudService) as new (
     ctx: object,
     svc: string,
     ver: string,
@@ -53,10 +52,17 @@ async function main() {
     },
   }
 
+  const { STATEFUL_TOOL_WARMUP_POLL_MS, STATEFUL_TOOL_WARMUP_POLL_MAX } = await import(
+    '../src/sandbox/stateful-tool-warmup.js'
+  )
+
   for (const action of ['UpdateSandboxTool', 'ModifySandboxTool'] as const) {
     try {
       const resp = await callAgs(action, param)
       console.log(`[update-stateful-tool] ${action} ok:`, JSON.stringify(resp).slice(0, 400))
+      console.log(
+        `[update-stateful-tool] Poll ${STATEFUL_TOOL_WARMUP_POLL_MAX}×${STATEFUL_TOOL_WARMUP_POLL_MS / 1000}s before StartSandboxInstance (AGS image pull window).`,
+      )
       return
     } catch (err) {
       console.warn(`[update-stateful-tool] ${action} failed:`, (err as Error).message)

@@ -43,6 +43,10 @@ const PHASE_CONFIG: Record<AgentPhaseName, PhaseConfig> = {
     iconClass: 'text-blue-500',
     label: (toolName) => {
       switch (toolName) {
+        case 'sandbox:template_create':
+          return '沙箱模板生成中（本环境仅首次）...'
+        case 'sandbox:template_warmup':
+          return '沙箱模板预热中...'
         case 'sandbox:reuse':
           return '连接已有沙箱...'
         case 'sandbox:create':

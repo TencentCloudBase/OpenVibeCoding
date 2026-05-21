@@ -70,9 +70,7 @@ function mockUserResource(
 
 describe('createInjectCredentials', () => {
   it('uses permanent credentials when camSecretId/camSecretKey present', async () => {
-    findByUserIdMock.mockResolvedValue(
-      mockUserResource({ camSecretId: 'AKID-PERM', camSecretKey: 'KEY-PERM' }),
-    )
+    findByUserIdMock.mockResolvedValue(mockUserResource({ camSecretId: 'AKID-PERM', camSecretKey: 'KEY-PERM' }))
     const fetcher = makeFetch(async () => makeOkResponse())
 
     const fn = createInjectCredentials({

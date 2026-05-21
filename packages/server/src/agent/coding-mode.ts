@@ -3,7 +3,7 @@ const DEV_SERVER_PORT = 5173
 /**
  * The correct vite.config.ts content for CloudBase sandbox preview.
  * - base "./" for static hosting deployment (relative asset paths)
- * - dev server is launched with --base=/preview/ CLI flag which overrides this
+ * - dev server is launched with --base=/ (TRW vite-dev-manager) which overrides this for preview
  * - server.host "0.0.0.0" lets the CloudBase gateway proxy reach the dev server
  * - server.allowedHosts true allows requests from the gateway domain
  */
@@ -12,7 +12,7 @@ import react from "@vitejs/plugin-react";
 
 // CloudBase sandbox preview setup:
 // - base "./" for static hosting deployment (relative asset paths)
-// - dev server is launched with --base=/preview/ CLI flag which overrides this
+// - dev server is launched with --base=/ (TRW vite-dev-manager) which overrides this for preview
 // - server.host "0.0.0.0" lets the CloudBase gateway proxy reach the dev server
 // - server.allowedHosts true allows requests from the gateway domain
 export default defineConfig({
