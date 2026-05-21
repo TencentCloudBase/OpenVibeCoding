@@ -23,10 +23,7 @@ function resolveSandboxGatewayUrl(envId: string): string {
   return `https://${envId}.api.tcloudbasegateway.com/v1/sandbox/-`
 }
 
-async function callAgsManagerApi(
-  action: string,
-  param: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+async function callAgsManagerApi(action: string, param: Record<string, unknown>): Promise<Record<string, unknown>> {
   const managerModule = await import('@cloudbase/manager-node')
   // @ts-expect-error manager-node ships utils without types
   const managerUtilsModule = await import('@cloudbase/manager-node/lib/utils')
@@ -74,6 +71,8 @@ async function createSandboxTool(envId: string): Promise<string> {
       Ports: [
         { Name: 'trw', Protocol: 'TCP', Port: 9000 },
         { Name: 'envd', Protocol: 'TCP', Port: 49983 },
+        { Name: 'vite', Protocol: 'TCP', Port: 5173 },
+        { Name: 'ttyd', Protocol: 'TCP', Port: 7681 },
       ],
       Probe: {
         HttpGet: { Path: '/health', Port: 9000, Scheme: 'HTTP' },
@@ -91,9 +90,7 @@ async function createSandboxTool(envId: string): Promise<string> {
 
   const resp = await callAgsManagerApi('CreateSandboxTool', data)
   const toolId =
-    (resp?.ToolId as string) ||
-    ((resp?.data as Record<string, unknown> | undefined)?.ToolId as string) ||
-    ''
+    (resp?.ToolId as string) || ((resp?.data as Record<string, unknown> | undefined)?.ToolId as string) || ''
   if (!toolId) {
     throw new Error(`CreateSandboxTool returned no ToolId: ${JSON.stringify(resp).slice(0, 300)}`)
   }
@@ -142,10 +139,7 @@ async function persistToolId(envId: string, toolId: string, userId?: string, tas
 /**
  * Resolve ToolId for envId: DB → env override → CreateTool.
  */
-export async function ensureStatefulTool(
-  envId: string,
-  opts?: { userId?: string; taskId?: string },
-): Promise<string> {
+export async function ensureStatefulTool(envId: string, opts?: { userId?: string; taskId?: string }): Promise<string> {
   const override = process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID || ''
   if (override) return override
 

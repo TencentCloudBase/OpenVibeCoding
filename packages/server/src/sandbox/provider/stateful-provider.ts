@@ -20,10 +20,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { existsSync } from 'node:fs'
 
-import {
-  normalizeSandboxMode,
-  type SandboxInstanceMode,
-} from '../../lib/sandbox-config.js'
+import { normalizeSandboxMode, type SandboxInstanceMode } from '../../lib/sandbox-config.js'
 import type {
   AcquireContext,
   DeleteConversationContext,
@@ -40,6 +37,7 @@ import type {
 } from './types.js'
 import { STATEFUL_WORKSPACE_ROOT } from '../../lib/sandbox-config.js'
 import { ensureStatefulTool, resolveStatefulGatewayUrl } from '../ensure-stateful-tool.js'
+import { buildDataPlaneHeaders, TRW_SERVICE_PORT } from '../stateful/gateway.js'
 import { createStatefulMcpClient } from '../stateful/stateful-mcp-client.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -93,16 +91,6 @@ function readStatefulRuntimeConfig(envId: string, toolId: string): StatefulRunti
   }
 }
 
-// ─── Auth headers builder ─────────────────────────────────────────────────
-
-function buildDataPlaneHeaders(opts: { tcbApiKey: string; sandboxId: string }): Record<string, string> {
-  return {
-    'X-Cloudbase-Authorization': `Bearer ${opts.tcbApiKey}`,
-    'E2b-Sandbox-Id': opts.sandboxId,
-    'E2b-Sandbox-Port': '9000',
-  }
-}
-
 // ─── Instance meta bag ────────────────────────────────────────────────────
 
 interface StatefulMetaBag {
@@ -136,7 +124,7 @@ function buildStatefulInstance(args: {
 }): SandboxInstance {
   const { sandboxId, toolId, baseUrl, envId, conversationId, tcbApiKey, sandboxMode, cacheKey } = args
   const meta: StatefulMetaBag = { envId, conversationId, toolId, tcbApiKey, sandboxMode, cacheKey }
-  const authHeaders = buildDataPlaneHeaders({ tcbApiKey, sandboxId })
+  const authHeaders = buildDataPlaneHeaders({ tcbApiKey, sandboxId, port: TRW_SERVICE_PORT })
   return {
     backend: 'stateful',
     id: sandboxId,
@@ -219,8 +207,7 @@ async function startStatefulInstance(cfg: StatefulRuntimeConfig, toolId: string)
   )) as Record<string, unknown>
   const data = result?.data as Record<string, unknown> | undefined
   const instanceObj = result?.Instance as Record<string, unknown> | undefined
-  const instanceId =
-    String(result?.InstanceId || instanceObj?.InstanceId || data?.InstanceId || '') || ''
+  const instanceId = String(result?.InstanceId || instanceObj?.InstanceId || data?.InstanceId || '') || ''
   if (!instanceId) {
     throw new Error(`StartSandboxInstance returned no InstanceId: ${JSON.stringify(result)}`)
   }
@@ -340,7 +327,7 @@ async function checkHealth(baseUrl: string, headers: Record<string, string>): Pr
 }
 
 async function waitForReady(baseUrl: string, sandboxId: string, tcbApiKey: string): Promise<void> {
-  const headers = buildDataPlaneHeaders({ tcbApiKey, sandboxId })
+  const headers = buildDataPlaneHeaders({ tcbApiKey, sandboxId, port: TRW_SERVICE_PORT })
   const start = Date.now()
   while (Date.now() - start < READY_TIMEOUT_MS) {
     if (await checkHealth(baseUrl, headers)) return
@@ -365,8 +352,7 @@ class StatefulProvider implements SandboxProvider {
   async acquire(ctx: AcquireContext, onProgress?: SandboxProgressCallback): Promise<SandboxInstance> {
     const userId = typeof ctx.meta?.userId === 'string' ? ctx.meta.userId : undefined
     const sandboxMode = resolveAcquireSandboxMode(ctx)
-    const preferredSandboxId =
-      typeof ctx.meta?.preferredSandboxId === 'string' ? ctx.meta.preferredSandboxId : null
+    const preferredSandboxId = typeof ctx.meta?.preferredSandboxId === 'string' ? ctx.meta.preferredSandboxId : null
     const toolId = await ensureStatefulTool(ctx.envId, { userId, taskId: ctx.conversationId })
     const cfg = readStatefulRuntimeConfig(ctx.envId, toolId)
     const key = this.cacheKey(ctx, sandboxMode)
@@ -400,7 +386,11 @@ class StatefulProvider implements SandboxProvider {
     }
 
     // Final health check (covers pre-created path too).
-    const headers = buildDataPlaneHeaders({ tcbApiKey: cfg.tcbApiKey, sandboxId })
+    const headers = buildDataPlaneHeaders({
+      tcbApiKey: cfg.tcbApiKey,
+      sandboxId,
+      port: TRW_SERVICE_PORT,
+    })
     if (!(await checkHealth(cfg.sandboxBaseUrl, headers))) {
       throw new Error(`Sandbox ${sandboxId} not healthy at ${cfg.sandboxBaseUrl}`)
     }
@@ -470,8 +460,7 @@ class StatefulProvider implements SandboxProvider {
   async release(inst: SandboxInstance, ctx: ReleaseContext): Promise<void> {
     // AGS persistence: COS snapshot is auto-managed by TRW (periodic 60s + shutdown).
     // We only flush explicitly when the caller asks for it (rare path).
-    const flushSnapshot =
-      ctx.backendOptions?.backend === 'stateful' && ctx.backendOptions.flushSnapshot === true
+    const flushSnapshot = ctx.backendOptions?.backend === 'stateful' && ctx.backendOptions.flushSnapshot === true
     if (!flushSnapshot) return
 
     try {
