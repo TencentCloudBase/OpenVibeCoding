@@ -3,19 +3,65 @@
  * Persists tool id in settings (shared) or user_resources (isolated/task scope).
  */
 
-import { nanoid } from 'nanoid'
 import { getDb } from '../db/index.js'
 import { getProvisionMode } from '../lib/provision-config.js'
 import type { SandboxProgressCallback } from './provider/types.js'
 import { waitStatefulToolImageWarmup } from './stateful-tool-warmup.js'
+import {
+  formatMissingStatefulSandboxImageError,
+  resolveStatefulImageRegistryType,
+  resolveStatefulSandboxImage,
+} from './stateful-vibecoding-image.js'
 
 export const STATEFUL_TOOL_SETTINGS_KEY = 'stateful_tool_id'
 
 const DEFAULT_TOOL_ROLE_ARN = 'qcs::cam::uin/691612481:roleName/agent-sandbox'
 
-function sanitizeToolName(envId: string): string {
+/** Stable AGS ToolName for a CloudBase env (AppId-unique). */
+export function statefulToolNameForEnv(envId: string): string {
   const slug = envId.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 48)
   return `ovc-${slug || 'default'}`
+}
+
+function extractSandboxToolSet(resp: Record<string, unknown>): Array<Record<string, unknown>> {
+  const set = resp.SandboxToolSet
+  if (Array.isArray(set)) return set
+  const nested = (resp.data as Record<string, unknown> | undefined)?.SandboxToolSet
+  return Array.isArray(nested) ? nested : []
+}
+
+function pickToolIdByName(tools: Array<Record<string, unknown>>, toolName: string): string | null {
+  const matches = tools.filter((t) => t.ToolName === toolName && typeof t.ToolId === 'string')
+  if (!matches.length) return null
+  const active = matches.find((t) => t.Status === 'ACTIVE') ?? matches[0]
+  return active.ToolId as string
+}
+
+/** Resolve existing sdt-xxx by fixed ToolName before CreateSandboxTool. */
+async function findSandboxToolIdByName(toolName: string): Promise<string | null> {
+  try {
+    const filtered = await callAgsManagerApi('DescribeSandboxToolList', {
+      Filters: [{ Name: 'ToolName', Values: [toolName] }],
+      Limit: 20,
+    })
+    const hit = pickToolIdByName(extractSandboxToolSet(filtered), toolName)
+    if (hit) return hit
+  } catch {
+    // Filter key may be unsupported on some API versions; fall back to paginated list.
+  }
+
+  let offset = 0
+  const limit = 100
+  for (let page = 0; page < 10; page++) {
+    const resp = await callAgsManagerApi('DescribeSandboxToolList', { Offset: offset, Limit: limit })
+    const set = extractSandboxToolSet(resp)
+    const hit = pickToolIdByName(set, toolName)
+    if (hit) return hit
+    const total = typeof resp.TotalCount === 'number' ? resp.TotalCount : 0
+    offset += limit
+    if (set.length < limit || offset >= total) break
+  }
+  return null
 }
 
 function resolveSandboxGatewayUrl(envId: string): string {
@@ -50,13 +96,13 @@ async function callAgsManagerApi(action: string, param: Record<string, unknown>)
 }
 
 async function createSandboxTool(envId: string): Promise<string> {
-  const image = process.env.STATEFUL_SANDBOX_IMAGE || ''
+  const image = resolveStatefulSandboxImage()
   if (!image) {
-    throw new Error('Missing STATEFUL_SANDBOX_IMAGE (vibecoding preset image URI for CreateSandboxTool)')
+    throw new Error(formatMissingStatefulSandboxImageError())
   }
 
   const roleArn = process.env.STATEFUL_TOOL_ROLE_ARN || DEFAULT_TOOL_ROLE_ARN
-  const toolName = sanitizeToolName(envId)
+  const toolName = statefulToolNameForEnv(envId)
 
   const data = {
     ToolName: toolName,
@@ -64,7 +110,7 @@ async function createSandboxTool(envId: string): Promise<string> {
     RoleArn: roleArn,
     CustomConfiguration: {
       Image: image,
-      ImageRegistryType: process.env.STATEFUL_IMAGE_REGISTRY || 'personal',
+      ImageRegistryType: resolveStatefulImageRegistryType(image),
       Command: JSON.parse(process.env.STATEFUL_TOOL_COMMAND || '["/init"]'),
       Resources: {
         CPU: process.env.STATEFUL_TOOL_CPU || '2',
@@ -139,17 +185,38 @@ async function persistToolId(envId: string, toolId: string, userId?: string, tas
 }
 
 /**
- * Resolve ToolId for envId: DB → env override → CreateTool.
+ * Resolve ToolId for envId: debug override → DB → AGS lookup by ToolName → CreateTool.
  */
 export async function ensureStatefulTool(
   envId: string,
   opts?: { userId?: string; taskId?: string; onProgress?: SandboxProgressCallback },
 ): Promise<string> {
   const override = process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID || ''
-  if (override) return override
+  if (override) {
+    console.warn('[StatefulTool] STATEFUL_TOOL_ID override active (debug only)')
+    return override
+  }
 
   const existing = await readStoredToolId(envId, opts?.userId, opts?.taskId)
-  if (existing) return existing
+  if (existing) {
+    opts?.onProgress?.({
+      phase: 'template_resolve',
+      message: '使用已登记的沙箱模板...\n',
+    })
+    return existing
+  }
+
+  const toolName = statefulToolNameForEnv(envId)
+  const byName = await findSandboxToolIdByName(toolName)
+  if (byName) {
+    console.log('[StatefulTool] Bound existing tool by ToolName')
+    opts?.onProgress?.({
+      phase: 'template_bind',
+      message: '绑定已有沙箱模板...\n',
+    })
+    await persistToolId(envId, byName, opts?.userId, opts?.taskId)
+    return byName
+  }
 
   opts?.onProgress?.({
     phase: 'template_create',

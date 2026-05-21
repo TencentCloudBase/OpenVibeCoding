@@ -43,10 +43,24 @@ const PHASE_CONFIG: Record<AgentPhaseName, PhaseConfig> = {
     iconClass: 'text-blue-500',
     label: (toolName) => {
       switch (toolName) {
+        case 'sandbox:template_resolve':
+          return '加载沙箱模板...'
+        case 'sandbox:template_bind':
+          return '绑定已有沙箱模板...'
         case 'sandbox:template_create':
           return '沙箱模板生成中（本环境仅首次）...'
         case 'sandbox:template_warmup':
           return '沙箱模板预热中...'
+        case 'sandbox:instance_reuse_session':
+          return '复用本会话沙箱连接...'
+        case 'sandbox:instance_reuse_shared':
+          return '复用环境沙箱（多任务共享）...'
+        case 'sandbox:instance_reuse_task':
+          return '复用任务沙箱...'
+        case 'sandbox:instance_resume':
+          return '恢复沙箱实例...'
+        case 'sandbox:instance_start':
+          return '启动沙箱实例...'
         case 'sandbox:reuse':
           return '连接已有沙箱...'
         case 'sandbox:create':
@@ -54,7 +68,7 @@ const PHASE_CONFIG: Record<AgentPhaseName, PhaseConfig> = {
         case 'sandbox:wait_creating':
           return '沙箱启动中...'
         case 'sandbox:pull_image':
-          return '拉取镜像...'
+          return '沙箱实例镜像拉取中...'
         case 'sandbox:wait_ready':
           return '等待沙箱就绪...'
         case 'sandbox:init_mcp':

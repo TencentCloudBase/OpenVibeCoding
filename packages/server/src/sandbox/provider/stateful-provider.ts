@@ -8,9 +8,11 @@
  *   - POST /api/workspace/snapshot explicit COS snapshot flush
  *
  * Two-layer control plane:
- *   - Tool   = template (sdt-xxx). ensureStatefulTool() per envId (manager-node CreateSandboxTool).
- *   - Instance = runtime container. Provider enforces single-instance lifecycle
- *                per envId: running->reuse, paused->resume, missing->create.
+ *   - Tool   = template (sdt-xxx). ensureStatefulTool() per envId (DB → AGS name → CreateTool).
+ *   - Instance = runtime container.
+ *       shared: one instance per env/tool (RUNNING reuse, PAUSED resume, else Start).
+ *       isolated: per-task instance (task sandboxId → resume/reuse, else Start).
+ *   - Process cache: healthy in-memory instance per cache key (env vs task).
  *
  * Auth: TCB_API_KEY (long-lived JWT) used as X-Cloudbase-Authorization Bearer.
  * Routing: E2b-Sandbox-Id + E2b-Sandbox-Port: 9000 headers route to instance.
@@ -273,6 +275,10 @@ async function ensureSingleEnvInstance(
   const active = discover.filter((it) => ['RUNNING', 'PAUSED', 'RESUME_FAILED'].includes(it.status))
   const primary = pickPrimaryInstance(active)
   if (!primary) {
+    onProgress?.({
+      phase: 'instance_start',
+      message: '正在启动环境沙箱实例（共享模式）...\n',
+    })
     const sandboxId = await startStatefulInstanceWithWarmup(() => startStatefulInstance(cfg, toolId), onProgress)
     return { sandboxId, created: true }
   }
@@ -288,7 +294,16 @@ async function ensureSingleEnvInstance(
   }
 
   if (primary.status !== 'RUNNING') {
+    onProgress?.({
+      phase: 'instance_resume',
+      message: '正在恢复环境中的沙箱实例...\n',
+    })
     await resumeStatefulInstance(cfg, primary.instanceId)
+  } else {
+    onProgress?.({
+      phase: 'instance_reuse_shared',
+      message: '复用环境中的沙箱实例（多任务共享）...\n',
+    })
   }
   return { sandboxId: primary.instanceId, created: false }
 }
@@ -305,12 +320,25 @@ async function ensureTaskInstance(
     const hit = listed.find((it) => it.instanceId === preferredInstanceId)
     if (hit && ['RUNNING', 'PAUSED', 'RESUME_FAILED'].includes(hit.status)) {
       if (hit.status !== 'RUNNING') {
+        onProgress?.({
+          phase: 'instance_resume',
+          message: '正在恢复任务沙箱实例...\n',
+        })
         await resumeStatefulInstance(cfg, hit.instanceId)
+      } else {
+        onProgress?.({
+          phase: 'instance_reuse_task',
+          message: '复用本任务的沙箱实例...\n',
+        })
       }
       return { sandboxId: hit.instanceId, created: false }
     }
   }
 
+  onProgress?.({
+    phase: 'instance_start',
+    message: '正在为当前任务启动沙箱实例（隔离模式）...\n',
+  })
   const sandboxId = await startStatefulInstanceWithWarmup(() => startStatefulInstance(cfg, toolId), onProgress)
   return { sandboxId, created: true }
 }
@@ -369,7 +397,10 @@ class StatefulProvider implements SandboxProvider {
     if (cached) {
       const headers = await cached.getAuthHeaders()
       if (await checkHealth(cached.baseUrl, headers)) {
-        onProgress?.({ phase: 'reuse', message: '复用已有沙箱...\n' })
+        onProgress?.({
+          phase: 'instance_reuse_session',
+          message: '复用本会话的沙箱连接...\n',
+        })
         return cached
       }
       this.instanceCache.delete(key)
@@ -380,7 +411,6 @@ class StatefulProvider implements SandboxProvider {
       onProgress?.({ phase: 'wait_ready', message: '连接已有沙箱实例...\n' })
       sandboxId = cfg.preCreatedSandboxId
     } else {
-      onProgress?.({ phase: 'create', message: '正在启动云端沙箱实例...\n' })
       if (sandboxMode === 'isolated') {
         const ensured = await ensureTaskInstance(cfg, cfg.toolId, preferredSandboxId, onProgress)
         sandboxId = ensured.sandboxId
@@ -388,7 +418,7 @@ class StatefulProvider implements SandboxProvider {
         const ensured = await ensureSingleEnvInstance(cfg, cfg.toolId, onProgress)
         sandboxId = ensured.sandboxId
       }
-      onProgress?.({ phase: 'wait_ready', message: '等待沙箱实例就绪...\n' })
+      onProgress?.({ phase: 'wait_ready', message: '确认沙箱实例健康状态...\n' })
       await waitForReady(cfg.sandboxBaseUrl, sandboxId, cfg.tcbApiKey)
     }
 

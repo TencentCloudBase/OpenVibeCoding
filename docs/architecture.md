@@ -2,7 +2,7 @@
 
 ## Overview
 
-CloudBase VibeCoding Platform 是一个基于腾讯云 CloudBase 的 AI 编程助手平台。用户通过 Web 界面向 Agent 下达编程指令，Agent 在 **AGS Stateful Sandbox**（TRW 数据面 + gateway 路由）中执行代码操作，结果通过 SSE 流式返回并持久化到 CloudBase 数据库。
+CloudBase VibeCoding Platform 是一个基于腾讯云 CloudBase 的 AI 编程助手平台。用户通过 Web 界面向 Agent 下达编程指令，Agent 在 **沙箱 infra**（Stateful 控制面 + TRW 数据面 + gateway 路由）中执行代码操作，结果通过 SSE 流式返回并持久化到 CloudBase 数据库。
 
 ```mermaid
 graph TB
@@ -27,7 +27,7 @@ graph TB
 
     subgraph Infra["CloudBase Infrastructure"]
         DB[("CloudBase DB")]
-        AGS["AGS Stateful Sandbox"]
+        SbxInfra["沙箱 infra"]
         Storage["Cloud Storage"]
         TCR["TCR Registry"]
         EnvPool["Environment Pool"]
@@ -43,11 +43,11 @@ graph TB
     Auth --> TaskSvc
     RuntimeMgr --> CodeBuddy & OpenCode & MiMo
     CodeBuddy & OpenCode & MiMo --> MCPMiddleware
-    MCPMiddleware --> AGS
-    TaskSvc --> AGS
+    MCPMiddleware --> SbxInfra
+    TaskSvc --> SbxInfra
     RuntimeMgr --> Persist --> DB
-    AGS --> CNB
-    AGS --> TCR
+    SbxInfra --> CNB
+    SbxInfra --> TCR
     TaskSvc --> Storage
     Auth --> EnvPool --> DB
 ```
@@ -251,15 +251,15 @@ Agent 调用子 Agent 时，`parent_tool_use_id` 从 SDK 顶层透传至前端 `
 
 ## Sandbox Module
 
-Sandbox 模块为每个 **envId** 提供 Stateful 执行环境（AGS 控制面 + TRW 数据面），任务共享同一实例上的 `/home/user` 工作区。
+Sandbox 模块为每个 **envId** 提供 Stateful 执行环境（沙箱 infra 控制面 + TRW 数据面），任务共享同一实例上的 `/home/user` 工作区。
 
 ### Architecture
 
 ```mermaid
 flowchart LR
     Agent["Agent Runtime"] --> Provider["StatefulSandboxProvider"]
-    Provider --> AGS["AGS StartSandboxInstance"]
-    AGS --> TRW["TRW :9000"]
+    Provider --> SbxInfra["启动沙箱实例"]
+    SbxInfra --> TRW["TRW :9000"]
     TRW --> FS["File System /home/user"]
     TRW --> Bash["Bash / PTY"]
     TRW --> Preview["/preview/5173 / 7681"]
@@ -274,8 +274,8 @@ flowchart LR
 
 ### Stateful Sandbox Lifecycle
 
-1. **Ensure Tool** — `ensureStatefulTool(envId)` 为环境创建或复用 AGS Sandbox Tool（`sdt-xxx`），镜像来自 `STATEFUL_SANDBOX_IMAGE` / TCR
-2. **Start / Reuse Instance** — `StatefulSandboxProvider` 按 envId 单实例：running 复用、paused 恢复、缺失则 `StartSandboxInstance`；镜像更新后 `stateful-tool-warmup` 轮询预热
+1. **Ensure Tool** — `ensureStatefulTool(envId)` 为环境创建或复用沙箱 Tool 模板（`sdt-xxx`），镜像来自 `STATEFUL_SANDBOX_IMAGE` → `TCR_IMAGE` → 公开 TCR 代码默认
+2. **Acquire Instance** — `SANDBOX_INSTANCE_MODE`：`shared` 每 env 单实例；`isolated` 每 task。`StatefulSandboxProvider`：running 复用、paused 恢复、缺失则 `StartSandboxInstance`；`stateful-tool-warmup` 轮询预热
 3. **Data Plane** — `TCB_API_KEY` + `E2b-Sandbox-Id` / `E2b-Sandbox-Port: 9000` 经 gateway 访问 TRW
 4. **Init Workspace** — `PUT /api/workspace/env` 注入凭证，`POST /api/workspace/init` 初始化 `/home/user`
 5. **Execute** — Agent 工具经 TRW `/api/tools/*`；CloudBase MCP 由 server 侧 `stateful-mcp-client` 转发
@@ -411,7 +411,7 @@ sequenceDiagram
     participant Web
     participant Server
     participant Runtime as ACP Runtime
-    participant Sandbox as AGS + TRW
+    participant Sandbox as 沙箱 infra + TRW
     participant DB as CloudBase DB
     participant Git as Git Archive
 
@@ -453,7 +453,7 @@ sequenceDiagram
 | Backend | Hono, Node.js, Drizzle ORM |
 | Database | CloudBase DB (primary), SQLite (local fallback) |
 | AI | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP, MiMo |
-| Sandbox | CloudBase AGS Stateful Sandbox, TRW, TCR images |
+| Sandbox | 沙箱 infra（Stateful + TRW）, TCR images |
 | Auth | JWE session, bcrypt, Arctic (OAuth) |
 | Persistence | CloudBase DB, local .jsonl, Git archive |
 | Protocol | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |

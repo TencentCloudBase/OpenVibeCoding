@@ -34,6 +34,7 @@ const tencentcloud = require('tencentcloud-sdk-nodejs')
 
 const TCR_DOMAIN = 'ccr.ccs.tencentyun.com'
 const ENV_FILE = resolve(process.cwd(), '.env.local')
+const SERVER_ENV_FILE = resolve(process.cwd(), 'packages/server/.env')
 const CLOUDBASE_AUTH_FILE = resolve(homedir(), '.config/.cloudbase/auth.json')
 const DEFAULT_NAMESPACE_PREFIX = 'cloudbase-vibecoding'
 // docker.io/yhyanghang/cloudbase-workspace:260515-0120e18d
@@ -118,6 +119,38 @@ function loadEnvFile() {
     })
   }
   return env
+}
+
+/** Mirror TCR image URI into packages/server/.env for first-time CreateSandboxTool. */
+function syncStatefulSandboxImageToServer(tcrImage) {
+  if (!existsSync(SERVER_ENV_FILE)) {
+    log('packages/server/.env not found; skip STATEFUL_SANDBOX_IMAGE sync', 'warn')
+    return
+  }
+  const key = 'STATEFUL_SANDBOX_IMAGE'
+  const content = readFileSync(SERVER_ENV_FILE, 'utf-8')
+  const line = `${key}=${tcrImage}`
+  const lines = content.split('\n')
+  let replaced = false
+  const newLines = lines.map((row) => {
+    const t = row.trim()
+    if (t.startsWith(`${key}=`) || t.startsWith(`# ${key}=`)) {
+      replaced = true
+      return line
+    }
+    return row
+  })
+  if (!replaced) {
+    const marker = '# Stateful sandbox'
+    const idx = newLines.findIndex((row) => row.includes('STATEFUL') || row.includes('Stateful sandbox'))
+    if (idx >= 0) {
+      newLines.splice(idx + 1, 0, line)
+    } else {
+      newLines.push('', line)
+    }
+  }
+  writeFileSync(SERVER_ENV_FILE, newLines.join('\n'))
+  log('STATEFUL_SANDBOX_IMAGE synced to packages/server/.env', 'success')
 }
 
 function saveEnvVar(key, value) {
@@ -993,6 +1026,7 @@ async function setupTcr(config) {
 
   // Save image reference
   saveEnvVar('TCR_IMAGE', fullImage)
+  syncStatefulSandboxImageToServer(fullImage)
   log('Image reference saved', 'info')
 
   return true

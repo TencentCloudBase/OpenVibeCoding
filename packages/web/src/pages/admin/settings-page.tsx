@@ -33,13 +33,13 @@ const SANDBOX_INSTANCE_MODES = [
   {
     value: 'shared',
     label: '共享实例',
-    description: '同一 CloudBase 环境下的所有任务共用一个 AGS 沙箱实例（共盘 /home/user）',
+    description: '同一 CloudBase 环境下的所有任务共用一个沙箱运行时实例（共盘 /home/user）',
     badge: '默认',
   },
   {
     value: 'isolated',
     label: '按任务隔离',
-    description: '每个任务独立一个 AGS 沙箱实例；删除任务会停止对应实例',
+    description: '每个任务独立一个沙箱运行时实例；删除任务会停止对应实例',
     badge: '隔离',
   },
 ] as const
@@ -259,7 +259,7 @@ export function AdminSettingsPage() {
               )}
             </div>
             <p className="text-sm text-muted-foreground">
-              控制同一 CloudBase 环境下，多个任务是否共用同一个 AGS 运行时实例（与上方「环境隔离」正交）
+              控制同一 CloudBase 环境下，多个任务是否共用同一个沙箱运行时实例（与上方「环境隔离」正交）
             </p>
             <p className="text-xs text-muted-foreground">
               优先级：管理员设置（DB） &gt; <code className="px-1 rounded bg-muted">SANDBOX_INSTANCE_MODE</code> &gt;

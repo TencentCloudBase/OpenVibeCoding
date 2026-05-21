@@ -13,18 +13,24 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-function emitWarmupProgress(onProgress: SandboxProgressCallback | undefined, round: number, hint?: string): void {
-  const suffix = hint ? `（${hint}）` : ''
+function emitToolWarmupProgress(onProgress: SandboxProgressCallback | undefined): void {
   onProgress?.({
     phase: 'template_warmup',
-    message: `沙箱模板预热中 ${round}/${WARMUP_POLL_MAX}${suffix}...\n`,
+    message: '沙箱模板预热中（云平台拉取镜像）...\n',
+  })
+}
+
+function emitInstanceStartProgress(onProgress: SandboxProgressCallback | undefined): void {
+  onProgress?.({
+    phase: 'pull_image',
+    message: '沙箱实例启动中（镜像拉取或就绪重试）...\n',
   })
 }
 
 /** After CreateSandboxTool: short poll window before first StartSandboxInstance. */
 export async function waitStatefulToolImageWarmup(onProgress?: SandboxProgressCallback): Promise<void> {
   for (let round = 1; round <= WARMUP_POLL_MAX; round++) {
-    emitWarmupProgress(onProgress, round, '云平台拉取镜像')
+    emitToolWarmupProgress(onProgress)
     await sleep(WARMUP_POLL_MS)
   }
 }
@@ -43,7 +49,7 @@ export async function startStatefulInstanceWithWarmup(
       if (!isAgsRetryableError(err) || attempt >= WARMUP_POLL_MAX) {
         throw err
       }
-      emitWarmupProgress(onProgress, attempt, '镜像尚未就绪，稍后重试')
+      emitInstanceStartProgress(onProgress)
       await sleep(WARMUP_POLL_MS)
     }
   }
