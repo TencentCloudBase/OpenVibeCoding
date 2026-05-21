@@ -2,6 +2,10 @@
   "name": "coding-agent-template",
   "version": "2.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22.0.0 <23.0.0",
+    "pnpm": ">=10.0.0"
+  },
   "scripts": {
     "dev": "concurrently \"pnpm dev:server\" \"pnpm dev:web\"",
     "dev:web": "pnpm --filter @coder/web dev",

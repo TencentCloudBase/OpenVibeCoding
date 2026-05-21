@@ -9,7 +9,7 @@
  *
  * 调用方：
  *   - routes/cloudbase-mcp.ts   OpenCode HTTP runtime
- *   - sandbox/sandbox-mcp-proxy.ts   CodeBuddy SDK runtime（InMemoryTransport server+client）
+ *   - sandbox/stateful/stateful-mcp-client.ts   CodeBuddy SDK runtime（InMemoryTransport）
  */
 
 import { z } from 'zod'
@@ -124,7 +124,7 @@ export interface DiscoveredTool {
 /**
  * 通过 mcporter list --schema 发现所有 cloudbase 工具。
  *
- * 双 runtime 共用此函数：sandbox-mcp-proxy 注入 SandboxInstance 风格 bash/read，
+ * 双 runtime 共用此函数：stateful-mcp-client 注入 SandboxInstance 风格 bash/read，
  * routes/cloudbase-mcp 注入直接 fetch 风格的 bash/read。
  */
 export async function discoverCloudbaseTools(deps: DiscoverToolsDeps): Promise<DiscoveredTool[]> {
@@ -166,7 +166,7 @@ export interface CloudbaseMcpLogger {
  *
  * @param tag      日志前缀（默认 'cloudbase-mcp'）
  * @param sink     行级 sink（接收已含前缀的整行字符串，默认 console）
- *                 sandbox-mcp-proxy 可传 (line) => log(line + '\n') 兼容它的流式 logger
+ *                 stateful-mcp-client 可传 (line) => log(line + '\n') 兼容它的流式 logger
  */
 export function createCloudbaseMcpLogger(
   tag = 'cloudbase-mcp',
@@ -198,7 +198,7 @@ export interface CreateInjectCredentialsOptions {
   userId: string
   /** 当前会话 envId */
   envId: string
-  /** 当前会话 conversationId（沙箱 /api/session/env 需要） */
+  /** 当前会话 conversationId（task id; used for credential lookup only) */
   conversationId: string
   /**
    * 沙箱请求函数。两条 runtime 各自传入：
@@ -214,7 +214,7 @@ export interface CreateInjectCredentialsOptions {
 
 /**
  * 创建一个 injectCredentials 函数：通过 issueTempCredentials 拿凭证（永久密钥优先），
- * 调沙箱 /api/session/env 写入。
+ * 调 TRW PUT /api/workspace/env 写入。
  */
 export function createInjectCredentials(opts: CreateInjectCredentialsOptions): InjectCredentialsFn {
   const { userId, envId, conversationId, sandboxFetch, workspaceFolderPaths, on401 } = opts
@@ -253,11 +253,10 @@ export function createInjectCredentials(opts: CreateInjectCredentialsOptions): I
       secretIdPrefix: creds.secretId.slice(0, 8),
     })
 
-    const res = await sandboxFetch('/api/session/env', {
+    const res = await sandboxFetch('/api/workspace/env', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        conversationId,
         CLOUDBASE_ENV_ID: envId,
         TENCENTCLOUD_SECRETID: creds.secretId,
         TENCENTCLOUD_SECRETKEY: creds.secretKey,

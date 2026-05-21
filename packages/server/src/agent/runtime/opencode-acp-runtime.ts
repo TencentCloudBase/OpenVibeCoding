@@ -10,7 +10,7 @@
  *   同名 custom tool 覆盖 opencode builtin — read/write/bash/edit/grep/glob。
  *
  *   每次 chatStream：
- *     1. BaseAgentRuntime.setupSandbox() 创建/获取 SCF 沙箱（共享实例）
+ *     1. BaseAgentRuntime.setupSandbox() acquires shared stateful sandbox
  *     2. spawn opencode acp，通过 child env 注入：
  *          OPENCODE_CONFIG_DIR=<projectRoot>/.opencode  （隔离用户全局配置）
  *          SANDBOX_MODE=1
@@ -44,7 +44,7 @@ import { registerPending, resolvePending, rejectPendingForConversation } from '.
 import { resolvePendingQuestion, rejectPendingQuestionsForConversation } from './pending-question-registry.js'
 import { OpencodeMessageBuilder, findLastRecordIds, buildHistoryContextPrompt } from './opencode-message-builder.js'
 import { BaseAgentRuntime } from './base-runtime.js'
-import type { SandboxInstance } from '../../sandbox/scf-sandbox-manager.js'
+import type { SandboxInstance } from '../../sandbox/provider/types.js'
 import { archiveToGit } from '../../sandbox/git-archive.js'
 import os from 'node:os'
 import path from 'node:path'
@@ -544,7 +544,12 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
         content: JSON.stringify({
           stopReason: promptRes.stopReason,
           usage: (promptRes as { _meta?: { usage?: unknown } })._meta?.usage ?? null,
-          sandbox: sandbox ? { baseUrl: sandbox.baseUrl, conversationId: sandbox.conversationId } : null,
+          sandbox: sandbox
+            ? {
+                baseUrl: sandbox.baseUrl,
+                conversationId: String((sandbox.meta as { conversationId?: string }).conversationId || conversationId),
+              }
+            : null,
           workingDir: sessionWorkingDir,
         }),
       })

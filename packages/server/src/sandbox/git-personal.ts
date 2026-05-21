@@ -1,4 +1,4 @@
-import type { SandboxInstance } from './scf-sandbox-manager.js'
+import type { SandboxInstance } from './provider/types.js'
 import { getDb } from '../db/index.js'
 import { IGitOptions, parseGitUrl } from '../services/git/git.js'
 

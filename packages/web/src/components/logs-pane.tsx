@@ -6,7 +6,7 @@ import { useState, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 import { useTasks } from '@/components/app-layout'
 import { getLogsPaneHeight, setLogsPaneHeight, getLogsPaneCollapsed, setLogsPaneCollapsed } from '@/lib/utils/cookies'
-import { Terminal, TerminalRef } from '@/components/terminal'
+import { Terminal } from '@/components/terminal'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 
 interface LogsPaneProps {
@@ -19,7 +19,6 @@ type LogFilterType = 'all' | 'platform' | 'server'
 
 export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
   const [copiedLogs, setCopiedLogs] = useState(false)
-  const [copiedTerminal, setCopiedTerminal] = useState(false)
   const [isCollapsed, setIsCollapsedState] = useState(true)
   const [paneHeight, setPaneHeight] = useState(200)
   const [isResizing, setIsResizing] = useState(false)
@@ -29,7 +28,6 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
   const [isClearingLogs, setIsClearingLogs] = useState(false)
   const [logFilter, setLogFilter] = useState<LogFilterType>('all')
   const logsContainerRef = useRef<HTMLDivElement>(null)
-  const terminalRef = useRef<TerminalRef>(null)
   const prevLogsLengthRef = useRef<number>(0)
   const hasInitialScrolled = useRef<boolean>(false)
   const wasAtBottomRef = useRef<boolean>(true)
@@ -201,25 +199,6 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
     }
   }
 
-  const clearTerminal = () => {
-    if (terminalRef.current) {
-      terminalRef.current.clear()
-    }
-  }
-
-  const copyTerminalToClipboard = async () => {
-    if (terminalRef.current) {
-      try {
-        const terminalText = terminalRef.current.getTerminalText()
-        await navigator.clipboard.writeText(terminalText)
-        setCopiedTerminal(true)
-        setTimeout(() => setCopiedTerminal(false), 2000)
-      } catch {
-        toast.error('Failed to copy terminal to clipboard')
-      }
-    }
-  }
-
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
     setIsResizing(true)
@@ -323,28 +302,6 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
               </Button>
             </div>
           )}
-          {activeTab === 'terminal' && (
-            <div className="flex items-center gap-1 mr-3" onClick={(e) => e.stopPropagation()}>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearTerminal}
-                className="h-5 w-5 p-0 hover:bg-accent"
-                title="Clear terminal"
-              >
-                <Trash2 className="h-3 w-3" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={copyTerminalToClipboard}
-                className="h-5 w-5 p-0 hover:bg-accent"
-                title="Copy terminal to clipboard"
-              >
-                {copiedTerminal ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
-              </Button>
-            </div>
-          )}
         </div>
         <div
           ref={logsContainerRef}
@@ -395,10 +352,10 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
         </div>
         <div className={cn('flex-1 overflow-hidden', (isCollapsed || activeTab !== 'terminal') && 'hidden')}>
           <Terminal
-            ref={terminalRef}
             taskId={task.id}
             isActive={activeTab === 'terminal' && !isCollapsed}
             isMobile={!isDesktop}
+            sandboxReady={!!task.sandboxId}
           />
         </div>
       </div>

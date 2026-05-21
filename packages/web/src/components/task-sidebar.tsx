@@ -1,7 +1,7 @@
 import type { Task } from '@coder/shared'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { AlertCircle, Plus, Trash2, GitBranch, Loader2, Search, X, MoreVertical, Smartphone, Clock } from 'lucide-react'
+import { AlertCircle, Plus, Trash2, GitBranch, Loader2, Search, X, Smartphone, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Link, useLocation } from 'react-router'
 import { Claude, CodeBuddy, Codex, Copilot, Cursor, Gemini, OpenCode } from '@/components/logos'
@@ -17,7 +17,6 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
 import { useTasks } from '@/components/app-layout'
@@ -300,27 +299,6 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
     fetchSearchResults,
   ])
 
-  const handleDeleteSingleTask = async (taskId: string, e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    try {
-      const response = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE', credentials: 'include' })
-      if (response.ok) {
-        toast.success('Task deleted')
-        refreshTasks()
-      } else {
-        const data = await response.json()
-        // 后端 409 时 failed 数组含每步的 step / message / code / requestId
-        const detail = Array.isArray(data?.failed)
-          ? data.failed.map((f: any) => `[${f.step}] ${f.message || f.code || 'failed'}`).join('；')
-          : data?.detail || ''
-        toast.error(detail ? `${data.error || '删除失败'}：${detail}` : data.error || 'Failed to delete task')
-      }
-    } catch {
-      toast.error('Failed to delete task')
-    }
-  }
-
   const handleDeleteTasks = async () => {
     if (!deleteCompleted && !deleteFailed && !deleteStopped) {
       toast.error('Please select at least one task type to delete')
@@ -331,20 +309,21 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
     try {
       const actions = []
       if (deleteCompleted) actions.push('completed')
-      if (deleteFailed) actions.push('failed')
+      if (deleteFailed) actions.push('error')
       if (deleteStopped) actions.push('stopped')
 
       const response = await fetch(`/api/tasks?action=${actions.join(',')}`, {
         method: 'DELETE',
+        credentials: 'include',
       })
 
       if (response.ok) {
-        const result = await response.json()
-        toast.success(result.message)
+        const result = await response.json().catch(() => ({}))
+        toast.success(result.message || 'Tasks deleted')
         await refreshTasks()
         setShowDeleteDialog(false)
       } else {
-        const error = await response.json()
+        const error = await response.json().catch(() => ({}))
         toast.error(error.error || 'Failed to delete tasks')
       }
     } catch (error) {
@@ -562,28 +541,6 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
                                 {task.status === 'stopped' && (
                                   <AlertCircle className="h-3 w-3 text-orange-500 flex-shrink-0" />
                                 )}
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger
-                                    asChild
-                                    onClick={(e) => {
-                                      e.preventDefault()
-                                      e.stopPropagation()
-                                    }}
-                                  >
-                                    <button className="h-5 w-5 p-0 flex items-center justify-center rounded opacity-0 group-hover:opacity-100 hover:bg-muted-foreground/20 transition-opacity">
-                                      <MoreVertical className="h-3 w-3" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end" className="w-36">
-                                    <DropdownMenuItem
-                                      className="text-xs text-destructive cursor-pointer"
-                                      onClick={(e) => handleDeleteSingleTask(task.id, e)}
-                                    >
-                                      <Trash2 className="h-3 w-3 mr-1.5" />
-                                      Delete
-                                    </DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
                               </div>
                             </div>
                             {task.repoUrl && (

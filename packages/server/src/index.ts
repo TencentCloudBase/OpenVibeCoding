@@ -1,4 +1,6 @@
 import { serve } from '@hono/node-server'
+import type { Server } from 'node:http'
+import { attachPreviewWebSocketProxy } from './sandbox/preview-ws-proxy.js'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -156,7 +158,7 @@ if (!process.env.ASK_USER_BASE_URL) {
   process.env.ASK_USER_BASE_URL = `http://127.0.0.1:${PORT}`
 }
 
-serve({ fetch: app.fetch, port: PORT }, () => {
+const server = serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`Server running on http://localhost:${PORT}`)
   if (serveStaticFiles) {
     console.log(`Open http://localhost:${PORT} in your browser`)
@@ -172,6 +174,8 @@ serve({ fetch: app.fetch, port: PORT }, () => {
 
   // Backfill API keys for existing users
   backfillApiKeys()
-})
+}) as Server
+
+attachPreviewWebSocketProxy(server)
 
 export default app

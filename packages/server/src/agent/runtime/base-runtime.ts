@@ -2,8 +2,8 @@
  * BaseAgentRuntime
  *
  * 抽象基类：提供所有 runtime 共享的基础设施：
- * - 沙箱生命周期（SCF 创建 + 健康检查 + workspace init）
- * - MCP Server（sandbox-mcp-proxy）
+ * - Stateful sandbox lifecycle (provider acquire + workspace init)
+ * - MCP client (stateful-mcp-client)
  * - System Prompt（buildAppendPrompt + getCodingSystemPrompt）
  * - PublishableKey 获取
  *
@@ -18,14 +18,21 @@
 import type { AgentCallback, AgentCallbackMessage, AgentOptions } from '@coder/shared'
 import type { ChatStreamResult, IAgentRuntime } from './types.js'
 import type { ModelInfo } from '../cloudbase-agent.service.js'
-import {
-  scfSandboxManager,
-  type SandboxInstance,
-  type SandboxProgressCallback,
-} from '../../sandbox/scf-sandbox-manager.js'
-import { createSandboxMcpClient, type SandboxMcpDeps } from '../../sandbox/sandbox-mcp-proxy.js'
+import { buildStatefulAcquireContext } from '../../sandbox/acquire-context.js'
+import { getSandboxProvider } from '../../sandbox/index.js'
+import type {
+  SandboxInstance,
+  SandboxProgressCallback,
+  McpClientBundle,
+  ToolOverrideConfig,
+} from '../../sandbox/provider/types.js'
 import { getDb } from '../../db/index.js'
-import { resolveSandboxConfig, backfillSandboxConfig } from '../../lib/sandbox-config.js'
+import type { Task } from '../../db/types.js'
+import {
+  STATEFUL_WORKSPACE_ROOT,
+  resolveSandboxConfig,
+  backfillSandboxConfig,
+} from '../../lib/sandbox-config.js'
 import { getCodingSystemPrompt } from '../coding-mode.js'
 import { decrypt } from '../../lib/crypto.js'
 import { encryptJWE } from '../../lib/session.js'
@@ -78,73 +85,41 @@ export async function waitForSandboxHealth(
 }
 
 /**
- * 初始化沙箱工作空间：POST /api/session/init 注入凭证和环境变量
- * 然后 poll /api/scope/info 获取工作目录
+ * @deprecated Use SandboxProvider.prepare() (TRW POST /api/workspace/init).
+ * Kept for exports/tests; stateful path returns TRW workspace root immediately.
  */
 export async function initSandboxWorkspace(
   sandbox: SandboxInstance,
   secret: { envId: string; secretId: string; secretKey: string; token?: string },
-  conversationId: string,
+  _conversationId: string,
   preferredCwd?: string,
   onProgress?: SandboxProgressCallback,
 ): Promise<{ workspace: string; vitePort?: number }> {
-  const fallbackWorkspace = preferredCwd || `/tmp/workspace/${secret.envId}/${conversationId}`
-
+  const fallbackWorkspace = preferredCwd || STATEFUL_WORKSPACE_ROOT
   onProgress?.({ phase: 'init_mcp', message: '初始化工作空间...\n' })
 
-  // Fire session/init in background — injects credentials into the sandbox session.
-  sandbox
-    .request('/api/session/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        env: {
-          CLOUDBASE_ENV_ID: secret.envId,
-          TENCENTCLOUD_SECRETID: secret.secretId,
-          TENCENTCLOUD_SECRETKEY: secret.secretKey,
-          ...(secret.token ? { TENCENTCLOUD_SESSIONTOKEN: secret.token } : {}),
+  try {
+    const provider = getSandboxProvider()
+    const prepared = await provider.prepare(
+      sandbox,
+      {
+        credentials: {
+          envId: secret.envId,
+          secretId: secret.secretId,
+          secretKey: secret.secretKey,
+          sessionToken: secret.token,
         },
-      }),
-      signal: AbortSignal.timeout(300_000),
-    })
-    .then((res) => {
-      if (!res.ok) {
-        console.warn('[BaseRuntime] session/init returned status:', res.status)
-      }
-    })
-    .catch((e) => {
-      console.warn('[BaseRuntime] session/init background error:', (e as Error).message)
-    })
-
-  // Poll /api/scope/info to get the workspace path
-  const maxWaitMs = 120_000
-  const pollInterval = 2000
-  const startTime = Date.now()
-
-  while (Date.now() - startTime < maxWaitMs) {
-    try {
-      const res = await sandbox.request('/api/scope/info', {
-        signal: AbortSignal.timeout(10_000),
-      })
-      if (res.ok) {
-        const data = (await res.json()) as {
-          success?: boolean
-          workspace?: string
-          vitePort?: number | null
-        }
-        if (data.success && data.workspace) {
-          onProgress?.({ phase: 'ready', message: '沙箱已就绪\n' })
-          return { workspace: data.workspace, vitePort: data.vitePort ?? undefined }
-        }
-      }
-    } catch {
-      // scope/info not available yet
-    }
-    await new Promise((r) => setTimeout(r, pollInterval))
+        workspaceHint: fallbackWorkspace,
+        backendOptions: { backend: 'stateful' },
+      },
+      onProgress,
+    )
+    onProgress?.({ phase: 'ready', message: '沙箱已就绪\n' })
+    return { workspace: prepared.workspace || STATEFUL_WORKSPACE_ROOT }
+  } catch (e) {
+    console.warn('[BaseRuntime] initSandboxWorkspace via workspace/init failed:', (e as Error).message)
+    return { workspace: fallbackWorkspace }
   }
-
-  console.warn(`[BaseRuntime] initSandboxWorkspace timeout after ${maxWaitMs / 1000}s`)
-  return { workspace: fallbackWorkspace }
 }
 
 // ─── System Prompt ─────────────────────────────────────────────────────────
@@ -287,7 +262,7 @@ export interface RuntimeContext {
   mode: 'default' | 'coding'
   isCodingMode: boolean
 
-  /** SCF 沙箱实例（null 表示沙箱不可用或禁用） */
+  /** Stateful sandbox instance (null when sandbox disabled or unavailable) */
   sandbox: SandboxInstance | null
   /** 沙箱内工作目录路径 */
   sandboxCwd: string | null
@@ -296,8 +271,8 @@ export interface RuntimeContext {
   /** sandbox session id */
   sandboxSessionId: string
 
-  /** MCP client (sandbox-mcp-proxy)，用于 CloudBase 工具调用 */
-  mcpClient: Awaited<ReturnType<typeof createSandboxMcpClient>> | null
+  /** MCP client (stateful in-process server) for CloudBase tools */
+  mcpClient: McpClientBundle | null
 
   /** 构建好的 system prompt（含沙箱上下文 + coding mode） */
   systemPrompt: string
@@ -319,7 +294,7 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
   // ─── 公共设施方法（子类可在 runAgent 中调用） ────────────────────
 
   /**
-   * 初始化完整的沙箱环境：创建 SCF → 健康检查 → workspace init → MCP client。
+   * Initialize sandbox: acquire stateful instance → workspace init → MCP client.
    *
    * @returns RuntimeContext 中与沙箱相关的字段
    */
@@ -337,13 +312,13 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     sandboxMode: 'shared' | 'isolated'
     sandboxSessionId: string
     toolOverrideConfig: { url: string; headers: Record<string, string> } | null
-    mcpClient: Awaited<ReturnType<typeof createSandboxMcpClient>> | null
+    mcpClient: McpClientBundle | null
     /** Short-lived JWE session cookie for authenticating localhost requests (e.g. /cloudbase-mcp) */
     sessionJwe: string | null
   }> {
     const { conversationId, envId, userId, userCredentials, isCodingMode, callback, model } = options
 
-    const sandboxEnabled = !!(process.env.TCB_ENV_ID && process.env.SCF_SANDBOX_IMAGE_URI)
+    const sandboxEnabled = !!(process.env.TCB_ENV_ID && process.env.TCB_API_KEY)
     if (!sandboxEnabled || !envId) {
       return {
         sandbox: null,
@@ -358,22 +333,19 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
 
     // Read sandbox config from task record
     let sandboxConfig = resolveSandboxConfig({ envId, taskId: conversationId })
+    let taskRecord: Task | null = null
     try {
-      const taskRecord = await getDb().tasks.findById(conversationId)
+      taskRecord = await getDb().tasks.findById(conversationId)
       await backfillSandboxConfig(
         conversationId,
-        {
-          sandboxMode: taskRecord?.sandboxMode,
-          sandboxSessionId: taskRecord?.sandboxSessionId,
-          sandboxCwd: taskRecord?.sandboxCwd,
-        },
+        { sandboxMode: taskRecord?.sandboxMode, sandboxCwd: taskRecord?.sandboxCwd },
         envId,
         getDb(),
       )
+      taskRecord = await getDb().tasks.findById(conversationId)
       sandboxConfig = resolveSandboxConfig({
-        sandboxMode: taskRecord?.sandboxMode,
-        sandboxSessionId: taskRecord?.sandboxSessionId,
         sandboxCwd: taskRecord?.sandboxCwd,
+        sandboxMode: taskRecord?.sandboxMode,
         envId,
         taskId: conversationId,
       })
@@ -381,37 +353,32 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
       // Non-critical
     }
 
-    const { sandboxMode, sandboxSessionId } = sandboxConfig
-
-    // Progress bridge
     const progressBridge: SandboxProgressCallback = ({ phase }) => {
       if (callback) {
         callback({ type: 'agent_phase', phase: 'preparing', phaseToolName: `sandbox:${phase}` })
       }
     }
 
+    const provider = getSandboxProvider()
     let sandboxInstance: SandboxInstance | null = null
-    let toolOverrideConfig: { url: string; headers: Record<string, string> } | null = null
-    let mcpClient: Awaited<ReturnType<typeof createSandboxMcpClient>> | null = null
+    let toolOverrideConfig: ToolOverrideConfig | null = null
+    let mcpClient: McpClientBundle | null = null
     let detectedCwd: string | null = null
     let capturedSessionJwe: string | null = null
 
     try {
-      sandboxInstance = await scfSandboxManager.getOrCreate(
-        conversationId,
-        envId,
-        {
-          mode: 'shared',
-          workspaceIsolation: sandboxMode,
-          sandboxSessionId,
-          isCodingMode,
-        },
+      sandboxInstance = await provider.acquire(
+        buildStatefulAcquireContext({
+          envId,
+          taskId: conversationId,
+          userId,
+          sandboxMode: sandboxConfig.sandboxMode,
+          sandboxId: taskRecord?.sandboxId,
+        }),
         progressBridge,
       )
 
-      toolOverrideConfig = await sandboxInstance.getToolOverrideConfig()
-
-      // Inject hosting presign config for ImageGen, and capture sessionJwe for /cloudbase-mcp auth
+      let hosting: ToolOverrideConfig['hosting'] | undefined
       try {
         const user = await getDb().users.findById(userId)
         if (user) {
@@ -426,56 +393,59 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
               name: user.name || undefined,
             },
           }
-          const sessionJwe = await encryptJWE(session, '2h')
-          capturedSessionJwe = sessionJwe
+          capturedSessionJwe = await encryptJWE(session, '2h')
           const serverPort = Number(process.env.PORT) || 3001
-          ;(toolOverrideConfig as any).hosting = {
+          hosting = {
             presignUrl: `http://localhost:${serverPort}/api/storage/presign?bucketType=static`,
-            sessionCookie: sessionJwe,
+            sessionCookie: capturedSessionJwe,
             sessionId: conversationId,
           }
         }
       } catch {
-        // hosting presign failure doesn't affect main flow
+        // optional
       }
 
-      // Health check
-      const sandboxReady = await waitForSandboxHealth(sandboxInstance, progressBridge)
-      if (!sandboxReady) {
+      toolOverrideConfig = await provider.getToolOverrideConfig(sandboxInstance, hosting)
+
+      let prepared: Awaited<ReturnType<typeof provider.prepare>> | null = null
+      try {
+        prepared = await provider.prepare(
+          sandboxInstance,
+          {
+            credentials: {
+              envId,
+              secretId: userCredentials?.secretId || '',
+              secretKey: userCredentials?.secretKey || '',
+              sessionToken: userCredentials?.sessionToken,
+            },
+            workspaceHint: sandboxConfig.sandboxCwd || STATEFUL_WORKSPACE_ROOT,
+            codingMode: isCodingMode,
+            backendOptions: { backend: 'stateful' },
+          },
+          progressBridge,
+        )
+      } catch {
         if (callback) {
           callback({ type: 'text', content: '沙箱启动超时，将使用受限模式继续对话。\n\n' })
         }
         sandboxInstance = null
-      } else {
-        // Init workspace
-        const initResult = await initSandboxWorkspace(
-          sandboxInstance,
-          {
-            envId,
+      }
+
+      if (sandboxInstance && prepared) {
+        if (prepared.workspace) detectedCwd = prepared.workspace
+
+        mcpClient = await provider.createMcpClient({
+          sandbox: sandboxInstance,
+          getCredentials: async () => ({
+            cloudbaseEnvId: envId,
             secretId: userCredentials?.secretId || '',
             secretKey: userCredentials?.secretKey || '',
-            token: userCredentials?.sessionToken,
-          },
-          conversationId,
-          sandboxConfig.sandboxCwd || undefined,
-          progressBridge,
-        )
-        if (initResult.workspace) {
-          detectedCwd = initResult.workspace
-        }
-
-        // Create MCP client
-        mcpClient = await createSandboxMcpClient({
-          sandbox: sandboxInstance,
-          userId,
-          envId,
+            sessionToken: userCredentials?.sessionToken,
+          }),
           workspaceFolderPaths: detectedCwd || sandboxConfig.sandboxCwd,
           log: (msg) => console.log(msg),
           onArtifact: (artifact) => {
-            if (callback) {
-              callback({ type: 'artifact', artifact })
-            }
-            // 持久化部署记录（所有 runtime 共用）
+            if (callback) callback({ type: 'artifact', artifact })
             persistDeploymentFromArtifact(conversationId, artifact).catch((err) => {
               console.error('[BaseRuntime] Failed to persist deployment:', err)
             })
@@ -489,13 +459,15 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
           currentModel: model,
         })
 
-        // Persist sandboxId to task record
         try {
           await getDb().tasks.update(conversationId, {
-            sandboxId: sandboxInstance.functionName,
+            sandboxId: sandboxInstance.id,
+            sandboxCwd: detectedCwd || sandboxConfig.sandboxCwd,
+            sandboxMode: sandboxConfig.sandboxMode,
+            updatedAt: Date.now(),
           })
         } catch {
-          // Non-critical
+          // non-critical
         }
       }
     } catch (err) {
@@ -511,8 +483,8 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     return {
       sandbox: sandboxInstance,
       sandboxCwd: detectedCwd,
-      sandboxMode,
-      sandboxSessionId,
+      sandboxMode: sandboxConfig.sandboxMode,
+      sandboxSessionId: envId,
       toolOverrideConfig,
       mcpClient,
       sessionJwe: capturedSessionJwe,

@@ -6,7 +6,8 @@
  * - Uses sandbox's git_push API endpoint
  */
 
-import type { SandboxInstance } from './scf-sandbox-manager.js'
+import type { SandboxInstance } from './provider/types.js'
+import { STATEFUL_WORKSPACE_ROOT } from '../lib/sandbox-config.js'
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ export function isGitArchiveConfigured(): boolean {
 /**
  * 将沙箱中的变更推送到 Git 归档仓库
  *
- * 通过沙箱的 /api/tools/git_push 端点执行 git 操作
+ * 通过 TRW POST /api/extend/git_push 端点执行 git 操作
  *
  * @param sandbox 沙箱实例
  * @param conversationId 会话 ID（用作分支名）
@@ -89,7 +90,7 @@ export async function archiveToGit(
     const promptSummary = prompt.slice(0, 50).replace(/\n/g, ' ')
     const commitMessage = `${conversationId}: ${promptSummary}`
 
-    const gitPushRes = await sandbox.request('/api/tools/git_push', {
+    const gitPushRes = await sandbox.request('/api/extend/git_push', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: commitMessage }),
@@ -182,7 +183,17 @@ export async function deleteConversationViaSandbox(
   conversationId: string,
   sandboxCwd?: string,
 ): Promise<void> {
-  const workspace = sandboxCwd || `/tmp/workspace/${envId}/${conversationId}`
+  const workspace = sandboxCwd || STATEFUL_WORKSPACE_ROOT
+
+  // Stateful: one shared /home/user per env instance — never rm -rf the workspace root.
+  if (workspace === STATEFUL_WORKSPACE_ROOT || workspace === '/home/user') {
+    try {
+      await archiveToGit(sandbox, conversationId, `delete conversation ${conversationId}`)
+    } catch (err) {
+      console.warn(`[GitArchive] deleteConversationViaSandbox archive only failed: ${(err as Error).message}`)
+    }
+    return
+  }
 
   try {
     console.log(`[GitArchive] deleteConversationViaSandbox ${workspace}`)

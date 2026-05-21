@@ -121,6 +121,8 @@ interface TaskDetailsProps {
   task: Task
   maxSandboxDuration?: number
   onStreamComplete?: () => void
+  /** Refetch task row (previewUrl, sandboxId) without waiting for poll/stream end */
+  onTaskRefetch?: () => void
   initialPrompt?: string
   initialImages?: Array<{ data: string; mimeType: string }>
   onInitialPromptConsumed?: () => void
@@ -204,6 +206,7 @@ export function TaskDetails({
   task,
   maxSandboxDuration = 300,
   onStreamComplete,
+  onTaskRefetch,
   initialPrompt,
   initialImages,
   onInitialPromptConsumed,
@@ -261,6 +264,17 @@ export function TaskDetails({
   }, [onStreamComplete, isCodingModeForAutoFix, task.id])
 
   const chatStream = useChatStream(task.id, { onStreamComplete: wrappedOnStreamComplete })
+
+  // Sandbox ready in stream → refetch task so previewUrl/sandboxId reach UI immediately
+  const lastSandboxReadyRefetchRef = useRef(0)
+  useEffect(() => {
+    if (!isCodingModeForAutoFix || !onTaskRefetch) return
+    if (chatStream.agentPhase.toolName !== 'sandbox:ready') return
+    const ts = chatStream.agentPhase.timestamp
+    if (ts <= lastSandboxReadyRefetchRef.current) return
+    lastSandboxReadyRefetchRef.current = ts
+    onTaskRefetch()
+  }, [chatStream.agentPhase.toolName, chatStream.agentPhase.timestamp, isCodingModeForAutoFix, onTaskRefetch])
 
   // Handle initial prompt (once) at this level
   const initialTriggered = useRef(false)
@@ -489,15 +503,13 @@ export function TaskDetails({
     }
   }, [])
 
-  // coding mode: preview pane 打开时加载 URL（若尚未加载）
-  // 注意: 必须检查 !previewGatewayError，否则出错后 loading=false+url=null
-  // 会导致 effect 再次触发 → 无限轮询
-  // 注意: 必须检查 task.previewUrl，等 agent 完成 initCodingProject + startDevServer 后才触发
+  // coding mode: preview pane 打开且沙箱已分配时拉 preview-url SSE（不依赖 15s 轮询拿到 previewUrl）
+  const codingPreviewCanLoad = !!(task.sandboxId || task.previewUrl)
   useEffect(() => {
     if (
       isCodingMode &&
       showPreviewPane &&
-      task.previewUrl &&
+      codingPreviewCanLoad &&
       !previewGatewayUrl &&
       !previewGatewayLoading &&
       !previewGatewayError
@@ -507,6 +519,8 @@ export function TaskDetails({
   }, [
     isCodingMode,
     showPreviewPane,
+    codingPreviewCanLoad,
+    task.sandboxId,
     task.previewUrl,
     previewGatewayUrl,
     previewGatewayLoading,
@@ -1787,6 +1801,7 @@ export function TaskDetails({
     try {
       const response = await fetch(`/api/tasks/${task.id}`, {
         method: 'DELETE',
+        credentials: 'include',
       })
 
       if (response.ok) {
@@ -2460,7 +2475,12 @@ export function TaskDetails({
                     {/* 工具栏:BrowserControls + 刷新 + 全屏 */}
                     <div className="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/20 px-2">
                       <BrowserControls
-                        previewUrl={previewGatewayUrl || 'http://localhost:5173'}
+                        previewUrl={
+                          previewGatewayUrl ||
+                          (codingPreviewCanLoad
+                            ? `/api/tasks/${task.id}/preview/5173/`
+                            : 'http://localhost:5173')
+                        }
                         bridge={previewBridge}
                         onHardRefresh={() => {
                           setPreviewKey((k) => k + 1)
@@ -2566,8 +2586,8 @@ export function TaskDetails({
                     </div>
                     {/* 内容区 */}
                     <div className="relative flex-1 min-h-0">
-                      {/* 项目未初始化：等 agent 完成 initCodingProject + startDevServer */}
-                      {!task.previewUrl && !previewGatewayLoading && !previewGatewayUrl && !previewGatewayError && (
+                      {/* 沙箱尚未分配 */}
+                      {!codingPreviewCanLoad && !previewGatewayLoading && !previewGatewayUrl && !previewGatewayError && (
                         <div className="absolute inset-0 flex items-center justify-center">
                           <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground text-center">
                             <Loader2 className="h-5 w-5 animate-spin" />
@@ -2575,6 +2595,18 @@ export function TaskDetails({
                           </div>
                         </div>
                       )}
+                      {/* 沙箱已有但 preview-url 尚未返回（避免空白 + 地址栏假 /） */}
+                      {codingPreviewCanLoad &&
+                        !previewGatewayLoading &&
+                        !previewGatewayUrl &&
+                        !previewGatewayError && (
+                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5]">
+                            <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground bg-background/80 backdrop-blur rounded-md px-4 py-3 shadow text-center">
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                              <span>正在连接预览网关…</span>
+                            </div>
+                          </div>
+                        )}
                       {/* Loading 状态：实时显示后端推送的进度 */}
                       {previewGatewayLoading && (
                         <>
@@ -2641,7 +2673,10 @@ export function TaskDetails({
                             <div className="absolute inset-0 z-10">
                               <PreviewPlaceholder />
                               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/60" />
+                                <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground bg-background/80 backdrop-blur rounded-md px-4 py-3 shadow text-center">
+                                  <Loader2 className="h-5 w-5 animate-spin" />
+                                  <span>正在加载预览页面…</span>
+                                </div>
                               </div>
                             </div>
                           )}

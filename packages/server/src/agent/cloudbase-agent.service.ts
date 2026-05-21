@@ -1,20 +1,27 @@
 import { mkdirSync, writeFileSync, readFileSync, appendFileSync, existsSync, unlinkSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { query, ExecutionError } from '@tencent-ai/agent-sdk'
 import { v4 as uuidv4 } from 'uuid'
 import { loadConfig } from '../config/store.js'
 import { persistenceService } from './persistence.service.js'
-import {
-  scfSandboxManager,
-  type SandboxInstance,
-  type SandboxProgressCallback,
-} from '../sandbox/scf-sandbox-manager.js'
-import { createSandboxMcpClient } from '../sandbox/sandbox-mcp-proxy.js'
+import { buildStatefulAcquireContext } from '../sandbox/acquire-context.js'
+import { getSandboxProvider } from '../sandbox/index.js'
+import type {
+  SandboxInstance,
+  SandboxProgressCallback,
+  McpClientBundle,
+  ToolOverrideConfig,
+} from '../sandbox/provider/types.js'
 import { archiveToGit } from '../sandbox/git-archive.js'
 import { getCodingSystemPrompt } from './coding-mode.js'
 import { getDb } from '../db/index.js'
-import { resolveSandboxConfig, backfillSandboxConfig } from '../lib/sandbox-config.js'
+import {
+  STATEFUL_WORKSPACE_ROOT,
+  resolveSandboxConfig,
+  backfillSandboxConfig,
+} from '../lib/sandbox-config.js'
 import { decrypt } from '../lib/crypto.js'
 import { encryptJWE } from '../lib/session.js'
 import type { AgentCallbackMessage, AgentOptions, CodeBuddyMessage, ExtendedSessionUpdate } from '@coder/shared'
@@ -147,6 +154,7 @@ const SYSTEM_MODELS: ModelInfo[] = [
   { id: 'kimi-k2.6', name: 'Kimi-K2.6' },
   { id: 'minimax-m2.7', name: 'MiniMax-M2.7' },
   { id: 'hunyuan-2.0-thinking', name: 'Hunyuan-2.0-Thinking' },
+  { id: 'hy3-preview-ioa', name: 'Hunyuan-3 Preview (IOA)' },
   { id: 'deepseek-v3-2-volc', name: 'DeepSeek-V3.2' },
 ]
 
@@ -187,14 +195,7 @@ export function clearModelsCache(): void {
 
 // ─── Sandbox & Prompt Helpers (imported from base-runtime) ───────────────
 // 集中在 base-runtime.ts 维护，所有 runtime 共用。
-import {
-  waitForSandboxHealth,
-  initSandboxWorkspace,
-  WRITE_TOOLS,
-  buildAppendPrompt,
-  getPublishableKey,
-  persistDeploymentFromArtifact,
-} from './runtime/base-runtime.js'
+import { WRITE_TOOLS, buildAppendPrompt, getPublishableKey, persistDeploymentFromArtifact } from './runtime/base-runtime.js'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -450,8 +451,25 @@ export class CloudbaseAgentService {
     })
 
     // Launch agent in background (fire-and-forget)
-    this.launchAgent(prompt, callback, options, turnId).catch((err) => {
-      console.error('[Agent] Background agent error:', err)
+    this.launchAgent(prompt, callback, options, turnId).catch(async (err) => {
+      const message = (err as Error).message || String(err)
+      console.error('[Agent] Background agent error:', message)
+      if (isAgentRunning(conversationId)) {
+        completeAgent(conversationId, 'error', message, 'refusal')
+      }
+      try {
+        await getDb().tasks.update(conversationId, {
+          status: 'error',
+          error: message.slice(0, 500),
+          updatedAt: Date.now(),
+        })
+      } catch {
+        // non-critical
+      }
+      callback?.({
+        type: 'text',
+        content: `【Agent 启动失败】${message}\n`,
+      })
     })
 
     return { turnId, alreadyRunning: false }
@@ -522,16 +540,15 @@ export class CloudbaseAgentService {
         conversationId,
         {
           sandboxMode: taskRecord?.sandboxMode,
-          sandboxSessionId: taskRecord?.sandboxSessionId,
           sandboxCwd: taskRecord?.sandboxCwd,
         },
         userContext.envId,
         getDb(),
       )
+      const refreshed = await getDb().tasks.findById(conversationId)
       sandboxConfig = resolveSandboxConfig({
-        sandboxMode: taskRecord?.sandboxMode,
-        sandboxSessionId: taskRecord?.sandboxSessionId,
-        sandboxCwd: taskRecord?.sandboxCwd,
+        sandboxCwd: refreshed?.sandboxCwd ?? taskRecord?.sandboxCwd,
+        sandboxMode: refreshed?.sandboxMode ?? taskRecord?.sandboxMode,
         envId: userContext.envId,
         taskId: conversationId,
       })
@@ -544,22 +561,30 @@ export class CloudbaseAgentService {
       sandboxConfig = resolveSandboxConfig({ envId: userContext.envId, taskId: conversationId })
     }
 
-    const { sandboxMode, sandboxSessionId, sandboxCwd: resolvedCwd } = sandboxConfig
-    const actualCwd = cwd || resolvedCwd
+    const taskForAcquire = await getDb().tasks.findById(conversationId).catch(() => null)
+
+    const { sandboxCwd: resolvedCwd } = sandboxConfig
+    // Remote TRW workspace path (semantic only on stateful; tools run in sandbox via MCP).
+    const workspaceCwd = cwd || resolvedCwd
+    // CodeBuddy SDK runs on the OVC host — never mkdir/query against /home/user on macOS.
+    const localCwd =
+      workspaceCwd === STATEFUL_WORKSPACE_ROOT || workspaceCwd.startsWith('/home/user')
+        ? path.join(os.tmpdir(), 'ovc-agent', conversationId)
+        : workspaceCwd
     console.log(
-      `[Agent] sandboxConfig: mode=${sandboxMode}, sessionId=${sandboxSessionId}, resolvedCwd=${resolvedCwd}, cwd=${cwd}, actualCwd=${actualCwd}`,
+      `[Agent] sandboxConfig: workspaceCwd=${workspaceCwd}, localCwd=${localCwd}, cwd=${cwd ?? '(none)'}`,
     )
-    mkdirSync(actualCwd, { recursive: true })
+    mkdirSync(localCwd, { recursive: true })
 
     // ── 复制 .codebuddy/models.json 模板供 SDK 读取自定义模型 ────────────
     // 仅当 CODEBUDDY_USE_CUSTOM_MODELS=true 时启用
     if (useCustomModels()) {
       try {
-        const modelsJsonPath = path.join(actualCwd, '.codebuddy', 'models.json')
+        const modelsJsonPath = path.join(localCwd, '.codebuddy', 'models.json')
         if (!existsSync(modelsJsonPath)) {
           const templatePath = getModelsTemplatePath()
           if (templatePath) {
-            mkdirSync(path.join(actualCwd, '.codebuddy'), { recursive: true })
+            mkdirSync(path.join(localCwd, '.codebuddy'), { recursive: true })
             const raw = readFileSync(templatePath, 'utf-8')
             writeFileSync(modelsJsonPath, resolveEnvPlaceholders(raw), 'utf-8')
             console.log('[Agent] models.json written to cwd:', modelsJsonPath, 'from template:', templatePath)
@@ -575,7 +600,7 @@ export class CloudbaseAgentService {
     } else {
       // 系统模型模式：清理掉旧的 models.json，避免 SDK 误读
       try {
-        const modelsJsonPath = path.join(actualCwd, '.codebuddy', 'models.json')
+        const modelsJsonPath = path.join(localCwd, '.codebuddy', 'models.json')
         if (existsSync(modelsJsonPath)) {
           unlinkSync(modelsJsonPath)
           console.log('[Agent] CODEBUDDY_USE_CUSTOM_MODELS=false, removed stale models.json')
@@ -599,7 +624,7 @@ export class CloudbaseAgentService {
     let historicalMessages: CodeBuddyMessage[] = []
     let lastRecordId: string | null = null
     let hasHistory = false
-    let sandboxMcpClient: Awaited<ReturnType<typeof createSandboxMcpClient>> | null = null
+    let sandboxMcpClient: McpClientBundle | null = null
 
     // askAnswers / toolConfirmation 场景标记为 resume
     const isResumeFromInterrupt = (askAnswers && Object.keys(askAnswers).length > 0) || !!toolConfirmation
@@ -699,7 +724,7 @@ export class CloudbaseAgentService {
     let preSavedUserRecordId: string | null = null
 
     // DEBUG: ACP SSE event log path (shared with message loop debug dir)
-    const debugAcpLogDir = path.resolve(actualCwd, 'debug-jsonl')
+    const debugAcpLogDir = path.resolve(localCwd, 'debug-jsonl')
     mkdirSync(debugAcpLogDir, { recursive: true })
     const debugAcpLogPath = path.join(debugAcpLogDir, `${conversationId}_acp_${Date.now()}.jsonl`)
 
@@ -741,12 +766,13 @@ export class CloudbaseAgentService {
       }
     }
 
-    // ── 获取 SCF 沙箱 ────────────────────────────────────────────────
+    // ── 获取 stateful 沙箱 ───────────────────────────────────────────
     let sandboxInstance: SandboxInstance | null = null
-    let toolOverrideConfig: { url: string; headers: Record<string, string> } | null = null
+    let toolOverrideConfig: ToolOverrideConfig | null = null
     let detectedSandboxCwd: string | undefined
 
-    const sandboxEnabled = process.env.TCB_ENV_ID && process.env.SCF_SANDBOX_IMAGE_URI
+    const provider = getSandboxProvider()
+    const sandboxEnabled = !!process.env.TCB_ENV_ID && !!process.env.TCB_API_KEY
 
     // P4: 代理阶段上报助手 —— 在关键边界向前端透传当前状态
     // 去重:只在 phase 或 toolName 变化时 emit,避免密集的 tool_use stream_event 刷屏
@@ -771,25 +797,18 @@ export class CloudbaseAgentService {
 
     if (sandboxEnabled) {
       try {
-        sandboxInstance = await scfSandboxManager.getOrCreate(
-          conversationId,
-          userContext.envId,
-          {
-            mode: 'shared',
-            workspaceIsolation: sandboxMode as 'shared' | 'isolated',
-            sandboxSessionId,
-            isCodingMode,
-          },
+        sandboxInstance = await provider.acquire(
+          buildStatefulAcquireContext({
+            envId: userContext.envId,
+            taskId: conversationId,
+            userId: userContext.userId,
+            sandboxMode: sandboxConfig?.sandboxMode,
+            sandboxId: taskForAcquire?.sandboxId,
+          }),
           sandboxProgressBridge,
         )
 
-        toolOverrideConfig = await sandboxInstance.getToolOverrideConfig()
-
-        // ── 注入静态托管预签名配置（用于 ImageGen 上传）──
-        // tool-override 运行在 CLI 子进程，没有 session cookie。
-        // 这里用 encryptJWE 签发一个短期 session JWE（同 nex_session 格式），
-        // 让 tool-override fetch 时带上 Cookie: nex_session=<jwe>，
-        // 这样 server 侧 authMiddleware 直接走 session 认证。
+        let hosting: ToolOverrideConfig['hosting'] | undefined
         try {
           const user = await getDb().users.findById(userContext.userId)
           if (user) {
@@ -804,65 +823,76 @@ export class CloudbaseAgentService {
                 name: user.name || undefined,
               },
             }
-            // 有效期与 agent 任务生命周期匹配（2h 足够）
             const sessionJwe = await encryptJWE(session, '2h')
             const serverPort = Number(process.env.PORT) || 3001
-            ;(toolOverrideConfig as any).hosting = {
+            hosting = {
               presignUrl: `http://localhost:${serverPort}/api/storage/presign?bucketType=static`,
               sessionCookie: sessionJwe,
               sessionId: conversationId,
             }
           }
         } catch {
-          // hosting presign 失败不影响主流程，图片会 fallback 到沙箱存储
+          // hosting presign optional
         }
 
-        // ── 健康检查：等待沙箱就绪 ──────────────────────────────────
-        const sandboxReady = await waitForSandboxHealth(sandboxInstance, sandboxProgressBridge)
-        if (!sandboxReady) {
-          wrappedCallback({ type: 'text', content: '沙箱启动超时，将使用受限模式继续对话。\n\n' })
-          sandboxInstance = null
-        } else {
-          // ── 初始化工作空间：注入【登录用户凭证】──────────────────
-          const initResult = await initSandboxWorkspace(
+        toolOverrideConfig = await provider.getToolOverrideConfig(sandboxInstance, hosting)
+
+        let prepared: Awaited<ReturnType<typeof provider.prepare>> | null = null
+        try {
+          prepared = await provider.prepare(
             sandboxInstance,
             {
-              envId: userContext.envId,
-              secretId: userCredentials?.secretId || '',
-              secretKey: userCredentials?.secretKey || '',
-              token: userCredentials?.sessionToken,
+              credentials: {
+                envId: userContext.envId,
+                secretId: userCredentials?.secretId || '',
+                secretKey: userCredentials?.secretKey || '',
+                sessionToken: userCredentials?.sessionToken,
+              },
+              workspaceHint: STATEFUL_WORKSPACE_ROOT,
+              codingMode: isCodingMode,
+              backendOptions: { backend: 'stateful' },
             },
-            conversationId,
-            resolvedCwd || undefined,
             sandboxProgressBridge,
           )
-          if (initResult.workspace) {
-            detectedSandboxCwd = initResult.workspace
-            wrappedCallback({ type: 'session', sandboxCwd: initResult.workspace } as any)
-            console.log(`[Agent] Sandbox workspace initialized, cwd: ${initResult.workspace}`)
+        } catch (prepErr) {
+          console.error('[Agent] Sandbox prepare failed:', (prepErr as Error).message)
+          wrappedCallback({ type: 'text', content: '沙箱启动超时，将使用受限模式继续对话。\n\n' })
+          sandboxInstance = null
+        }
+
+        if (sandboxInstance && prepared) {
+          if (prepared.workspace) {
+            detectedSandboxCwd = prepared.workspace
+            wrappedCallback({ type: 'session', sandboxCwd: prepared.workspace } as any)
+            console.log(`[Agent] Sandbox workspace initialized, cwd: ${prepared.workspace}`)
+            try {
+              await getDb().tasks.update(conversationId, {
+                sandboxCwd: prepared.workspace,
+                sandboxMode: sandboxConfig?.sandboxMode ?? 'shared',
+                sandboxId: sandboxInstance.id,
+                updatedAt: Date.now(),
+              })
+            } catch {
+              // non-critical
+            }
           }
 
           try {
             const { success } = await initRepo(sandboxInstance, conversationId)
-            if (success) {
-              console.log(`[Agent] Sandbox user repo initialized`)
-            }
+            if (success) console.log(`[Agent] Sandbox user repo initialized`)
           } catch (e) {
             console.log(`[Agent] Sandbox initialized user repo err: ${e}`)
           }
 
-          // Create sandbox MCP client，使用【登录用户凭证】操作 CloudBase 资源
-          console.log('[cloudbase-agent] createSandboxMcpClient', {
-            userId: userContext.userId,
-            envId: userContext.envId,
-            userCredentialsSecretId: userCredentials?.secretId?.slice(0, 8),
-            hasUserSessionToken: !!userCredentials?.sessionToken,
-          })
-          sandboxMcpClient = await createSandboxMcpClient({
+          sandboxMcpClient = await provider.createMcpClient({
             sandbox: sandboxInstance,
-            userId: userContext.userId,
-            envId: userContext.envId,
-            workspaceFolderPaths: actualCwd,
+            getCredentials: async () => ({
+              cloudbaseEnvId: userContext.envId,
+              secretId: userCredentials?.secretId || '',
+              secretKey: userCredentials?.secretKey || '',
+              sessionToken: userCredentials?.sessionToken,
+            }),
+            workspaceFolderPaths: workspaceCwd,
             log: (msg) => console.log(msg),
             onArtifact: (artifact) => {
               wrappedCallback({ type: 'artifact', artifact })
@@ -872,18 +902,18 @@ export class CloudbaseAgentService {
               if (!app) return null
               return { appId: app.appId, privateKey: decrypt(app.privateKey) }
             },
+            userId: userContext.userId,
             currentModel: modelId,
           })
 
           console.log('[Agent] Sandbox ready')
 
-          // Persist sandboxId to task record so frontend can access file browser
           try {
             await getDb().tasks.update(conversationId, {
-              sandboxId: sandboxInstance.functionName,
+              sandboxId: sandboxInstance.id,
             })
           } catch {
-            // Non-critical: file browser won't show but agent continues
+            // non-critical
           }
         }
       } catch (err) {
@@ -897,7 +927,7 @@ export class CloudbaseAgentService {
     }
 
     // ── Coding mode: mark preview ready ─────────────────────────────────────
-    // 沙箱 /api/session/init 已内置完整的项目初始化流程：
+    // TRW POST /api/workspace/init handles workspace bootstrap in the stateful provider.
     //   - seedCodingTemplate: 从内置模板复制（零延迟）
     //   - ensureViteDev: 自动启动 vite dev server + crash 重启
     //   - node_modules 恢复: tar.gz 缓存 / npm install
@@ -1067,7 +1097,7 @@ export class CloudbaseAgentService {
         conversationId,
         userContext.envId,
         userContext.userId,
-        actualCwd,
+        workspaceCwd,
       )
       historicalMessages = restored.messages
       lastRecordId = restored.lastRecordId
@@ -1217,15 +1247,27 @@ export class CloudbaseAgentService {
           permissionMode: sdkPermissionMode,
           allowDangerouslySkipPermissions: sdkPermissionMode === 'bypassPermissions',
           maxTurns,
-          cwd: actualCwd,
+          cwd: localCwd,
           ...sessionOpts,
           includePartialMessages: true,
           systemPrompt: {
             append: isCodingMode
               ? getCodingSystemPrompt(userContext.envId, publishableKey) +
                 '\n\n' +
-                buildAppendPrompt(actualCwd, conversationId, userContext.envId, sandboxMode, true)
-              : buildAppendPrompt(actualCwd, conversationId, userContext.envId, sandboxMode, false),
+                buildAppendPrompt(
+                  workspaceCwd,
+                  conversationId,
+                  userContext.envId,
+                  sandboxConfig.sandboxMode,
+                  true,
+                )
+              : buildAppendPrompt(
+                  workspaceCwd,
+                  conversationId,
+                  userContext.envId,
+                  sandboxConfig.sandboxMode,
+                  false,
+                ),
           },
           mcpServers,
           abortController,
@@ -1484,7 +1526,7 @@ export class CloudbaseAgentService {
         console.log('[Agent] starting for-await loop...')
 
         // DEBUG: log all messages from messageLoop to a file
-        const debugMsgLogDir = path.resolve(actualCwd, 'debug-jsonl')
+        const debugMsgLogDir = path.resolve(localCwd, 'debug-jsonl')
         mkdirSync(debugMsgLogDir, { recursive: true })
         const debugMsgLogPath = path.join(debugMsgLogDir, `${conversationId}_messageloop_${Date.now()}.jsonl`)
 
@@ -1833,7 +1875,7 @@ export class CloudbaseAgentService {
           userContext.userId,
           historicalMessages,
           lastRecordId,
-          actualCwd,
+          workspaceCwd,
           assistantMessageId,
           isResumeFromInterrupt,
           preSavedUserRecordId,

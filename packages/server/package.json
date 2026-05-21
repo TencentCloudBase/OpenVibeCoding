@@ -2,6 +2,9 @@
   "name": "@coder/server",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22.0.0 <23.0.0"
+  },
   "type": "module",
   "exports": {
     ".": "./dist/index.js",
@@ -14,7 +17,10 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:tool-schemas": "tsx scripts/check-tool-schemas.mts"
+    "check:tool-schemas": "tsx scripts/check-tool-schemas.mts",
+    "verify:stateful": "tsx scripts/verify-stateful-e2e.ts",
+    "stop:stateful-instances": "tsx scripts/stop-stateful-instances.ts",
+    "update:stateful-tool-image": "tsx scripts/update-stateful-tool-image.ts"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.21.0",
@@ -33,6 +39,7 @@
     "better-sqlite3": "^12.8.0",
     "cos-nodejs-sdk-v5": "^2.15.4",
     "drizzle-orm": "^0.36.4",
+    "e2b": "^2.19.5",
     "fflate": "^0.8.2",
     "got": "^15.0.5",
     "gray-matter": "^4.0.3",
@@ -42,6 +49,7 @@
     "node-cron": "^4.2.1",
     "tencentcloud-sdk-nodejs": "^4.1.205",
     "uuid": "^11.0.0",
+    "ws": "^8.18.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -50,6 +58,7 @@
     "@types/node": "^22.0.0",
     "@types/node-cron": "^3.0.11",
     "@types/uuid": "^11.0.0",
+    "@types/ws": "^8.5.13",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",
     "typescript": "~5.7.0",

@@ -173,7 +173,26 @@ auth.post('/register', async (c) => {
     })
   } catch (error) {
     console.error('Error registering local user:', error)
-    return c.json({ error: 'Registration failed' }, 500)
+    const msg = (error as Error).message || ''
+    if (msg.includes('Invalid Content Encryption Key') || msg.includes('JWE')) {
+      return c.json(
+        {
+          error:
+            'Session encryption misconfigured: JWE_SECRET must be 32 random bytes encoded as base64 (see init.sh / .env.example), not hex.',
+        },
+        500,
+      )
+    }
+    if (msg.includes('Missing JWE secret')) {
+      return c.json({ error: 'Server missing JWE_SECRET in packages/server/.env' }, 500)
+    }
+    return c.json(
+      {
+        error: 'Registration failed',
+        ...(process.env.NODE_ENV !== 'production' && msg ? { detail: msg } : {}),
+      },
+      500,
+    )
   }
 })
 

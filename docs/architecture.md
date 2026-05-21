@@ -213,9 +213,11 @@ flowchart LR
 
 | Capability | Endpoint | Description |
 | --- | --- | --- |
-| File System | `/e2b-compatible/files` | 文件读写（兼容 e2b 协议） |
+| File System | `/api/tools/read`, `write`, `files_upload`, `files_download` | 文件读写 |
 | Bash | `/api/tools/bash` | Shell 命令执行 |
-| Git Push | `/api/tools/git_push` | 将工作区变更推送到远端 |
+| Web Terminal | `/preview/7681/` (ttyd) | 浏览器终端 |
+| Vite preview | `/preview/5173/` | 开发服务器（vibecoding lazy ensure） |
+| Git Push | `POST /api/extend/git_push` | 将工作区变更推送到远端（`ENABLE_GIT_ARCHIVE`） |
 | MCP Server | In-memory transport | CloudBase 工具和部署工具 |
 | Health | `/health` | 容器健康检查 |
 

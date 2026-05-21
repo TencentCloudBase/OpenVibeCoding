@@ -52,8 +52,9 @@
 ### 前置条件
 
 开始前请确认：
-- Node.js >= 18
-- Docker 已安装并启动
+- **Node.js 22.x**（必需；`better-sqlite3` 原生模块与 server build target 对齐 **node22**，勿用 Node 23+ 或 brew 默认 Node 26）。推荐：`mise use node@22` 或 `nvm use`（根目录 `.nvmrc` 为 `22`）
+- pnpm 10+
+- Docker 已安装并启动（stateful 分支本地 dev **不**需要本机 TRW；沙箱在云端）
 - 已准备 CloudBase 环境和腾讯云 API 密钥
 - 已准备 CodeBuddy API Key 或 OAuth 配置
 

@@ -120,6 +120,7 @@ export function TaskPageClient({
           task={task}
           maxSandboxDuration={maxSandboxDuration}
           onStreamComplete={refetch}
+          onTaskRefetch={refetch}
           initialPrompt={initialPrompt}
           initialImages={initialImages}
           onInitialPromptConsumed={handleInitialPromptConsumed}

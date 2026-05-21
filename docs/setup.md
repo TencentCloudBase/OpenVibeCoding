@@ -10,8 +10,9 @@
 ## 前置条件
 
 ### 必需项
-- Node.js >= 18
-- Docker 已安装并已启动
+- **Node.js 22.x**（`>=22 <23`）。`packages/server` 使用 `better-sqlite3` 与 `tsup --target node22`；更高主版本（如 26）会导致原生模块 ABI 不匹配或安装失败。根目录 `.nvmrc` 为 `22`；可用 `mise use node@22` / `nvm use`。
+- pnpm 10+
+- Docker 已安装并已启动（**stateful 分支**：本地只跑 OVC，沙箱连云端 AGS+TRW，无需本机 `tcb-sandbox serve`）
 - 腾讯云账号，且已准备 CloudBase 环境
 - 可用的腾讯云 API 密钥（`SecretId` / `SecretKey`）
 - 至少一种 CodeBuddy 认证方式：

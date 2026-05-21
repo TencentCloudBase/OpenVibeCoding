@@ -35,7 +35,8 @@ export function LoginPage() {
       setSession({ user: data.user, envId: data.envId })
       navigate('/')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed')
+      const message = err instanceof Error ? err.message : 'Failed'
+      setError(message === 'Registration failed' ? '注册失败，请查看服务端日志或联系管理员' : message)
     } finally {
       setIsLoading(false)
     }

@@ -25,10 +25,11 @@ export function useTask(taskId: string) {
     fetchTask()
   }, [fetchTask])
 
-  // Only poll when task is still running
+  // Poll while running so previewUrl/sandboxId reach UI without waiting for stream end
   useEffect(() => {
     if (!task || TERMINAL_STATUSES.has(task.status)) return
-    const interval = setInterval(fetchTask, 15000)
+    const intervalMs = task.status === 'processing' ? 3000 : 15000
+    const interval = setInterval(fetchTask, intervalMs)
     return () => clearInterval(interval)
   }, [task?.status, fetchTask])
 

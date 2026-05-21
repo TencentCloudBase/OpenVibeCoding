@@ -165,7 +165,14 @@ function HmrIndicator({ status }: { status: HmrStatus }) {
  */
 function extractDisplayPath(url: string): string {
   try {
-    const u = new URL(url)
+    const base =
+      typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+    const u = new URL(url, base)
+    const proxyMatch = /^\/api\/tasks\/[^/]+\/preview\/\d+/.exec(u.pathname)
+    if (proxyMatch) {
+      const rest = u.pathname.slice(proxyMatch[0].length) || '/'
+      return rest + u.search + u.hash
+    }
     // Hash router: `/#/dashboard` → display `#/dashboard`
     if (u.hash && u.hash.startsWith('#/')) {
       return u.hash
