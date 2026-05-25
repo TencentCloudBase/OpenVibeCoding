@@ -1,15 +1,10 @@
-/**
- * Web terminal via TRW ttyd — virtual port 7681, proxied as /api/tasks/:id/preview/7681/.
- */
-
-import { forwardRef, useImperativeHandle } from 'react'
+import { useState, useRef, useImperativeHandle, forwardRef } from 'react'
 
 interface TerminalProps {
   taskId: string
   className?: string
   isActive?: boolean
   isMobile?: boolean
-  sandboxReady?: boolean
 }
 
 export interface TerminalRef {
@@ -18,36 +13,20 @@ export interface TerminalRef {
 }
 
 export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal(
-  { taskId, className, isActive, sandboxReady = true },
+  { taskId: _taskId, className: _className, isActive: _isActive, isMobile: _isMobile },
   ref,
 ) {
+  const [text, setText] = useState('')
+  const containerRef = useRef<HTMLDivElement>(null)
+
   useImperativeHandle(ref, () => ({
-    clear: () => {},
-    getTerminalText: () => '',
+    clear: () => setText(''),
+    getTerminalText: () => text,
   }))
 
-  if (!sandboxReady) {
-    return (
-      <div
-        className={`h-full bg-black text-muted-foreground p-2 font-mono text-xs flex items-center justify-center ${className ?? ''}`}
-      >
-        沙箱未就绪，终端暂不可用
-      </div>
-    )
-  }
-
-  if (!isActive) {
-    return <div className={`h-full min-h-0 bg-black ${className ?? ''}`} />
-  }
-
-  const src = `/api/tasks/${taskId}/preview/7681/`
-
   return (
-    <iframe
-      src={src}
-      title="Web Terminal"
-      className={`h-full min-h-0 w-full border-0 bg-black ${className ?? ''}`}
-      allow="clipboard-read; clipboard-write"
-    />
+    <div ref={containerRef} className="h-full bg-black text-green-400 p-2 font-mono text-xs overflow-y-auto">
+      <div className="text-muted-foreground">Terminal (stub) - not yet connected</div>
+    </div>
   )
 })
