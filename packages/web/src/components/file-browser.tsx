@@ -661,14 +661,13 @@ export function FileBrowser({
     const prev = prevSandboxIdRef.current
     prevSandboxIdRef.current = sandboxId ?? null
     if (!prev && sandboxId) {
-      setState((prevState) => ({
-        ...prevState,
+      setState({
         [viewMode]: {
-          ...((prevState[viewMode as ViewModeKey] as ViewModeData | undefined) ?? currentViewData),
+          ...currentViewData,
           fetchAttempted: false,
           error: null,
         },
-      }))
+      })
     }
   }, [sandboxId, viewMode, setState, currentViewData])
 
