@@ -24,7 +24,21 @@ const MIN_NODE_VERSION = 18
 const ENV_FILE = resolve(process.cwd(), '.env.local')
 const CLOUDBASE_AUTH_FILE = resolve(homedir(), '.config/.cloudbase/auth.json')
 
+const IS_WINDOWS = process.platform === 'win32'
+
 // ===================== Helper Functions =====================
+
+/**
+ * 跨平台检测命令是否存在 (which / where)
+ */
+function commandExists(name) {
+  try {
+    execSync(`${IS_WINDOWS ? 'where' : 'which'} ${name}`, { stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+}
 
 const colors = {
   reset: '\x1b[0m',
@@ -353,12 +367,7 @@ function getCloudbaseCredential() {
 // ===================== Cloudbase CLI Helpers =====================
 
 function isCloudbaseInstalled() {
-  try {
-    execSync('which cloudbase', { stdio: 'pipe' })
-    return true
-  } catch {
-    return false
-  }
+  return commandExists('cloudbase')
 }
 
 async function ensureCloudbaseInstalled() {
@@ -529,9 +538,9 @@ async function setupCloudbaseConfig() {
   let envList = []
   let output
   try {
-    output = execSync('cloudbase env list --json 2>/dev/null', {
+    output = execSync('cloudbase env list --json', {
       encoding: 'utf-8',
-      stdio: 'pipe',
+      stdio: ['pipe', 'pipe', 'ignore'],
     })
     const parsed = JSON.parse(output)
     envList = (parsed.data || []).filter(e => e.status === 'NORMAL')
@@ -798,6 +807,8 @@ async function setupCustomModel() {
       log('CodeBuddy 模型配置完成', 'success')
     } catch (error) {
       log('CodeBuddy 模型配置失败，可稍后手动执行：node scripts/codebuddy-setup.mjs', 'warn')
+      console.log('')
+      await promptInput('  按回车继续...')
     }
   } else {
     log('已跳过 CodeBuddy 自定义模型配置，稍后请手动执行：node scripts/codebuddy-setup.mjs', 'info')
@@ -812,6 +823,8 @@ async function setupCustomModel() {
       log('OpenCode 模型配置完成', 'success')
     } catch (error) {
       log('OpenCode 模型配置失败，可稍后手动执行：node scripts/opencode-setup.mjs', 'warn')
+      console.log('')
+      await promptInput('  按回车继续...')
     }
   } else {
     log('已跳过 OpenCode 自定义模型配置，稍后请手动执行：node scripts/opencode-setup.mjs', 'info')
@@ -868,6 +881,9 @@ ENCRYPTION_KEY=${crypto.randomBytes(32).toString('hex')}
 
 # Auth Providers
 NEXT_PUBLIC_AUTH_PROVIDERS=local
+
+# Workspace isolation: each task gets its own SCF sandbox instance
+WORKSPACE_ISOLATION=isolated
 
 # Rate Limiting
 MAX_MESSAGES_PER_DAY=50
@@ -990,10 +1006,11 @@ GIT_ARCHIVE_TOKEN=${getPreserved('GIT_ARCHIVE_TOKEN')}
 
 # ==================== Stateful Sandbox (AGS + TRW) ====================
 
-# TCB_API_KEY: set in CloudBase console or paste after init
+# TCB_API_KEY: CloudBase console API Key (gateway data plane)
+TCB_API_KEY=${get('TCB_API_KEY')}
 STATEFUL_SANDBOX_IMAGE=${get('STATEFUL_SANDBOX_IMAGE', get('TCR_IMAGE'))}
-# STATEFUL_TOOL_ID=              # existing SDT; skips CreateSandboxTool
-# STATEFUL_GATEWAY_URL=
+SANDBOX_INSTANCE_MODE=${get('SANDBOX_INSTANCE_MODE', 'shared')}
+# STATEFUL_TOOL_ID=              # debug only
 # STATEFUL_SANDBOX_ID=           # debug: pin instance
 
 # ==================== GitHub OAuth (Optional) ====================
@@ -1103,6 +1120,23 @@ async function main() {
     process.exit(1)
   }
 
+  // Step 9.1: Backfill SANDBOX_IMAGE_URI into server .env
+  // (TCR step writes TCR_IMAGE to root .env.local AFTER setupServerEnv ran)
+  const rootEnvAfterTcr = loadEnvFile()
+  if (rootEnvAfterTcr['TCR_IMAGE']) {
+    const serverEnvFile = resolve(process.cwd(), 'packages/server/.env')
+    if (existsSync(serverEnvFile)) {
+      let content = readFileSync(serverEnvFile, 'utf-8')
+      if (content.includes('SANDBOX_IMAGE_URI=')) {
+        content = content.replace(/SANDBOX_IMAGE_URI=.*/, `SANDBOX_IMAGE_URI=${rootEnvAfterTcr['TCR_IMAGE']}`)
+      } else {
+        content += `\nSANDBOX_IMAGE_URI=${rootEnvAfterTcr['TCR_IMAGE']}\n`
+      }
+      writeFileSync(serverEnvFile, content)
+      log(`已回写 SANDBOX_IMAGE_URI=${rootEnvAfterTcr['TCR_IMAGE']}`, 'success')
+    }
+  }
+
   // Step 10: Initialize database
   logSection('初始化数据库')
   const serverEnvPath = resolve(process.cwd(), 'packages/server/.env')
@@ -1138,6 +1172,45 @@ async function main() {
   } else {
     // CloudBase 模式：集合会在首次访问时自动创建
     log('使用 CloudBase 数据库，集合将在首次访问时自动创建', 'success')
+  }
+
+  // Step 10.5: Git Archive 配置（交互式）
+  logSection('Git 归档配置')
+  console.log('')
+  console.log('  Git 归档用于持久化沙箱内的工作区代码。')
+  console.log('  每轮对话结束后，沙箱中的代码会自动 push 到归档仓库。')
+  console.log('')
+  console.log(`  ${colors.yellow}⚠ 如果不配置：沙箱重启或空闲回收后，工作区内容将丢失。${colors.reset}`)
+  console.log('')
+  console.log('  需要准备：')
+  console.log('    1. 一个 Git 仓库（推荐 https://cnb.cool 新建一个空仓库）')
+  console.log('    2. 该仓库的访问令牌（需读写权限）')
+  console.log('')
+
+  const configGitArchive = await askYesNo('是否现在配置 Git 归档？', true)
+  if (configGitArchive) {
+    const gitRepo = await promptInput('  Git 仓库地址（如 https://cnb.cool/org/repo）')
+    const gitUser = await promptInput('  用户名')
+    const gitToken = await promptInput('  访问令牌', true)
+
+    if (gitRepo && gitToken) {
+      // 写入 server/.env
+      const sEnvFile = resolve(process.cwd(), 'packages/server/.env')
+      if (existsSync(sEnvFile)) {
+        let content = readFileSync(sEnvFile, 'utf-8')
+        content = content.replace(/GIT_ARCHIVE_REPO=.*/, `GIT_ARCHIVE_REPO=${gitRepo}`)
+        content = content.replace(/GIT_ARCHIVE_USER=.*/, `GIT_ARCHIVE_USER=${gitUser || ''}`)
+        content = content.replace(/GIT_ARCHIVE_TOKEN=.*/, `GIT_ARCHIVE_TOKEN=${gitToken}`)
+        writeFileSync(sEnvFile, content)
+        log('Git 归档已配置', 'success')
+      }
+    } else {
+      log('信息不完整，跳过 Git 归档配置', 'warn')
+    }
+  } else {
+    console.log('')
+    log('已跳过。沙箱重启后工作区内容将不保留，后续可在 packages/server/.env 中手动配置', 'info')
+    console.log('')
   }
 
   // Step 11: Install Skills
@@ -1180,15 +1253,6 @@ async function main() {
   console.log(`  ${colors.dim}CODEBUDDY_INTERNET_ENVIRONMENT= # 国内版填 internal, iOA 填 ioa${colors.reset}`)
   console.log(`  ${colors.dim}CODEBUDDY_CLIENT_ID=            # OAuth Client ID（企业旗舰版）${colors.reset}`)
   console.log(`  ${colors.dim}CODEBUDDY_CLIENT_SECRET=        # OAuth Client Secret${colors.reset}`)
-  console.log('')
-  console.log(`  ${colors.bright}Git Archive (CNB)${colors.reset} — 用于工作区 git 归档`)
-  console.log(`  ${colors.dim}GIT_ARCHIVE_REPO=   # 例如 https://cnb.cool/<org>/<repo>${colors.reset}`)
-  console.log(`  ${colors.dim}GIT_ARCHIVE_USER=   # 你的 CNB 用户名${colors.reset}`)
-  console.log(`  ${colors.dim}GIT_ARCHIVE_TOKEN=  # 个人访问令牌${colors.reset}`)
-  console.log('')
-  console.log(`  ${colors.cyan}→ 在以下地址创建仓库和令牌：https://cnb.cool${colors.reset}`)
-  console.log(`  ${colors.dim}  1. 新建一个用于工作区归档的仓库${colors.reset}`)
-  console.log(`  ${colors.dim}  2. 进入「设置」→「访问令牌」→「新建令牌」（需读写权限）${colors.reset}`)
   console.log('')
   console.log(`${colors.cyan}━━━ 开发模式 ━━━${colors.reset}`)
   console.log('')

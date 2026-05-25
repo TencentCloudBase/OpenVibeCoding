@@ -770,7 +770,7 @@ export const opencodeAcpRuntime = new OpencodeAcpRuntime()
 /**
  * 为非正常 stopReason 生成面向用户的提示文本，塞到 assistant 消息尾部。
  *
- * - refusal：LLM provider 内容审查拒绝生成（如腾讯 MiMo 的 high risk 拦截）。
+ * - refusal：LLM provider 内容审查拒绝生成。
  *   LLM 通常在这种情况下直接中断流，没有产出 text，只剩截断的 reasoning。
  * - max_tokens：触发输出 token 上限，回复被截断。
  * - max_turn_requests：LLM 在单轮内调用工具次数过多（通常是死循环）。

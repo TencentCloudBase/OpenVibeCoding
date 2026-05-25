@@ -23,6 +23,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "setup:tcr": "node scripts/setup-tcr.mjs",
+    "deploy:cloud": "node scripts/deploy.mjs",
     "opencode:setup": "node scripts/opencode-setup.mjs",
     "codebuddy:setup": "node scripts/codebuddy-setup.mjs",
     "deploy:cloud": "node scripts/deploy.mjs",

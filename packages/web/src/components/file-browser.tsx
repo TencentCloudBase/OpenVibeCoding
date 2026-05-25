@@ -443,7 +443,7 @@ export function FileBrowser({
       const response = await fetch(`/api/tasks/${taskId}/sync-changes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commitMessage: syncCommitMessage || 'Sync local changes' }),
+        body: JSON.stringify({ commitMessage: syncCommitMessage || '同步本地变更' }),
       })
 
       const result = await response.json()
@@ -478,7 +478,7 @@ export function FileBrowser({
       const response = await fetch(`/api/tasks/${taskId}/reset-changes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ commitMessage: commitMessage || 'Reset changes' }),
+        body: JSON.stringify({ commitMessage: commitMessage || '重置变更' }),
       })
 
       const result = await response.json()
@@ -487,7 +487,7 @@ export function FileBrowser({
         throw new Error(result.error || 'Failed to reset changes')
       }
 
-      toast.success('Changes reset successfully')
+      toast.success('变更重置成功')
       setCommitMessage('')
 
       try {
@@ -497,7 +497,7 @@ export function FileBrowser({
       }
     } catch (err) {
       console.error('Error resetting changes:', err)
-      toast.error(err instanceof Error ? err.message : 'Failed to reset changes')
+      toast.error(err instanceof Error ? err.message : '重置变更失败')
     } finally {
       setIsResetting(false)
     }
@@ -509,7 +509,7 @@ export function FileBrowser({
       const response = await fetch(`/api/tasks/${taskId}/start-sandbox`, { method: 'POST' })
 
       if (response.ok) {
-        toast.success('Sandbox started! Loading files...')
+        toast.success('沙箱已启动！正在加载文件...')
         setState({
           [viewMode]: {
             files: [],
@@ -524,7 +524,7 @@ export function FileBrowser({
         await fetchBranchFiles()
       } else {
         const error = await response.json()
-        toast.error(error.error || 'Failed to start sandbox')
+        toast.error(error.error || '启动沙箱失败')
       }
     } catch (error) {
       console.error('Error starting sandbox:', error)
@@ -536,7 +536,7 @@ export function FileBrowser({
 
   const handleCreateFile = useCallback(async () => {
     if (!newFileName.trim()) {
-      toast.error('Please enter a file name')
+      toast.error('请输入文件名')
       return
     }
     setIsCreatingFile(true)
@@ -556,7 +556,7 @@ export function FileBrowser({
       const result = await response.json()
       if (!response.ok || !result.success) throw new Error(result.error || 'Failed to create file')
 
-      toast.success('File created successfully')
+      toast.success('文件创建成功')
       setShowNewFileDialog(false)
       setNewFileName('')
 
@@ -578,7 +578,7 @@ export function FileBrowser({
 
   const handleCreateFolder = useCallback(async () => {
     if (!newFolderName.trim()) {
-      toast.error('Please enter a folder name')
+      toast.error('请输入文件夹名称')
       return
     }
     setIsCreatingFolder(true)
@@ -598,7 +598,7 @@ export function FileBrowser({
       const result = await response.json()
       if (!response.ok || !result.success) throw new Error(result.error || 'Failed to create folder')
 
-      toast.success('Folder created successfully')
+      toast.success('文件夹创建成功')
       setShowNewFolderDialog(false)
       setNewFolderName('')
 
@@ -623,7 +623,7 @@ export function FileBrowser({
   const handleDelete = useCallback(
     async (filename: string) => {
       if (!filename) {
-        toast.error('No file selected for deletion')
+        toast.error('未选择要删除的文件')
         return
       }
       setIsDeleting(true)
@@ -636,7 +636,7 @@ export function FileBrowser({
         const result = await response.json()
         if (!response.ok || !result.success) throw new Error(result.error || 'Failed to delete file')
 
-        toast.success('File deleted successfully')
+        toast.success('文件删除成功')
         setShowDeleteConfirm(false)
         setFileToDelete(null)
 
@@ -786,7 +786,7 @@ export function FileBrowser({
   const handleOpenOnGitHub = useCallback(
     (path: string, isFolder: boolean = false) => {
       if (!repoUrl || !branchName) {
-        toast.error('Repository URL or branch name not available')
+        toast.error('仓库 URL 或分支名称不可用')
         return
       }
       try {
@@ -796,7 +796,7 @@ export function FileBrowser({
         window.open(githubUrl, '_blank', 'noopener,noreferrer')
       } catch (err) {
         console.error('Error opening GitHub URL:', err)
-        toast.error(`Failed to open ${isFolder ? 'folder' : 'file'} on GitHub`)
+        toast.error(`在 GitHub 上打开${isFolder ? '文件夹' : '文件'}失败`)
       }
     },
     [repoUrl, branchName],
@@ -804,11 +804,11 @@ export function FileBrowser({
 
   const handleCut = useCallback((filename: string) => {
     setClipboardFile({ filename, operation: 'cut' })
-    toast.success('File cut to clipboard')
+    toast.success('文件已剪切到剪贴板')
   }, [])
   const handleCopy = useCallback((filename: string) => {
     setClipboardFile({ filename, operation: 'copy' })
-    toast.success('File copied to clipboard')
+    toast.success('文件已复制到剪贴板')
   }, [])
 
   const handleDownload = useCallback(
@@ -845,7 +845,7 @@ export function FileBrowser({
   const handlePaste = useCallback(
     async (targetPath?: string) => {
       if (!clipboardFile) {
-        toast.error('No file in clipboard')
+        toast.error('剪贴板中没有文件')
         return
       }
       try {
@@ -861,7 +861,7 @@ export function FileBrowser({
         const result = await response.json()
         if (!response.ok || !result.success) throw new Error(result.error || 'Failed to paste file')
 
-        toast.success(clipboardFile.operation === 'cut' ? 'File moved successfully' : 'File copied successfully')
+        toast.success(clipboardFile.operation === 'cut' ? '文件移动成功' : '文件复制成功')
         if (clipboardFile.operation === 'cut') setClipboardFile(null)
 
         try {
@@ -958,7 +958,7 @@ export function FileBrowser({
       e.stopPropagation()
       if (!draggedItem) return
       if (draggedItem.path === targetFolderPath || targetFolderPath.startsWith(draggedItem.path + '/')) {
-        toast.error('Cannot move a folder into itself')
+        toast.error('无法将文件夹移动到自身内')
         setDraggedItem(null)
         setDropTarget(null)
         return
@@ -974,9 +974,9 @@ export function FileBrowser({
           }),
         })
         const result = await response.json()
-        if (!response.ok || !result.success) throw new Error(result.error || 'Failed to move item')
+        if (!response.ok || !result.success) throw new Error(result.error || '移动项目失败')
 
-        toast.success(`${draggedItem.type === 'folder' ? 'Folder' : 'File'} moved successfully`)
+        toast.success(`${draggedItem.type === 'folder' ? '文件夹' : '文件'}移动成功`)
 
         try {
           const extra = targetFolderPath !== '__root__' ? new Set([targetFolderPath]) : undefined
@@ -986,7 +986,7 @@ export function FileBrowser({
         }
       } catch (err) {
         console.error('Error moving item:', err)
-        toast.error(err instanceof Error ? err.message : 'Failed to move item')
+        toast.error(err instanceof Error ? err.message : '移动项目失败')
       } finally {
         setDraggedItem(null)
         setDropTarget(null)
@@ -1098,8 +1098,7 @@ export function FileBrowser({
                   <DropdownMenuContent align="start" side="bottom">
                     {isRemoteMode && (
                       <DropdownMenuItem onClick={() => handleOpenOnGitHub(fullPath, true)}>
-                        <ExternalLink className="w-4 h-4 mr-2" />
-                        Open on GitHub
+                        <ExternalLink className="w-4 h-4 mr-2" />在 GitHub 上打开
                       </DropdownMenuItem>
                     )}
                     {isSandboxMode && (
@@ -1113,7 +1112,7 @@ export function FileBrowser({
                               }}
                             >
                               <FilePlus className="w-4 h-4 mr-2" />
-                              New File
+                              新建文件
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => {
@@ -1122,17 +1121,17 @@ export function FileBrowser({
                               }}
                             >
                               <FolderPlus className="w-4 h-4 mr-2" />
-                              New Folder
+                              新建文件夹
                             </DropdownMenuItem>
                           </>
                         )}
                         <DropdownMenuItem onClick={() => handlePaste(fullPath)} disabled={!clipboardFile}>
                           <Clipboard className="w-4 h-4 mr-2" />
-                          Paste<DropdownMenuShortcut>{isMac ? '⌘V' : 'Ctrl+V'}</DropdownMenuShortcut>
+                          粘贴<DropdownMenuShortcut>{isMac ? '⌘V' : 'Ctrl+V'}</DropdownMenuShortcut>
                         </DropdownMenuItem>
                         <DropdownMenuItem onClick={() => handleDownload(fullPath, { asZip: true })}>
                           <Download className="w-4 h-4 mr-2" />
-                          Download as zip
+                          下载为 zip
                         </DropdownMenuItem>
                       </>
                     )}
@@ -1221,8 +1220,7 @@ export function FileBrowser({
                 <DropdownMenuContent align="start" side="bottom">
                   {isRemoteMode && (
                     <DropdownMenuItem onClick={() => handleOpenOnGitHub(node.filename!)}>
-                      <ExternalLink className="w-4 h-4 mr-2" />
-                      Open on GitHub
+                      <ExternalLink className="w-4 h-4 mr-2" />在 GitHub 上打开
                     </DropdownMenuItem>
                   )}
                   {isSandboxMode && (
@@ -1235,25 +1233,25 @@ export function FileBrowser({
                           }}
                         >
                           <RotateCcw className="w-4 h-4 mr-2" />
-                          Discard Changes
+                          丢弃变更
                         </DropdownMenuItem>
                       ) : (
                         <>
                           <DropdownMenuItem onClick={() => handleCut(node.filename!)}>
                             <Scissors className="w-4 h-4 mr-2" />
-                            Cut<DropdownMenuShortcut>{isMac ? '⌘X' : 'Ctrl+X'}</DropdownMenuShortcut>
+                            剪切<DropdownMenuShortcut>{isMac ? '⌘X' : 'Ctrl+X'}</DropdownMenuShortcut>
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleCopy(node.filename!)}>
                             <Copy className="w-4 h-4 mr-2" />
-                            Copy<DropdownMenuShortcut>{isMac ? '⌘C' : 'Ctrl+C'}</DropdownMenuShortcut>
+                            复制<DropdownMenuShortcut>{isMac ? '⌘C' : 'Ctrl+C'}</DropdownMenuShortcut>
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handlePaste()} disabled={!clipboardFile}>
                             <Clipboard className="w-4 h-4 mr-2" />
-                            Paste<DropdownMenuShortcut>{isMac ? '⌘V' : 'Ctrl+V'}</DropdownMenuShortcut>
+                            粘贴<DropdownMenuShortcut>{isMac ? '⌘V' : 'Ctrl+V'}</DropdownMenuShortcut>
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleDownload(node.filename!)}>
                             <Download className="w-4 h-4 mr-2" />
-                            Download
+                            下载
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => {
@@ -1263,7 +1261,7 @@ export function FileBrowser({
                             className="text-destructive focus:text-destructive"
                           >
                             <Trash2 className="w-4 h-4 mr-2" />
-                            Delete
+                            删除
                           </DropdownMenuItem>
                         </>
                       )}
@@ -1282,8 +1280,8 @@ export function FileBrowser({
     return (
       <div className="flex flex-col h-full">
         <div className="p-3 md:p-4 border-b">
-          <h3 className="text-base md:text-lg font-semibold">Files</h3>
-          <p className="text-xs md:text-sm text-muted-foreground">Task in progress</p>
+          <h3 className="text-base md:text-lg font-semibold">文件</h3>
+          <p className="text-xs md:text-sm text-muted-foreground">任务进行中</p>
         </div>
         <div className="flex-1 flex items-center justify-center p-4 md:p-6">
           <div className="text-center space-y-3 md:space-y-4">
@@ -1294,12 +1292,12 @@ export function FileBrowser({
               </div>
             </div>
             <div className="space-y-2">
-              <h4 className="text-sm md:text-base font-medium">Sandbox Not Ready</h4>
+              <h4 className="text-sm md:text-base font-medium">沙箱未就绪</h4>
               <p className="text-xs md:text-sm text-muted-foreground max-w-xs px-2 md:px-0">
-                The coding agent is still working on this task. File changes will appear here once the sandbox is ready.
+                编码代理仍在处理此任务。沙箱就绪后，文件变更将在此处显示。
               </p>
             </div>
-            <div className="text-xs text-muted-foreground">Check the logs for progress updates</div>
+            <div className="text-xs text-muted-foreground">查看日志以获取进度更新</div>
           </div>
         </div>
       </div>
@@ -1325,7 +1323,7 @@ export function FileBrowser({
                 onClick={() => onViewModeChange?.(subMode === 'local' ? 'all-local' : 'all')}
                 className={`text-sm font-semibold px-2 py-1 rounded transition-colors ${filesPane === 'files' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
               >
-                Files
+                文件
               </button>
             </div>
             {/* <div className="inline-flex rounded-md border border-border bg-muted/50 p-0.5">
@@ -1358,15 +1356,15 @@ export function FileBrowser({
           error === 'SANDBOX_NOT_RUNNING' ? (
             <div className="h-full flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">
-                <div className="text-sm text-muted-foreground">Sandbox is not running</div>
+                <div className="text-sm text-muted-foreground">沙箱未运行</div>
                 <Button size="sm" onClick={handleStartSandbox} disabled={isStartingSandbox}>
                   {isStartingSandbox ? (
                     <>
                       <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
-                      Starting...
+                      正在启动...
                     </>
                   ) : (
-                    'Start Sandbox'
+                    '启动沙箱'
                   )}
                 </Button>
               </div>
@@ -1379,11 +1377,7 @@ export function FileBrowser({
         ) : files.length === 0 ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-xs md:text-sm text-muted-foreground">
-              {viewMode === 'local'
-                ? 'No changes in sandbox'
-                : viewMode === 'remote'
-                  ? 'No changes in PR'
-                  : 'No files found'}
+              {viewMode === 'local' ? '沙箱中无变更' : viewMode === 'remote' ? 'PR 中无变更' : '未找到文件'}
             </div>
           </div>
         ) : (
@@ -1410,7 +1404,7 @@ export function FileBrowser({
             <DropdownMenuContent>
               <DropdownMenuItem onClick={() => handlePaste()} disabled={!clipboardFile}>
                 <Clipboard className="w-4 h-4 mr-2" />
-                Paste<DropdownMenuShortcut>{isMac ? '⌘V' : 'Ctrl+V'}</DropdownMenuShortcut>
+                粘贴<DropdownMenuShortcut>{isMac ? '⌘V' : 'Ctrl+V'}</DropdownMenuShortcut>
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -1431,12 +1425,12 @@ export function FileBrowser({
               {isSyncing ? (
                 <>
                   <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                  Syncing...
+                  正在同步...
                 </>
               ) : (
                 <>
                   <GitCommit className="h-3 w-3 mr-1.5" />
-                  Sync Changes
+                  同步变更
                 </>
               )}
             </Button>
@@ -1450,12 +1444,12 @@ export function FileBrowser({
               {isResetting ? (
                 <>
                   <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
-                  Resetting...
+                  正在重置...
                 </>
               ) : (
                 <>
                   <RotateCcw className="h-3 w-3 mr-1.5" />
-                  Reset
+                  重置
                 </>
               )}
             </Button>
@@ -1472,7 +1466,7 @@ export function FileBrowser({
                 onClick={() => setShowNewFileDialog(true)}
                 disabled={loading}
                 className="h-7 w-7 p-0"
-                title="New File"
+                title="新建文件"
               >
                 <FilePlus className="h-3.5 w-3.5" />
               </Button>
@@ -1482,7 +1476,7 @@ export function FileBrowser({
                 onClick={() => setShowNewFolderDialog(true)}
                 disabled={loading}
                 className="h-7 w-7 p-0"
-                title="New Folder"
+                title="新建文件夹"
               >
                 <FolderPlus className="h-3.5 w-3.5" />
               </Button>
@@ -1497,7 +1491,7 @@ export function FileBrowser({
             }}
             disabled={loading}
             className="h-7 w-7 p-0"
-            title="Refresh"
+            title="刷新"
           >
             <RotateCcw className="h-3.5 w-3.5" />
           </Button>
@@ -1508,16 +1502,16 @@ export function FileBrowser({
       <Dialog open={showSyncDialog} onOpenChange={setShowSyncDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Sync Changes</DialogTitle>
-            <DialogDescription>Enter a commit message for syncing your changes to the remote branch.</DialogDescription>
+            <DialogTitle>同步变更</DialogTitle>
+            <DialogDescription>输入提交信息以将变更同步到远程分支。</DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Label htmlFor="sync-commit-message">Commit Message</Label>
+            <Label htmlFor="sync-commit-message">提交信息</Label>
             <Input
               id="sync-commit-message"
               value={syncCommitMessage}
               onChange={(e) => setSyncCommitMessage(e.target.value)}
-              placeholder="Sync local changes"
+              placeholder="同步本地变更"
               className="mt-2"
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -1536,16 +1530,16 @@ export function FileBrowser({
                 setSyncCommitMessage('')
               }}
             >
-              Cancel
+              取消
             </Button>
             <Button onClick={handleSyncChanges} disabled={isSyncing}>
               {isSyncing ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Syncing...
+                  正在同步...
                 </>
               ) : (
-                'Sync Changes'
+                '同步变更'
               )}
             </Button>
           </DialogFooter>
@@ -1555,9 +1549,9 @@ export function FileBrowser({
       <AlertDialog open={showResetConfirm} onOpenChange={setShowResetConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Reset Changes?</AlertDialogTitle>
+            <AlertDialogTitle>重置变更？</AlertDialogTitle>
             <AlertDialogDescription>
-              This will reset all local changes in the sandbox to match the remote branch. This action cannot be undone.
+              这将重置沙箱中的所有本地变更以匹配远程分支。此操作无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1568,7 +1562,7 @@ export function FileBrowser({
                 handleResetChanges()
               }}
             >
-              Continue
+              继续
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1577,8 +1571,8 @@ export function FileBrowser({
       <Dialog open={showCommitMessageDialog} onOpenChange={setShowCommitMessageDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Commit Message</DialogTitle>
-            <DialogDescription>Enter a commit message for this reset operation (optional).</DialogDescription>
+            <DialogTitle>提交信息</DialogTitle>
+            <DialogDescription>输入此重置操作的提交信息（可选）。</DialogDescription>
           </DialogHeader>
           <div className="py-4">
             <Label htmlFor="commit-message">Commit Message</Label>
@@ -1610,10 +1604,10 @@ export function FileBrowser({
               {isResetting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Resetting...
+                  正在重置...
                 </>
               ) : (
-                'Reset Changes'
+                '重置变更'
               )}
             </Button>
           </DialogFooter>
@@ -1623,23 +1617,23 @@ export function FileBrowser({
       <Dialog open={showNewFileDialog} onOpenChange={setShowNewFileDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create New File</DialogTitle>
+            <DialogTitle>创建新文件</DialogTitle>
             <DialogDescription>
               {selectedFile && files.some((f: FileChange) => f.filename.startsWith(selectedFile + '/'))
                 ? `Creating file in: ${selectedFile}/`
-                : 'Enter the name for the new file (e.g., src/utils/helper.ts).'}
+                : '输入新文件的名称（例如 src/utils/helper.ts）。'}
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Label htmlFor="new-file-name">File Name</Label>
+            <Label htmlFor="new-file-name">文件名</Label>
             <Input
               id="new-file-name"
               value={newFileName}
               onChange={(e) => setNewFileName(e.target.value)}
               placeholder={
                 selectedFile && files.some((f: FileChange) => f.filename.startsWith(selectedFile + '/'))
-                  ? 'filename.ts'
-                  : 'path/to/file.ts'
+                  ? '文件名.ts'
+                  : '路径/到/文件.ts'
               }
               className="mt-2"
               onKeyDown={(e) => {
@@ -1659,16 +1653,16 @@ export function FileBrowser({
                 setNewFileName('')
               }}
             >
-              Cancel
+              取消
             </Button>
             <Button onClick={handleCreateFile} disabled={isCreatingFile || !newFileName.trim()}>
               {isCreatingFile ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creating...
+                  正在创建...
                 </>
               ) : (
-                'Create File'
+                '创建文件'
               )}
             </Button>
           </DialogFooter>
@@ -1678,23 +1672,23 @@ export function FileBrowser({
       <Dialog open={showNewFolderDialog} onOpenChange={setShowNewFolderDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create New Folder</DialogTitle>
+            <DialogTitle>创建新文件夹</DialogTitle>
             <DialogDescription>
               {selectedFile && files.some((f: FileChange) => f.filename.startsWith(selectedFile + '/'))
                 ? `Creating folder in: ${selectedFile}/`
-                : 'Enter the name for the new folder (e.g., src/components).'}
+                : '输入新文件夹的名称（例如 src/components）。'}
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Label htmlFor="new-folder-name">Folder Name</Label>
+            <Label htmlFor="new-folder-name">文件夹名称</Label>
             <Input
               id="new-folder-name"
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               placeholder={
                 selectedFile && files.some((f: FileChange) => f.filename.startsWith(selectedFile + '/'))
-                  ? 'foldername'
-                  : 'path/to/folder'
+                  ? '文件夹名'
+                  : '路径/到/文件夹'
               }
               className="mt-2"
               onKeyDown={(e) => {
@@ -1714,16 +1708,16 @@ export function FileBrowser({
                 setNewFolderName('')
               }}
             >
-              Cancel
+              取消
             </Button>
             <Button onClick={handleCreateFolder} disabled={isCreatingFolder || !newFolderName.trim()}>
               {isCreatingFolder ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creating...
+                  正在创建...
                 </>
               ) : (
-                'Create Folder'
+                '创建文件夹'
               )}
             </Button>
           </DialogFooter>
@@ -1733,9 +1727,9 @@ export function FileBrowser({
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete File?</AlertDialogTitle>
+            <AlertDialogTitle>删除文件？</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete &quot;{fileToDelete}&quot;? This action cannot be undone.
+              你确定要删除 &quot;{fileToDelete}&quot; 吗？此操作无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1745,7 +1739,7 @@ export function FileBrowser({
                 setFileToDelete(null)
               }}
             >
-              Cancel
+              取消
             </AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
@@ -1757,10 +1751,10 @@ export function FileBrowser({
               {isDeleting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Deleting...
+                  正在删除...
                 </>
               ) : (
-                'Delete'
+                '删除'
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1770,10 +1764,9 @@ export function FileBrowser({
       <AlertDialog open={showDiscardConfirm} onOpenChange={setShowDiscardConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Discard Changes?</AlertDialogTitle>
+            <AlertDialogTitle>丢弃变更？</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to discard changes to &quot;{fileToDiscard}&quot;? This will revert the file to its
-              last committed state and cannot be undone.
+              你确定要丢弃 &quot;{fileToDiscard}&quot; 的变更吗？这将使文件恢复到上次提交的状态，且无法撤销。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1783,16 +1776,16 @@ export function FileBrowser({
                 setFileToDiscard(null)
               }}
             >
-              Cancel
+              取消
             </AlertDialogCancel>
             <AlertDialogAction onClick={handleDiscardChanges} disabled={isDiscarding}>
               {isDiscarding ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Discarding...
+                  正在丢弃...
                 </>
               ) : (
-                'Discard Changes'
+                '丢弃变更'
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

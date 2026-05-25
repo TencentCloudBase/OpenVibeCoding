@@ -28,3 +28,6 @@ packages/server/.data
 *.db
 *.db-shm
 *.db-wal
+
+.deploy-function
+

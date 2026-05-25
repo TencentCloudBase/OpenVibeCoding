@@ -26,7 +26,7 @@
 
 ## 推荐初始化方式
 
-### 方式 1：使用入口脚本
+### 方式 1：使用入口脚本（macOS / Linux / Git Bash / WSL）
 
 ```bash
 git clone <repository-url>
@@ -34,11 +34,13 @@ cd coding-agent-template
 ./init.sh
 ```
 
-`init.sh` 会先做基础检查，然后委托 `scripts/init.mjs` 完成交互式初始化。
+`init.sh` 会先做基础检查（Node.js、pnpm），然后委托 `scripts/init.mjs` 完成交互式初始化。
 
-### 方式 2：直接执行主脚本
+> Windows 用户：可以使用 **Git Bash** 或 **WSL2** 运行上面的命令，与 macOS / Linux 一致。
 
-如果你已经确认当前环境满足要求，也可以直接运行：
+### 方式 2：直接执行主脚本（跨平台，推荐 Windows 用户使用）
+
+确认本机已安装 **Node.js >= 18** 和 **pnpm** 后，所有平台都可以直接运行：
 
 ```bash
 node scripts/init.mjs
@@ -137,7 +139,7 @@ flowchart TD
 
 ### 沙箱实例模式（`SANDBOX_INSTANCE_MODE`）
 
-与 **`TCB_PROVISION_MODE`（用户 CloudBase 环境）** 独立，详见 README「两套共享/隔离」。
+与 **`TCB_PROVISION_MODE`（用户 CloudBase 环境）** 独立，详见 [README-zh.md](../README-zh.md) 环境变量一节。
 
 | 值 | 行为 |
 | --- | --- |

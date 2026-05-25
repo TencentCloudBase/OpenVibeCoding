@@ -259,6 +259,7 @@ githubAuth.get('/callback', async (c) => {
         })
       } else {
         userId = nanoid()
+        const userCount = await getDb().users.count()
         await getDb().users.create({
           id: userId,
           provider: 'github',
@@ -269,7 +270,7 @@ githubAuth.get('/callback', async (c) => {
           email: email || undefined,
           name: githubUser.name || githubUser.login,
           avatarUrl: githubUser.avatar_url,
-          role: 'user',
+          role: userCount === 0 ? 'admin' : 'user',
           status: 'active',
           apiKey: encrypt(`sak_${nanoid(40)}`),
         })

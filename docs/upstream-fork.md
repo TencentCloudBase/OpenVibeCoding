@@ -37,6 +37,7 @@
 | 日期 | 方式 | 上游 `main` 顶 | 本线 merge commit | 备注 |
 | --- | --- | --- | --- | --- |
 | 2026-05-21 | `git merge origin/main` | `a878ddbbee2f6320395dc7f84a7e6a068c524e75` | `20dedbdbb00997d8f23c289317836de14df44d60` | 无冲突；含下方 5 个上游 commit |
+| 2026-05-25 | `git merge origin/main` | `4592517`（fix readme 等） | （merge commit） | 约 10 文件冲突；保留 AGS/TRW 路径 |
 
 **本次并入的上游 commit**（`43c3e60..a878ddb`）：
 
@@ -50,15 +51,15 @@
 
 **当前对齐状态**（2026-05-25）：
 
-- `git merge-base HEAD origin/main` → `a878ddb`（已 merge 的上游截止点）
-- `origin/main` 在 `a878ddb` 之后另有提交（如 `pnpm deploy:cloud`、`scripts/deploy.mjs`、README CloudRun 章节）；本线已通过 cherry-pick 引入 `deploy.mjs`，**尚未**完整 merge 最新 `main`
-- 本线 **独有**：stateful 沙箱、git workspace/env 注入、TRW 对齐文档等（`0699323` 等）
+- `git merge-base HEAD origin/main` → `4592517`（已与上游 `main` 最新对齐）
+- 本线仍在 merge-base 之上保留 stateful 提交（AGS/TRW、文档、`0699323` 等）
+- 中文与 stateful 说明：[README-zh.md](../README-zh.md)、[trw-api-alignment.md](./trw-api-alignment.md)
 
 下次看上游新提交：
 
 ```bash
 git fetch origin
-git log a878ddbbee2f6320395dc7f84a7e6a068c524e75..origin/main --oneline
+git log 4592517..origin/main --oneline
 ```
 
 ## 偶尔从上游同步（推荐流程）

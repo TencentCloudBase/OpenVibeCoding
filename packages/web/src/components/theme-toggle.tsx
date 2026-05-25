@@ -32,21 +32,21 @@ export function ThemeToggle() {
         ) : (
           <Monitor className="h-4 w-4 mr-2" />
         )}
-        Theme
+        主题
       </DropdownMenuSubTrigger>
       <DropdownMenuSubContent>
         <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
           <DropdownMenuRadioItem value="light" className="cursor-pointer">
             <Sun className="h-4 w-4 mr-2" />
-            Light
+            明亮模式
           </DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="dark" className="cursor-pointer">
             <Moon className="h-4 w-4 mr-2" />
-            Dark
+            暗黑模式
           </DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="system" className="cursor-pointer">
             <Monitor className="h-4 w-4 mr-2" />
-            System
+            跟随系统
           </DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
       </DropdownMenuSubContent>

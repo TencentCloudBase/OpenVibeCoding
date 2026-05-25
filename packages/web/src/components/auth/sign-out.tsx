@@ -159,7 +159,7 @@ export function SignOut({ user, authProvider }: Pick<Session, 'user' | 'authProv
         <DropdownMenuSeparator />
 
         <DropdownMenuItem onClick={handleSignOut} className="cursor-pointer">
-          Log Out
+          登出
         </DropdownMenuItem>
       </DropdownMenuContent>
 

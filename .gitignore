@@ -109,3 +109,5 @@ decompiled-ui
 
 # codebuddy custom models (auto-generated from CloudBase)
 packages/server/.config/.codebuddy/models.json
+docs/marketing
+.deploy-function

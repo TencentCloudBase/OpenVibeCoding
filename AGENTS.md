@@ -1,297 +1,166 @@
 # AI Agent Guidelines
 
-This document contains critical rules and guidelines for AI agents working on this codebase.
-
-## Security Rules
-
-### CRITICAL: No Dynamic Values in Logs
-
-**All log statements MUST use static strings only. NEVER include dynamic values, regardless of severity.**
-
-#### Bad Examples (DO NOT DO THIS):
-```typescript
-// BAD - Contains dynamic values
-await logger.info(`Task created: ${taskId}`)
-await logger.error(`Failed to process ${filename}`)
-console.log(`User ${userId} logged in`)
-console.error(`Error for ${provider}:`, error)
-```
-
-#### Good Examples (DO THIS):
-```typescript
-// GOOD - Static strings only
-await logger.info('Task created')
-await logger.error('Failed to process file')
-console.log('User logged in')
-console.error('Error occurred:', error)
-```
-
-#### Rationale:
-- **Prevents data leakage**: Dynamic values in logs can expose sensitive information (user IDs, file paths, credentials, etc.) to end users
-- **Security by default**: Logs are displayed directly in the UI and returned in API responses
-- **No exceptions**: This applies to ALL log levels (info, error, success, command, console.log, console.error, console.warn, etc.)
-
-#### Sensitive Data That Must NEVER Appear in Logs:
-- Vercel credentials (SANDBOX_VERCEL_TOKEN, SANDBOX_VERCEL_TEAM_ID, SANDBOX_VERCEL_PROJECT_ID)
-- User IDs and personal information
-- File paths and repository URLs
-- Branch names and commit messages
-- Error details that may contain sensitive context
-- Any dynamic values that could reveal system internals
-
-### Credential Redaction
-
-The `redactSensitiveInfo()` function in `lib/utils/logging.ts` automatically redacts known sensitive patterns, but this is a **backup measure only**. The primary defense is to never log dynamic values in the first place.
-
-#### Current Redaction Patterns:
-- API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
-- GitHub tokens (ghp_, gho_, ghu_, ghs_, ghr_)
-- Vercel credentials (SANDBOX_VERCEL_TOKEN, SANDBOX_VERCEL_TEAM_ID, SANDBOX_VERCEL_PROJECT_ID)
-- Bearer tokens
-- JSON fields (teamId, projectId)
-- Environment variables containing KEY, TOKEN, SECRET, PASSWORD, TEAM_ID, PROJECT_ID
-
-## Code Quality Guidelines
-
-### Code Formatting and Quality Checks
-
-**Always run `pnpm format`, `pnpm type-check`, and `pnpm lint` after making changes to TypeScript/TSX files.**
-
-The project uses Prettier for code formatting, TypeScript for type checking, and ESLint for linting. After editing any `.ts` or `.tsx` files, run:
-
-```bash
-pnpm format
-pnpm type-check
-pnpm lint
-```
-
-**If any errors are found:**
-1. **Type errors**: Fix TypeScript type errors by correcting type annotations, adding missing imports, or fixing type mismatches
-2. **Lint errors**: Fix ESLint errors by following the suggested fixes or adjusting the code to meet the linting rules
-3. **Do not skip or ignore errors** - all errors must be resolved before considering the task complete
-
-This ensures all code follows the project's formatting standards, type safety requirements, and linting rules, preventing issues in pull requests.
-
-### Use shadcn CLI for UI Components
-
-**When adding UI components, check if a shadcn/ui component exists and install it via CLI instead of writing it manually.**
-
-```bash
-pnpm dlx shadcn@latest add <component-name>
-```
-
-Existing components are in `components/ui/`. See [shadcn/ui docs](https://ui.shadcn.com/) for available components.
-
-### CRITICAL: Never Run Dev Servers
-
-**DO NOT run development servers (e.g., `npm run dev`, `pnpm dev`, `next dev`) as they will conflict with other running instances.**
-
-#### Why This Rule Exists:
-- Dev servers run indefinitely and block the terminal session
-- Multiple instances on the same port cause conflicts
-- The application may already be running in the user's environment
-- Long-running processes make the conversation hang for the user
-
-#### Commands to AVOID:
-```bash
-# DO NOT RUN THESE:
-npm run dev
-pnpm dev
-next dev
-npm start
-pnpm start
-yarn dev
-node --watch
-nodemon
-```
-
-#### What to Do Instead:
-1. **Testing changes**: Use `pnpm build` to verify the production build works
-2. **Type checking**: Use `pnpm type-check` to verify types
-3. **Linting**: Use `pnpm lint` to check code quality
-4. **Running tests**: Use `pnpm test` if tests are available
-5. **If the user needs to test**: Let the user run the dev server themselves
-
-#### Exception:
-If the user explicitly asks you to start a dev server, politely explain why you cannot do this and suggest they run it themselves instead.
-
-### Logging Best Practices
-
-1. **Use descriptive static messages**
-   ```typescript
-   // Instead of logging the value, log the action
-   await logger.info('Sandbox created successfully')
-   await logger.info('Dependencies installed')
-   await logger.error('Build failed')
-   ```
-
-2. **Server-side logging for debugging**
-   ```typescript
-   // Use console.error for server-side debugging (not shown to users)
-   // But still avoid sensitive data
-   console.error('Sandbox creation error:', error)
-   ```
-
-3. **Progress updates**
-   ```typescript
-   // Use static progress messages
-   await logger.updateProgress(50, 'Installing dependencies')
-   await logger.updateProgress(75, 'Running build')
-   ```
-
-### Error Handling
-
-1. **Generic error messages to users**
-   ```typescript
-   await logger.error('Operation failed')
-   // NOT: await logger.error(`Operation failed: ${error.message}`)
-   ```
-
-2. **Detailed server-side logging**
-   ```typescript
-   console.error('Detailed error for debugging:', error)
-   // This appears in server logs, not user-facing logs
-   ```
-
-## Testing Changes
-
-When making changes that involve logging:
-
-1. **Search for dynamic values**
-   ```bash
-   # Check for logger statements with template literals
-   grep -r "logger\.(info|error|success|command)\(\`.*\$\{" .
-   
-   # Check for console statements with template literals
-   grep -r "console\.(log|error|warn|info)\(\`.*\$\{" .
-   ```
-
-2. **Verify no sensitive data exposure**
-   - Test the feature in the UI
-   - Check the logs displayed to users
-   - Ensure no sensitive information is visible
-
-## Configuration Security
-
-### Environment Variables
-
-Never expose these in logs or to the client:
-- `SANDBOX_VERCEL_TOKEN` - Vercel API token
-- `SANDBOX_VERCEL_TEAM_ID` - Vercel team identifier
-- `SANDBOX_VERCEL_PROJECT_ID` - Vercel project identifier
-- `ANTHROPIC_API_KEY` - Anthropic/Claude API key
-- `OPENAI_API_KEY` - OpenAI API key
-- `GEMINI_API_KEY` - Google Gemini API key
-- `CURSOR_API_KEY` - Cursor API key
-- `GH_TOKEN` / `GITHUB_TOKEN` - GitHub personal access token
-- `JWE_SECRET` - Encryption secret
-- `ENCRYPTION_KEY` - Encryption key
-- Any user-provided API keys
-
-### Client-Safe Variables
-
-Only these variables should be exposed to the client (via `NEXT_PUBLIC_` prefix):
-- `NEXT_PUBLIC_AUTH_PROVIDERS` - Available auth providers
-- `GITHUB_CLIENT_ID` - GitHub OAuth client ID (public)
-
-## Architecture Guidelines
-
-### Repository Page Structure
-
-The repository page uses a nested routing structure with separate pages for each tab:
-
-#### Route Structure
-```
-app/repos/[owner]/[repo]/
-├── layout.tsx           # Shared layout with navigation tabs
-├── page.tsx            # Redirects to /commits by default
-├── commits/
-│   └── page.tsx        # Commits page
-├── issues/
-│   └── page.tsx        # Issues page
-└── pull-requests/
-    └── page.tsx        # Pull Requests page
-```
-
-#### Components
-- `components/repo-layout.tsx` - Shared layout component with tab navigation
-- `components/repo-commits.tsx` - Commits list component
-- `components/repo-issues.tsx` - Issues list component
-- `components/repo-pull-requests.tsx` - Pull requests list component
-
-#### API Routes
-```
-app/api/repos/[owner]/[repo]/
-├── commits/route.ts         # GET - Fetch commits
-├── issues/route.ts          # GET - Fetch issues
-└── pull-requests/route.ts   # GET - Fetch pull requests
-```
-
-#### Key Features
-1. **Tab Navigation**: Uses Next.js Link components for client-side navigation between tabs
-2. **Separate Pages**: Each tab renders on its own route (commits, issues, pull-requests)
-3. **Default Route**: Visiting `/repos/[owner]/[repo]` redirects to `/repos/[owner]/[repo]/commits`
-4. **Active State**: The active tab is determined by matching the current pathname
-5. **GitHub Integration**: All data is fetched from GitHub API using Octokit client
-
-#### Adding New Tabs
-To add a new tab to the repository page:
-
-1. Create a new directory under `app/repos/[owner]/[repo]/[tab-name]/`
-2. Add a `page.tsx` file that renders your component
-3. Create the component in `components/repo-[tab-name].tsx`
-4. Add an API route in `app/api/repos/[owner]/[repo]/[tab-name]/route.ts`
-5. Update the `tabs` array in `components/repo-layout.tsx` to include the new tab
-6. Follow the existing patterns for data fetching and error handling
-
-## Compliance Checklist
-
-Before submitting changes, verify:
-
-- [ ] No template literals with `${}` in any log statements
-- [ ] All logger calls use static strings
-- [ ] All console calls use static strings (for user-facing logs)
-- [ ] No sensitive data in error messages
-- [ ] Tested in UI to confirm no data leakage
-- [ ] Server-side debugging logs don't expose credentials
-- [ ] Ran `pnpm format` and code is properly formatted
-- [ ] Ran `pnpm format:check` to verify formatting
-- [ ] Ran `pnpm type-check` and all type errors are fixed
-- [ ] Ran `pnpm lint` and all linting errors are fixed
-- [ ] Ran `pnpm build` to verify production build succeeds
-
-## Questions?
-
-If you need to log information for debugging purposes:
-1. Use server-side console logs (not shown to users)
-2. Still avoid logging sensitive credentials
-3. Consider adding better error handling instead of logging details
-4. Use generic user-facing messages
+本文档是 AI Agent（Claude Code / Cursor / Copilot 等）在本仓库工作时的规则和参考。
 
 ---
 
-**Remember: When in doubt, use a static string. No exceptions.**
+## 项目概况
 
+CloudBase VibeCoding Platform — 基于腾讯云 CloudBase 的 AI 编程助手平台。
 
-<!-- opensrc:start -->
-
-## Source Code Reference
-
-Source code for dependencies is available in `opensrc/` for deeper understanding of implementation details.
-
-See `opensrc/sources.json` for the list of available packages and their versions.
-
-Use this source code when you need to understand how a package works internally, not just its types/interface.
-
-### Fetching Additional Source Code
-
-To fetch source code for a package or repository you need to understand, run:
-
-```bash
-npx opensrc <package>           # npm package (e.g., npx opensrc zod)
-npx opensrc pypi:<package>      # Python package (e.g., npx opensrc pypi:requests)
-npx opensrc crates:<package>    # Rust crate (e.g., npx opensrc crates:serde)
-npx opensrc <owner>/<repo>      # GitHub repo (e.g., npx opensrc vercel/ai)
+```
+packages/
+├── web/        # React 19 + Vite 前端
+├── server/     # Hono 后端（Agent 编排、沙箱管理、ACP 协议）
+├── dashboard/  # CloudBase 资源管理 UI
+└── shared/     # 共享类型定义
+scripts/
+├── init.mjs        # 交互式初始化
+└── setup-tcr.mjs   # TCR 镜像仓库配置
 ```
 
-<!-- opensrc:end -->
+---
+
+## 安全规则
+
+### 日志中禁止动态值
+
+所有 log 语句**只允许静态字符串**，绝不包含动态值。
+
+```typescript
+// ✗ 禁止
+console.log(`Task created: ${taskId}`)
+console.error(`Failed for user ${userId}`)
+
+// ✓ 正确
+console.log('[Agent] Task created')
+console.error('[Agent] Operation failed:', error)
+```
+
+**原因**：日志会通过 SSE 推送到前端 UI，动态值可能泄露凭证、路径等敏感信息。
+
+### 敏感环境变量（禁止出现在日志/响应中）
+
+- `TCB_SECRET_ID` / `TCB_SECRET_KEY` / `TCB_TOKEN`
+- `CODEBUDDY_API_KEY` / `CODEBUDDY_CLIENT_SECRET`
+- `JWE_SECRET` / `ENCRYPTION_KEY`
+- `GIT_ARCHIVE_TOKEN` / `GIT_PERSONAL_AUTH`
+- `TCR_PASSWORD`
+- 任何 `*_KEY` / `*_SECRET` / `*_TOKEN` 模式的变量
+
+---
+
+## 代码质量
+
+### 提交前必须执行
+
+```bash
+pnpm format       # Prettier 格式化
+pnpm type-check   # TypeScript 类型检查
+pnpm lint         # ESLint
+```
+
+如有错误，修复后再提交。不要跳过或 ignore。
+
+### UI 组件
+
+使用 shadcn/ui CLI 添加组件，不手写：
+
+```bash
+pnpm dlx shadcn@latest add button
+```
+
+已有组件在 `packages/web/src/components/ui/`。
+
+### 禁止启动 Dev Server
+
+不要在终端中执行 `pnpm dev` / `npm start` 等长期运行命令。改用：
+- `pnpm build` — 验证构建
+- `pnpm type-check` — 验证类型
+- `pnpm lint` — 验证代码质量
+
+---
+
+## 架构要点
+
+### Agent 运行时
+
+- **CodeBuddy Runtime**（`cloudbase-agent.service.ts`）— 基于 @tencent-ai/agent-sdk，主力 runtime
+- **OpenCode ACP Runtime**（`opencode-acp-runtime.ts`）— 基于 opencode CLI 的 ACP 协议实现
+- **Agent Registry**（`agent-registry.ts`）— 内存中追踪运行中的 agent 状态
+
+### SSE 生命周期
+
+```
+registerAgent() → status='running'
+    ↓
+for-await message loop（处理 SDK 消息）
+    ↓
+finally → completeAgent() → status='completed'
+    ↓
+SSE poll 检测 isDone → 发 [DONE] → removeAgent()
+```
+
+关键约束：
+- `completeAgent()` 必须在 `eventBuffer.close()` 之后立即调用（不阻塞后续 cleanup）
+- `removeAgent()` 由 SSE 消费者在发完 `[DONE]` 后调用（不用定时器）
+- `removeAgent()` 拒绝删除 `status='running'` 的 entry
+
+### 沙箱
+
+- 沙箱 = SCF 容器（基于自定义 Docker 镜像）
+- 工具重定向：CLI 的文件/命令工具通过 HTTP API 路由到沙箱
+- MCP Proxy：CloudBase 工具通过 sandbox 内的 mcporter 发现和执行
+- 隔离模式：`WORKSPACE_ISOLATION=isolated`（每 task 独立）/ `shared`（共享 session）
+
+### 数据库
+
+双 Provider 模式：`DB_PROVIDER=cloudbase`（云开发数据库）或 `drizzle`（SQLite）。
+Repository 接口在 `db/types.ts`，两种实现在 `db/cloudbase/` 和 `db/drizzle/`。
+
+### 环境生命周期
+
+```
+acquireEnv() → 根据 provision mode 决定：
+  shared   → 直接返回主环境
+  isolated → 创建独立环境（或从池中认领）
+  task     → 同 isolated
+
+releaseEnv() → 销毁 CAM + 环境资源
+```
+
+---
+
+## 调试
+
+- `AGENT_DEBUG_JSONL=1` — 开启完整消息日志（写入 `debug-jsonl/` 目录）
+- `packages/server/.env` 中的 `NODE_ENV=development` — 开发模式详细错误
+- Agent Registry 日志前缀：`[Registry]`
+- SSE Poll 日志前缀：`[SSE poll]`
+- 沙箱日志前缀：`[sandbox]`
+
+---
+
+## 提交规范
+
+```
+type(scope): description
+
+feat/fix/docs/refactor/chore(agent|web|init|db): 简短描述
+```
+
+Co-Author 格式（如果由 AI 辅助）：
+```
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+---
+
+## 提交前检查清单
+
+- [ ] `pnpm format` 通过
+- [ ] `pnpm type-check` 无错误
+- [ ] `pnpm lint` 无错误
+- [ ] 日志中无动态值（无 `${...}` 模板字符串）
+- [ ] 敏感变量未暴露
+- [ ] 新增环境变量已加入 `.env.example`

@@ -466,7 +466,7 @@ export async function provisionUserResources(
       const mainEnvId = process.env.TCB_ENV_ID
       const domains = ['localhost:5173']
       if (mainEnvId) {
-        domains.push(`${mainEnvId}.service.tcloudbase.com`)
+        domains.push(`${mainEnvId}.ap-shanghai.app.tcloudbase.com`)
       }
       console.log('[provision] Adding security domains:', domains.join(', '))
       await (tcbClient as any).CreateAuthDomain({

@@ -819,9 +819,7 @@ export function TaskChat({
         <div className="flex-1 overflow-y-auto pb-4">
           {!task.branchName ? (
             <div className="flex items-center justify-center h-full text-center text-muted-foreground px-4">
-              <div className="text-sm md:text-base">
-                No branch yet. GitHub Checks will appear here once a branch is created.
-              </div>
+              <div className="text-sm md:text-base">尚未创建分支，当分支创建时将在此处显示 GitHub 检查。</div>
             </div>
           ) : loadingActions ? (
             <div className="flex items-center justify-center h-full">
@@ -833,7 +831,7 @@ export function TaskChat({
             </div>
           ) : checkRuns.length === 0 ? (
             <div className="flex items-center justify-center h-full text-center text-muted-foreground">
-              <div className="text-sm md:text-base">No checks running</div>
+              <div className="text-sm md:text-base">没有正在运行的检查</div>
             </div>
           ) : (
             <div className="space-y-2 px-2">
@@ -869,7 +867,7 @@ export function TaskChat({
         <div className="flex-1 overflow-y-auto pb-4">
           {!task.prNumber ? (
             <div className="flex items-center justify-center h-full text-center text-muted-foreground px-4">
-              <div className="text-sm md:text-base">No pull request yet. Create a PR to see comments here.</div>
+              <div className="text-sm md:text-base">暂无拉取请求。创建 PR 以查看评论。</div>
             </div>
           ) : loadingComments ? (
             <div className="flex items-center justify-center h-full">
@@ -881,7 +879,7 @@ export function TaskChat({
             </div>
           ) : prComments.length === 0 ? (
             <div className="flex items-center justify-center h-full text-center text-muted-foreground">
-              <div className="text-sm md:text-base">No comments yet</div>
+              <div className="text-sm md:text-base">暂无评论</div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -913,7 +911,7 @@ export function TaskChat({
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => handleSendCommentAsFollowUp(comment)}>
                           <MessageSquare className="h-4 w-4 mr-2" />
-                          Send as Follow-Up
+                          作为后续发送
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -931,7 +929,7 @@ export function TaskChat({
     if (messages.length === 0) {
       return (
         <div className="flex-1 flex items-center justify-center text-center text-muted-foreground">
-          <div className="text-sm md:text-base">No messages yet</div>
+          <div className="text-sm md:text-base">暂无消息</div>
         </div>
       )
     }
@@ -962,7 +960,7 @@ export function TaskChat({
         <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden pb-4 min-h-0">
           {hiddenMessagesCount > 0 && (
             <div className="text-xs text-center text-muted-foreground opacity-50 mb-4 italic">
-              {hiddenMessagesCount} older message{hiddenMessagesCount !== 1 ? 's' : ''} hidden
+              {hiddenMessagesCount} 条较早消息已隐藏
             </div>
           )}
           {messageGroups.map((group, groupIndex, groups) => {
@@ -1069,7 +1067,7 @@ export function TaskChat({
                               !readOnly &&
                               isLatestGroup &&
                               isLatestMessage ? null : (
-                                <div className="italic">Generating response...</div>
+                                <div className="italic">正在生成回复...</div>
                               )}
                               <div className="text-right font-mono opacity-70 mt-1">
                                 {formatDuration(group.userMessage.createdAt)}
@@ -1298,17 +1296,15 @@ export function TaskChat({
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium flex items-center gap-1">
-                        <span className="text-green-600">Deployment Ready</span>
+                        <span className="text-green-600">部署完成</span>
                         <span className="text-muted-foreground">·</span>
-                        <span className="text-muted-foreground">
-                          {deployment.type === 'web' ? 'Web' : 'Mini Program'}
-                        </span>
+                        <span className="text-muted-foreground">{deployment.type === 'web' ? 'Web' : '小程序'}</span>
                       </div>
                       <div className="text-xs text-muted-foreground truncate">
                         {deployment.type === 'web' ? deployment.url : deployment.pagePath || 'View QR Code'}
                       </div>
                     </div>
-                    <span className="text-xs text-blue-500 flex-shrink-0">View →</span>
+                    <span className="text-xs text-blue-500 flex-shrink-0">查看 →</span>
                   </button>
                 ))}
               </div>
@@ -1331,7 +1327,7 @@ export function TaskChat({
                       <div className="space-y-1">
                         <div className="text-muted-foreground font-medium mb-2 flex items-center gap-2">
                           <Loader2 className="h-3 w-3 animate-spin" />
-                          Setting up sandbox...
+                          正在设置沙箱...
                         </div>
                         <div className="space-y-0.5 pl-5">
                           {setupLogs.map((log, idx) => (
@@ -1357,7 +1353,7 @@ export function TaskChat({
                     <div className="opacity-50">
                       <div className="italic flex items-center gap-2">
                         <Loader2 className="h-3 w-3 animate-spin" />
-                        Awaiting response...
+                        等待响应...
                       </div>
                       <div className="text-right font-mono opacity-70 mt-1">
                         {formatDuration(lastMessage.createdAt)}
@@ -1386,16 +1382,16 @@ export function TaskChat({
             onClick={() => setActiveTab('chat')}
             className={`text-sm font-semibold px-2 py-1 rounded transition-colors whitespace-nowrap flex-shrink-0 ${currentTab === 'chat' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
           >
-            Chat
+            聊天
           </button>
           <button
             onClick={() => setActiveTab('deployments')}
             className={`text-sm font-semibold px-2 py-1 rounded transition-colors whitespace-nowrap flex-shrink-0 ${currentTab === 'deployments' ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
           >
-            Deployments
+            部署产物
           </button>
         </div>
-        <Button variant="ghost" size="sm" onClick={handleRefresh} className="h-6 w-6 p-0 flex-shrink-0" title="Refresh">
+        <Button variant="ghost" size="sm" onClick={handleRefresh} className="h-6 w-6 p-0 flex-shrink-0" title="刷新">
           <RefreshCw className="h-4 w-4" />
         </Button>
       </div>
@@ -1434,7 +1430,7 @@ export function TaskChat({
               onChange={(e) => setNewMessage(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePasteImage}
-              placeholder="Send a follow-up message... (paste images with Ctrl+V)"
+              placeholder="发送后续消息...（使用 Ctrl+V 粘贴图片）"
               className="w-full min-h-[60px] max-h-[120px] resize-none pr-16 text-base md:text-xs"
               disabled={isSending}
             />
@@ -1461,7 +1457,7 @@ export function TaskChat({
                 onClick={handleStopTask}
                 disabled={isStopping}
                 className="absolute bottom-2 right-2 rounded-full h-5 w-5 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Stop agent"
+                title="停止 Agent"
               >
                 {isStopping ? (
                   <Loader2 className="h-3 w-3 animate-spin" />
@@ -1474,7 +1470,7 @@ export function TaskChat({
                 onClick={handleSendMessage}
                 disabled={!newMessage.trim() && pendingImages.length === 0}
                 className="absolute bottom-2 right-2 rounded-full h-5 w-5 bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Send message"
+                title="发送消息"
               >
                 <ArrowUp className="h-3 w-3" />
               </button>

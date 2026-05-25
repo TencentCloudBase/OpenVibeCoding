@@ -814,11 +814,11 @@ export function TaskDetails({
 
           if (loadedFileHashes[file] !== newHash) {
             // Content has changed, show toast
-            toast.info(`File "${file}" has been updated`, {
-              description: 'The file has new changes. Would you like to reload it?',
+            toast.info(`文件 "${file}" 已更新`, {
+              description: '文件有新更改。是否重新加载？',
               duration: 10000,
               action: {
-                label: 'Load Latest',
+                label: '加载最新',
                 onClick: () => {
                   // Update hash and force reload by changing selection
                   setLoadedFileHashes((prev) => ({ ...prev, [file]: newHash }))
@@ -831,7 +831,7 @@ export function TaskDetails({
                 },
               },
               cancel: {
-                label: 'Ignore',
+                label: '忽略',
                 onClick: () => {
                   // Just switch to the tab without reloading
                   setActiveTabIndexByMode((prev) => ({ ...prev, [viewMode]: existingIndex }))
@@ -1728,16 +1728,16 @@ export function TaskDetails({
 
       if (response.ok) {
         const result = await response.json()
-        toast.success('New task created successfully!')
+        toast.success('新任务创建成功！')
         setShowTryAgainDialog(false)
         navigate(`/tasks/${result.task.id}`)
       } else {
         const error = await response.json()
-        toast.error(error.error || 'Failed to create new task')
+        toast.error(error.error || '创建新任务失败')
       }
     } catch (error) {
       console.error('Error creating new task:', error)
-      toast.error('Failed to create new task')
+      toast.error('创建新任务失败')
     } finally {
       setIsTryingAgain(false)
     }
@@ -1745,7 +1745,7 @@ export function TaskDetails({
 
   const handleLinkRepo = useCallback(async () => {
     if (!linkRepoUrl.trim() || !linkBranchName.trim()) {
-      toast.error('Please enter repository URL and branch name')
+      toast.error('请输入仓库 URL 和分支名称')
       return
     }
     setIsLinkingRepo(true)
@@ -1756,9 +1756,9 @@ export function TaskDetails({
         body: JSON.stringify({ repoUrl: linkRepoUrl.trim(), branchName: linkBranchName.trim() }),
       })
       const result = await response.json()
-      if (!response.ok || !result.success) throw new Error(result.error || 'Failed to link repository')
+      if (!response.ok || !result.success) throw new Error(result.error || '链接仓库失败')
 
-      toast.success('Repository linked successfully')
+      toast.success('仓库链接成功')
       setShowLinkRepoDialog(false)
       setLinkRepoUrl('')
       setLinkBranchName('')
@@ -1767,7 +1767,7 @@ export function TaskDetails({
       refreshTasks()
     } catch (err) {
       console.error('Error linking repository:', err)
-      toast.error('Failed to link repository')
+      toast.error('链接仓库失败')
     } finally {
       setIsLinkingRepo(false)
     }
@@ -1781,16 +1781,16 @@ export function TaskDetails({
         headers: { 'Content-Type': 'application/json' },
       })
       const result = await response.json()
-      if (!response.ok || !result.success) throw new Error(result.error || 'Failed to unlink repository')
+      if (!response.ok || !result.success) throw new Error(result.error || '取消链接仓库失败')
 
-      toast.success('Repository unlinked successfully')
+      toast.success('仓库取消链接成功')
       setShowUnlinkRepoDialog(false)
       setPersonalGitInfo(null)
       setRefreshKey((prev) => prev + 1)
       refreshTasks()
     } catch (err) {
       console.error('Error unlinking repository:', err)
-      toast.error('Failed to unlink repository')
+      toast.error('取消链接仓库失败')
     } finally {
       setIsUnlinkingRepo(false)
     }
@@ -1805,16 +1805,16 @@ export function TaskDetails({
       })
 
       if (response.ok) {
-        toast.success('Task deleted successfully!')
+        toast.success('任务删除成功！')
         refreshTasks() // Refresh the sidebar
         navigate('/')
       } else {
         const error = await response.json()
-        toast.error(error.error || 'Failed to delete task')
+        toast.error(error.error || '删除任务失败')
       }
     } catch (error) {
       console.error('Error deleting task:', error)
-      toast.error('Failed to delete task')
+      toast.error('删除任务失败')
     } finally {
       setIsDeleting(false)
       setShowDeleteDialog(false)
@@ -1829,18 +1829,18 @@ export function TaskDetails({
       })
 
       if (response.ok) {
-        toast.success('Dev server restarted successfully!')
-        // Refresh the preview after a short delay to allow server to start
+        toast.success('开发服务重启成功！')
+        // 刷新预览以允许服务器启动
         setTimeout(() => {
           setPreviewKey((prev) => prev + 1)
         }, 2000)
       } else {
         const error = await response.json()
-        toast.error(error.error || 'Failed to restart dev server')
+        toast.error(error.error || '重启开发服务失败')
       }
     } catch (error) {
       console.error('Error restarting dev server:', error)
-      toast.error('Failed to restart dev server')
+      toast.error('重启开发服务失败')
     } finally {
       setIsRestartingDevServer(false)
     }
@@ -1854,16 +1854,16 @@ export function TaskDetails({
       })
 
       if (response.ok) {
-        toast.success('Sandbox stopped successfully!')
-        // Refresh tasks to update UI
+        toast.success('沙箱停止成功！')
+        // 刷新任务以更新 UI
         await refreshTasks()
       } else {
         const error = await response.json()
-        toast.error(error.error || 'Failed to stop sandbox')
+        toast.error(error.error || '停止沙箱失败')
       }
     } catch (error) {
       console.error('Error stopping sandbox:', error)
-      toast.error('Failed to stop sandbox')
+      toast.error('停止沙箱失败')
     } finally {
       setIsStoppingSandbox(false)
     }
@@ -1877,16 +1877,16 @@ export function TaskDetails({
       })
 
       if (response.ok) {
-        toast.success('Sandbox started successfully!')
-        // Refresh tasks to update UI
+        toast.success('沙箱启动成功！')
+        // 刷新任务以更新 UI
         await refreshTasks()
       } else {
         const error = await response.json()
-        toast.error(error.error || 'Failed to start sandbox')
+        toast.error(error.error || '启动沙箱失败')
       }
     } catch (error) {
       console.error('Error starting sandbox:', error)
-      toast.error('Failed to start sandbox')
+      toast.error('启动沙箱失败')
     } finally {
       setIsStartingSandbox(false)
     }
@@ -1915,7 +1915,7 @@ export function TaskDetails({
                   title="Create PR"
                 >
                   <GitPullRequest className="h-3.5 w-3.5 md:h-4 md:w-4 mr-1.5" />
-                  <span className="text-xs md:text-sm">Open PR</span>
+                  <span className="text-xs md:text-sm">打开 PR</span>
                 </Button>
               )}
               {prUrl &&
@@ -1948,17 +1948,17 @@ export function TaskDetails({
                       {isClosingPR ? (
                         <>
                           <Loader2 className="h-3.5 w-3.5 md:h-4 md:w-4 mr-1.5 animate-spin" />
-                          <span className="text-xs md:text-sm">Closing...</span>
+                          <span className="text-xs md:text-sm">正在关闭...</span>
                         </>
                       ) : isMergingPR ? (
                         <>
                           <Loader2 className="h-3.5 w-3.5 md:h-4 md:w-4 mr-1.5 animate-spin" />
-                          <span className="text-xs md:text-sm">Merging...</span>
+                          <span className="text-xs md:text-sm">正在合并...</span>
                         </>
                       ) : (
                         <>
                           <GitPullRequest className="h-3.5 w-3.5 md:h-4 md:w-4 mr-1.5" />
-                          <span className="text-xs md:text-sm">Merge PR</span>
+                          <span className="text-xs md:text-sm">合并 PR</span>
                         </>
                       )}
                     </Button>
@@ -1976,7 +1976,7 @@ export function TaskDetails({
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={handleClosePR} disabled={isClosingPR || isMergingPR}>
                           <XCircle className="h-4 w-4 mr-2" />
-                          Close PR
+                          关闭 PR
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -1996,17 +1996,17 @@ export function TaskDetails({
                     onClick={() => handleReopenPR()}
                     disabled={isReopeningPR}
                     className="h-7 md:h-8 px-2 md:px-3 flex-shrink-0"
-                    title="Reopen PR"
+                    title="重新打开 PR"
                   >
                     {isReopeningPR ? (
                       <>
                         <Loader2 className="h-3.5 w-3.5 md:h-4 md:w-4 mr-1.5 animate-spin" />
-                        <span className="text-xs md:text-sm">Reopening...</span>
+                        <span className="text-xs md:text-sm">正在重新打开...</span>
                       </>
                     ) : (
                       <>
                         <GitPullRequest className="h-3.5 w-3.5 md:h-4 md:w-4 mr-1.5" />
-                        <span className="text-xs md:text-sm">Reopen PR</span>
+                        <span className="text-xs md:text-sm">重新打开 PR</span>
                       </>
                     )}
                   </Button>
@@ -2015,12 +2015,7 @@ export function TaskDetails({
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 md:h-8 md:w-8 p-0 flex-shrink-0"
-                title="More options"
-              >
+              <Button variant="ghost" size="sm" className="h-7 w-7 md:h-8 md:w-8 p-0 flex-shrink-0" title="更多选项">
                 <MoreVertical className="h-3.5 w-3.5 md:h-4 md:w-4" />
               </Button>
             </DropdownMenuTrigger>
@@ -2044,7 +2039,7 @@ export function TaskDetails({
                 }}
               >
                 <Plus className="h-4 w-4 mr-2" />
-                New Task
+                新任务
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
@@ -2090,7 +2085,7 @@ export function TaskDetails({
                 }}
               >
                 <RotateCcw className="h-4 w-4 mr-2" />
-                Try Again
+                重试
               </DropdownMenuItem>
               <DropdownMenuItem
                 onClick={async () => {
@@ -2113,11 +2108,11 @@ export function TaskDetails({
                 }}
               >
                 <GitBranch className="h-4 w-4 mr-2" />
-                Link Git Repository
+                关联 Git 仓库
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowDeleteDialog(true)} className="text-red-600">
                 <Trash2 className="h-4 w-4 mr-2" />
-                Delete Task
+                删除任务
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -2244,7 +2239,7 @@ export function TaskDetails({
                     : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
                 )}
               >
-                Files
+                文件
               </Button>
             )}
             {/* Preview 按钮(仅 coding mode 显示) */}
@@ -2270,7 +2265,7 @@ export function TaskDetails({
                     : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
                 )}
               >
-                Preview
+                预览
               </Button>
             )}
             {/* Cloud 按钮 */}
@@ -2296,7 +2291,7 @@ export function TaskDetails({
                   : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
               )}
             >
-              Cloud
+              云资源
             </Button>
             {/* Code pane toggle (注释保留以供将来恢复) */}
             {/* <Button variant="ghost" size="sm" ... Code </Button> */}

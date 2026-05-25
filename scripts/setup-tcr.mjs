@@ -40,6 +40,20 @@ const DEFAULT_NAMESPACE_PREFIX = 'cloudbase-vibecoding'
 // docker.io/yhyanghang/cloudbase-workspace:260515-0120e18d
 const GHCR_IMAGE_URL = 'ghcr.io/yhsunshining/cloudbase-workspace:260515-01342a05'
 
+const IS_WINDOWS = process.platform === 'win32'
+
+/**
+ * 跨平台检测命令是否存在 (which / where)
+ */
+function commandExists(name) {
+  try {
+    execSync(`${IS_WINDOWS ? 'where' : 'which'} ${name}`, { stdio: 'pipe' })
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ===================== Helper Functions =====================
 
 function log(message, type = 'info') {
@@ -235,12 +249,7 @@ async function askYesNo(prompt, defaultValue = false) {
  * Check if cloudbase CLI is installed
  */
 function isCloudbaseInstalled() {
-  try {
-    execSync('which cloudbase', { stdio: 'pipe' })
-    return true
-  } catch {
-    return false
-  }
+  return commandExists('cloudbase')
 }
 
 /**
@@ -1050,7 +1059,7 @@ async function selectTcbEnv(config) {
 
   let envList = []
   try {
-    const output = execSync('cloudbase env list --json 2>/dev/null', { encoding: 'utf-8', stdio: 'pipe' })
+    const output = execSync('cloudbase env list --json', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'] })
     // Strip non-JSON prefix lines (e.g. spinner lines)
     const jsonStart = output.indexOf('{')
     if (jsonStart !== -1) {
@@ -1246,7 +1255,17 @@ Examples:
     config.repoName = env['TCR_REPO_NAME'] || 'sandbox'
   }
   if (config.tag === 'latest') {
-    config.tag = env['TCR_TAG'] || 'latest'
+    // Default tag: use git short hash if available, else timestamp
+    let defaultTag = env['TCR_TAG'] || ''
+    if (!defaultTag) {
+      try {
+        const gitHash = execSync('git rev-parse --short HEAD', { encoding: 'utf-8', stdio: 'pipe' }).trim()
+        defaultTag = gitHash || `build-${Date.now()}`
+      } catch {
+        defaultTag = `build-${Date.now()}`
+      }
+    }
+    config.tag = defaultTag
   }
 
   // 询问永久密钥（如已填写则直接使用，跳过 cloudbase 临时凭证流程）
@@ -1300,6 +1319,14 @@ Examples:
     console.log('')
     console.log('  ⚠ 如果不授权，云函数将无法拉取镜像，沙箱创建会失败。')
     console.log('')
+
+    // 等待用户确认
+    const authDone = await askYesNo('是否已完成上述两个授权链接的操作？', true)
+    if (!authDone) {
+      console.log('')
+      console.log('  请在启动项目前完成授权，否则沙箱功能将不可用。')
+      console.log('')
+    }
   } else {
     console.log('\n❌ Setup failed. Please check the errors above.\n')
     process.exit(1)

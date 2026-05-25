@@ -410,9 +410,9 @@ export function TaskForm({
   return (
     <div className="w-full max-w-2xl">
       <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold mb-4">Coding Agent Template</h1>
+        <h1 className="text-4xl font-bold mb-4">Coding Agent</h1>
         <p className="text-lg text-muted-foreground mb-2">
-          Vibe coding platform powered by{' '}
+          基于{' '}
           <a
             href="https://tcb.cloud.tencent.com"
             target="_blank"
@@ -420,7 +420,8 @@ export function TaskForm({
             className="underline hover:no-underline"
           >
             CloudBase
-          </a>
+          </a>{' '}
+          的 VibeCoding 全栈应用开发平台
         </p>
       </div>
 
@@ -448,7 +449,7 @@ export function TaskForm({
             <Textarea
               ref={textareaRef}
               id="prompt"
-              placeholder="Describe what you want the AI agent to do... (paste images with Ctrl+V)"
+              placeholder="描述您希望 Agent 做什么... (使用 Ctrl+V 粘贴图片)"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onKeyDown={handleTextareaKeyDown}
@@ -509,7 +510,7 @@ export function TaskForm({
                             <span className={`flex items-center gap-2 ${disabled ? 'opacity-40' : ''}`}>
                               <agent.icon className="w-4 h-4" />
                               <span>{agent.label}</span>
-                              {disabled && <span className="text-xs">(unavailable)</span>}
+                              {disabled && <span className="text-xs">（不可用）</span>}
                             </span>
                           </SelectItem>
                         )
@@ -655,7 +656,7 @@ export function TaskForm({
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>MCP Servers</p>
+                        <p>MCP</p>
                       </TooltipContent>
                     </Tooltip>
 
@@ -761,7 +762,7 @@ export function TaskForm({
                     type="button"
                     onClick={() => imageInputRef.current?.click()}
                     className="flex items-center justify-center h-8 w-8 rounded-full text-muted-foreground hover:text-foreground transition-colors"
-                    title="Attach image"
+                    title="添加图片"
                   >
                     <ImageIcon className="h-4 w-4" />
                   </button>

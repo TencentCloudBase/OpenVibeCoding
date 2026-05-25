@@ -45,12 +45,12 @@ export function SignIn() {
       })
       const data = await res.json()
       if (!res.ok) {
-        setLocalError(data.error || 'An error occurred')
+        setLocalError(data.error || '发生错误')
       } else {
         window.location.reload()
       }
     } catch {
-      setLocalError('Network error, please try again')
+      setLocalError('网络错误，请重试')
     } finally {
       setLoadingLocal(false)
     }
@@ -70,19 +70,19 @@ export function SignIn() {
   return (
     <>
       <Button onClick={() => setShowDialog(true)} variant="outline" size="sm">
-        Sign in
+        登录
       </Button>
 
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Sign in</DialogTitle>
+            <DialogTitle>登录</DialogTitle>
             <DialogDescription>
               {hasGitHub && hasLocal
-                ? 'Sign in with GitHub or a local account.'
+                ? '使用 GitHub 或本地账户登录。'
                 : hasGitHub
-                  ? 'Sign in with GitHub to continue.'
-                  : 'Sign in with a local account to continue.'}
+                  ? '使用 GitHub 登录以继续。'
+                  : '使用本地账户登录以继续。'}
             </DialogDescription>
           </DialogHeader>
 
@@ -98,12 +98,12 @@ export function SignIn() {
                 {loadingGitHub ? (
                   <>
                     <Spinner />
-                    Loading...
+                    正在加载...
                   </>
                 ) : (
                   <>
                     <GitHubIcon className="h-4 w-4 mr-2" />
-                    Sign in with GitHub
+                    使用 GitHub 登录
                   </>
                 )}
               </Button>
@@ -115,7 +115,7 @@ export function SignIn() {
                   <span className="w-full border-t" />
                 </div>
                 <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-background px-2 text-muted-foreground">or</span>
+                  <span className="bg-background px-2 text-muted-foreground">或</span>
                 </div>
               </div>
             )}
@@ -132,7 +132,7 @@ export function SignIn() {
                       setLocalError('')
                     }}
                   >
-                    Login
+                    登录
                   </button>
                   <span className="text-muted-foreground">/</span>
                   <button
@@ -143,17 +143,17 @@ export function SignIn() {
                       setLocalError('')
                     }}
                   >
-                    Register
+                    注册
                   </button>
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="username">Username</Label>
+                  <Label htmlFor="username">用户名</Label>
                   <Input
                     id="username"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Enter username"
+                    placeholder="输入用户名"
                     autoComplete="username"
                     required
                     minLength={3}
@@ -161,13 +161,13 @@ export function SignIn() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="password">Password</Label>
+                  <Label htmlFor="password">密码</Label>
                   <Input
                     id="password"
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password"
+                    placeholder="输入密码"
                     autoComplete={localMode === 'login' ? 'current-password' : 'new-password'}
                     required
                     minLength={6}
@@ -180,12 +180,12 @@ export function SignIn() {
                   {loadingLocal ? (
                     <>
                       <Spinner />
-                      Loading...
+                      正在加载...
                     </>
                   ) : localMode === 'login' ? (
-                    'Login'
+                    '登录'
                   ) : (
-                    'Register'
+                    '注册'
                   )}
                 </Button>
               </form>

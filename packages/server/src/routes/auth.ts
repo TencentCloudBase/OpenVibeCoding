@@ -37,10 +37,12 @@ auth.post('/register', async (c) => {
       return c.json({ error: 'Username already taken' }, 409)
     }
 
-    // Create user
+    // Create user — first registered user becomes admin automatically
     const userId = nanoid()
     const now = Date.now()
     const passwordHash = await bcrypt.hash(password, 12)
+    const userCount = await getDb().users.count()
+    const role = userCount === 0 ? 'admin' : 'user'
 
     await getDb().users.create({
       id: userId,
@@ -48,7 +50,7 @@ auth.post('/register', async (c) => {
       externalId: trimmedUsername,
       accessToken: '',
       username: trimmedUsername,
-      role: 'user',
+      role,
       status: 'active',
       apiKey: `sak_${nanoid(40)}`,
     })

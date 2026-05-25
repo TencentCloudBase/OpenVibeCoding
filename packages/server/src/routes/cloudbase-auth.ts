@@ -46,6 +46,7 @@ cloudbaseAuth.post('/login', async (c) => {
       })
     } else {
       userId = nanoid()
+      const userCount = await getDb().users.count()
       await getDb().users.create({
         id: userId,
         provider: 'cloudbase',
@@ -55,7 +56,7 @@ cloudbaseAuth.post('/login', async (c) => {
         email: email || undefined,
         name: nickName || undefined,
         avatarUrl: avatarUrl || undefined,
-        role: 'user',
+        role: userCount === 0 ? 'admin' : 'user',
         status: 'active',
         apiKey: encrypt(`sak_${nanoid(40)}`),
       })

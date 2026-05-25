@@ -1,235 +1,315 @@
-# CloudBase VibeCoding Platform
+<p align="center">
+  <img src="./docs/assets/banner.svg" alt="OPEN-VIBECODING" width="720" />
+</p>
 
-基于 [coding-agent-template](https://github.com/vercel-labs/coding-agent-template) 重构的 AI 编程助手平台，以腾讯云 CloudBase 为底座，支持多 Agent 运行时、多租户环境隔离与完整的 VibeCoding 工作流。
+<p align="center">
+  An open-source AI full-stack app platform built on Tencent CloudBase — conversational code generation, live preview, one-click deployment.
+</p>
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
-[![pnpm](https://img.shields.io/badge/maintained%20with-pnpm-cc00ff.svg)](https://pnpm.io/)
-[![Node](https://img.shields.io/badge/node-22.x-brightgreen.svg)](https://nodejs.org/)
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://pnpm.io/"><img src="https://img.shields.io/badge/maintained%20with-pnpm-cc00ff.svg" alt="pnpm"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5-3178c6.svg" alt="TypeScript"></a>
+  <a href="https://cloudbase.net/"><img src="https://img.shields.io/badge/powered%20by-CloudBase-06b6d4.svg" alt="CloudBase"></a>
+</p>
 
-## 延伸阅读
-
-- [Setup 指南](docs/setup.md) — 初始化流程、验证清单与排障
-- [系统架构](docs/architecture.md) — 系统分层、模块设计与关键数据流
-- [TRW API 对齐](docs/trw-api-alignment.md) — OVC 调用的 TRW 路由与开关
-- [CloudRun 部署](docs/cloudrun-deploy.md) — 云托管一键部署与控制台 env
-- [上游分叉与同步](docs/upstream-fork.md) — 硬分叉基线、merge 历史、下次同步命令
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ◆
+  <a href="./docs/architecture.md">Architecture</a> ◆
+  <a href="./docs/setup.md">Deployment</a> ◆
+  <a href="./README-zh.md">中文</a>
+</p>
 
 ---
 
-## At a Glance
+## Overview
 
-| 能力                    | 说明                                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| **多 Agent 运行时**     | CodeBuddy / OpenCode / MiMo 三个 runtime 并行可选；per-agent 独立模型列表；切换时自动校验 selectedModel                              |
-| **三级环境隔离**        | `shared`（共用）/ `isolated`（用户独立）/ `task`（任务独立 + 独立 CAM 子账号）三种模式，admin 后台动态切换，无需重启                 |
-| **环境池**              | 预创建 CloudBase 环境 + CAM + Policy，获取延迟从分钟级降至毫秒级；池空自动回退实时创建；多 Pod CAS 安全                              |
-| **编码模式沙箱**        | 沙箱 infra（Stateful + TRW）；按 envId 单实例复用；`ensureStatefulTool` + 镜像预热；工作区 `/home/user`；预览经 gateway → TRW `/preview/5173/` |
-| **Preview Bridge**      | 内嵌 Browser 工具栏（地址栏 / 刷新 / 前进后退 / 设备切换）；OVC 反向代理至 TRW；HMR；预览错误自动修复                                 |
-| **Web 终端**            | ttyd 经 TRW `/preview/7681/`，OVC 代理为 `/api/tasks/:id/preview/7681/`                                                              |
-| **CloudBase MCP**       | 内置 50+ CloudBase 工具（DB / Storage / Functions / 域名 / 安全规则）；koa 风格 middleware 框架；stdio + HTTP 双模式                 |
-| **Human-in-Loop**       | ToolConfirm（四值权限：allow / allow_always / deny / reject_and_exit_plan）；AskUserQuestion 内联表单；消息流内渲染，不打断上下文    |
-| **Plan 模式**           | 写操作拦截；PlanModeCard 三按钮（允许执行 / 继续完善 / 拒绝退出）；`planModeAtomFamily` 跨组件状态共享                               |
-| **工具渲染注册表**      | 10 个专属渲染器（Bash / Read / Write / Edit / Grep / Glob 等）；Edit 集成 git-diff-view；Subagent 嵌套紫色边框卡片                   |
-| **部署能力**            | Web 静态托管 → CDN 链接；微信小程序（异步轮询 jobId）；所有产出统一 `artifact` 事件，Deployments 标签页聚合展示                      |
-| **图片生成**            | Default 模式 ImageGen；生成图片自动上传 CloudBase 静态托管，返回 CDN 链接；聊天内 Markdown 内联展示                                  |
-| **Git 归档**            | 任务结束（含 error / cancel）自动 git push 到远端，按 `envId` 分支 + `conversationId` 目录存储；内存 credential helper，不泄露 token |
-| **CloudBase Dashboard** | task 详情页内嵌 DB / Storage / SQL / Functions 可视化管理；envId 切换自动重置状态，防止旧集合查询污染                                |
-| **Admin 后台**          | 用户管理（创建 / 禁用 / API Key 重置）；环境池监控；provision mode 配置；审计日志；资源代理                                          |
-| **认证**                | 本地账密 / GitHub OAuth / CloudBase 身份 / API Key（`sak_xxx`）；JWE Cookie 加密会话                                                 |
-| **定时任务**            | cron 表达式调度，服务端 `cron-scheduler.ts` 加载执行；分布式锁防重入                                                                 |
-| **凭证安全**            | AES-256-CBC 加密存储敏感字段；STS 临时凭证作用域隔离；系统集合 ADMINONLY 规则；日志只允许静态字符串                                  |
+An open-source alternative to [Lovable](https://lovable.dev) / [v0](https://v0.dev) / [bolt.new](https://bolt.new) — an AI full-stack app development platform built on Tencent CloudBase. Conversational code generation, live preview, one-click deployment, with dual Agent runtimes (CodeBuddy / OpenCode) and three-tier environment isolation.
+
+**AI generation process**
+
+<video src="https://github.com/user-attachments/assets/504721f8-bf14-4f16-a8b0-a7d5829c503c" controls width="100%"></video>
+
+**Application showcase**
+
+<video src="https://github.com/user-attachments/assets/750b67cd-551c-4795-bc8c-cfacc0fb23b4" controls width="100%"></video>
+
+---
+
+## Why this project
+
+|                       | Lovable / v0 / bolt.new   | This project                                                              |
+| --------------------- | ------------------------- | ------------------------------------------------------------------------- |
+| Source code           | Closed-source SaaS        | Fully open-source (Apache 2.0), self-hostable                             |
+| Pricing               | Usage-based / subscription| Bring your own cloud resources, cost-controllable                         |
+| Infrastructure        | Vendor-locked             | Tencent CloudBase (DB / Storage / Functions / CDN)                        |
+| Agent engine          | Single built-in model     | CodeBuddy + OpenCode dual engines, free model switching                   |
+| Environment isolation | User-level only           | shared / isolated / task three-tier isolation, multi-tenant ready         |
+| Sandbox               | Platform-managed          | CloudBase AGS Stateful + TRW (TCR images), gateway data plane              |
+| Cloud resource ops    | None / limited            | MCP tools operate DB, Storage, Functions, domains directly                |
+| Deploy targets        | Platform-hosted only      | Web CDN / WeChat Mini Program / custom domains                            |
+| Human-in-the-loop     | Basic chat                | Plan mode + four-value ToolConfirm + inline AskUser form                  |
+| Extensibility         | Not extensible            | Monorepo, decoupled frontend/backend, fork-friendly                       |
+
+---
+
+## Feature highlights
+
+| Capability                  | Highlights                                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Dual Agent engines**      | Choose between CodeBuddy and OpenCode, each with its own model list, one-click switch from the UI                     |
+| **Three-tier isolation**    | shared / isolated (per user) / task (per-task subaccount), hot-switchable from Admin without restart                  |
+| **Environment pool**        | Pre-created CloudBase env + CAM + Policy; acquisition latency drops from minutes to milliseconds; fallback on miss   |
+| **Coding sandbox**          | AGS tool/instance per env; TRW at `/home/user`; preview `/preview/5173`, terminal ttyd `/preview/7681` via OVC proxy |
+| **Live preview**            | Embedded browser toolbar (address bar / nav / refresh); HMR; auto-feedback loop on preview errors                    |
+| **CloudBase MCP**           | 50+ tools covering DB, Storage, Functions, domains, security rules — Agent operates cloud resources directly         |
+| **Human-in-Loop**           | Four-value tool confirmation (allow / always / deny / exit); inline AskUser form without breaking chat context        |
+| **Plan mode**               | Auto-intercepts write operations; three-button decision (execute / refine / reject); cross-component state sharing    |
+| **Tool rendering**          | 10 dedicated renderers (Bash / Read / Write / Edit / Grep / Glob, etc.); Edit ships with built-in git-diff view       |
+| **One-click deploy**        | Web static hosting → CDN; async WeChat Mini Program deploy; unified artifact aggregated in Deployments tab            |
+| **Image generation**        | AI-generated images auto-uploaded to CloudBase hosting; CDN URL returned; rendered inline as Markdown                 |
+| **Git archive**             | Auto-push to remote on task end; branch by envId + directory by conversationId; in-memory credentials, no token leak  |
+| **Resource dashboard**      | Embedded DB / Storage / SQL / Functions management inside the task detail page                                        |
+| **Admin console**           | User management, env pool monitoring, provision mode config, audit logs                                               |
+| **Scheduled tasks**         | Cron scheduling + distributed lock to prevent re-entry                                                                |
+| **Credential security**     | AES-256-CBC encrypted storage; STS scoped temporary credentials; logs restricted to static strings only               |
 
 ---
 
 ## Screenshots
 
-**创建任务，选择 Agent 和模型**
+**Create a task, pick agent and model**
 
 ![home](docs/assets/home.png)
 
-**编码模式：左侧对话 + 右侧实时预览**
+**Coding mode: chat on the left, live preview on the right**
 
 ![preview](docs/assets/preview.png)
 
-**Chat 界面：工具调用卡片、Phase 状态指示**
+**Chat UI: tool-call cards, phase indicator**
 
 ![chat](docs/assets/chat.png)
 
-**Human-in-Loop：工具确认 & 向用户提问**
+**Human-in-Loop: tool confirmation & asking the user**
 
 | ToolConfirm                                       | AskUserQuestion                           |
 | ------------------------------------------------- | ----------------------------------------- |
 | ![confirm](docs/assets/human-in-loop-confirm.png) | ![ask](docs/assets/human-in-loop-ask.png) |
 
-**内嵌 CloudBase Dashboard**
+**Embedded CloudBase Dashboard**
 
 ![cloud-dashboard](docs/assets/cloud-dashboard.png)
 
-**部署完成，查看 artifact**
+**Deployment complete, view artifact**
 
-| Chat 内 artifact                      | Deployments 标签页                |
-| ------------------------------------- | --------------------------------- |
-| ![deploy-0](docs/assets/deploy-0.png) | ![deploy](docs/assets/deploy.png) |
+| Artifact in chat                       | Deployments tab                    |
+| -------------------------------------- | ---------------------------------- |
+| ![deploy-0](docs/assets/deploy-0.png)  | ![deploy](docs/assets/deploy.png)  |
 
-**Admin：环境池管理**
+**Admin: environment pool management**
 
 ![admin-env-pool](docs/assets/admin-env-pool.png)
 
 ---
 
-## 项目结构
+## Quick Start
 
-```
-├── docs/
-│   ├── setup.md                  # setup 详解与排障
-│   ├── architecture.md           # 系统架构文档
-│   ├── trw-api-alignment.md      # OVC ↔ TRW 路由
-│   ├── cloudrun-deploy.md        # 云托管部署
-│   ├── upstream-fork.md          # 上游分叉与同步
-│   └── scf-session-sharing.md    # （历史）SCF，已废弃
-├── packages/
-│   ├── web/                      # React 19 + Vite 前端
-│   ├── server/                   # Hono 后端：Auth、Agent 编排、Sandbox 管理
-│   ├── dashboard/                # CloudBase 资源管理 UI（DB / Storage / Functions）
-│   └── shared/                   # ACP 协议类型、任务 / 消息 schema
-├── scripts/
-│   ├── init.mjs                  # 交互式初始化脚本
-│   ├── deploy.mjs                # 云托管一键部署
-│   └── setup-tcr.mjs             # TCR 镜像仓库配置
-└── init.sh                       # 快速入口
-```
+**Prerequisites**
 
----
+- Node.js >= 18
+- Docker
+- A Tencent Cloud account (CloudBase environment + API credentials)
+- A CodeBuddy API Key or OAuth config
 
-## 本地启动（最小路径）
-
-**前置**：Node **22.x**（见 `.nvmrc`）、pnpm 10+、CloudBase 支撑环境 + API 密钥、CodeBuddy API Key。本地 **不**跑 TRW 容器，编码沙箱在云端 AGS + TRW。
+**One-shot init**
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/TencentCloudBase/OpenVibeCoding.git
 cd OpenVibeCoding
-./init.sh              # 生成 .env.local + packages/server/.env
-pnpm dev               # Web http://localhost:5174  API http://localhost:3001/api
+
+# macOS / Linux / Git Bash / WSL
+./init.sh
+
+# Windows (make sure Node.js >= 18 and pnpm are installed first)
+node scripts/init.mjs
 ```
 
-**`packages/server/.env` 最少要有**（`init.sh` 会写入大部分）：
+The init script runs: Node.js check → pnpm install → `.env.local` generation → Docker check → CloudBase setup → dependency install → CodeBuddy auth → TCR setup → database init.
 
-| 变量 | 作用 |
-| --- | --- |
-| `JWE_SECRET` / `ENCRYPTION_KEY` | 会话与敏感字段加密 |
-| `TCB_ENV_ID` / `TCB_SECRET_ID` / `TCB_SECRET_KEY` | CloudBase 管理面（环境、沙箱 Tool/实例） |
-| `TCB_API_KEY` | 数据面 gateway 访问 TRW |
-| `CODEBUDDY_API_KEY` | Agent（或 OAuth 一套，见 init） |
-
-首次创建任务时，平台会按 `ovc-{TCB_ENV_ID}` 自动 **CreateSandboxTool** 并写入 DB，**无需**配置 `STATEFUL_TOOL_ID`。沙箱镜像默认用代码内置公开 TCR；自研 TRW 镜像再设 `STATEFUL_SANDBOX_IMAGE` 或 `pnpm setup:tcr`。
-
-排障与完整清单：[docs/setup.md](docs/setup.md)。Server 模板：[packages/server/.env.example](packages/server/.env.example)。
+For detailed steps and troubleshooting, see [docs/setup.md](docs/setup.md).
 
 ---
 
-## 开发
+## Development
 
 ```bash
-pnpm dev          # web :5174 + server :3001
-pnpm dev:web
-pnpm dev:server
+pnpm dev          # Start web (localhost:5174) and server (localhost:3001) together
+pnpm dev:web      # Frontend only
+pnpm dev:server   # Backend only
 ```
 
-## 生产（本机）
+## Production
 
 ```bash
-pnpm build
-pnpm start        # :3001，API + 静态资源
+pnpm build        # Build all packages
+pnpm start        # Start prod server (port 3001, serves API and static files)
 ```
 
-## 云托管（CloudRun）
+## Deploy to CloudRun
+
+This project supports one-click deployment to CloudBase CloudRun (container service). No local Docker required — the script uploads source code and Dockerfile to the cloud for building.
+
+**Prerequisites**
+
+- Completed `./init.sh` initialization (`TCB_ENV_ID`, `TCB_SECRET_ID`, `TCB_SECRET_KEY` configured)
+- CloudBase CLI installed: `npm i -g @cloudbase/cli`
+
+**One-click deploy**
 
 ```bash
-pnpm deploy:cloud   # 需 init 后的 TCB_*；云端构建 Dockerfile
+pnpm deploy:cloud
 ```
 
-控制台补全与 `ASK_USER_BASE_URL` 等见 [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md)。
+The script will:
+1. Upload source + Dockerfile to CloudBase for cloud-side image building
+2. Deploy as a CloudRun container service (service name: `vibecoding-platform`, port: 80)
+3. Query and display the service access URL
 
-## 常用命令
+**After deployment**
+
+- Access URL format: `https://{serviceName}-{id}.{region}.run.tcloudbase.com`
+- Build progress can be viewed in [CloudBase Console](https://tcb.cloud.tencent.com) → CloudRun → Service Details → Deploy Records
+- Environment variables should be configured in the console's service settings
+
+## Common commands
 
 ```bash
-# 代码质量
-pnpm type-check   # TypeScript 类型检查
+# Code quality
+pnpm type-check   # TypeScript type-check
 pnpm lint         # ESLint
-pnpm format       # Prettier 格式化
+pnpm format       # Prettier
 
-# 数据库
-pnpm db:generate  # 生成迁移
-pnpm db:push      # 推送 schema
-pnpm db:studio    # 打开 Drizzle Studio
+# Database
+pnpm db:generate  # Generate migrations
+pnpm db:push      # Push schema
+pnpm db:studio    # Open Drizzle Studio
 
-# TCR 镜像仓库
+# TCR image registry
 pnpm setup:tcr
 pnpm setup:tcr --namespace my-app --local-image node:20
 
 # OpenCode
-pnpm opencode:setup   # 配置 OpenCode provider 和模型
+pnpm opencode:setup   # Configure OpenCode provider and models
 ```
 
 ---
 
-## 环境变量（精简）
+## Project structure
 
-| 文件 | 用途 |
-| --- | --- |
-| `.env.local` | 根目录会话/认证；`init.sh` 生成 |
-| `packages/server/.env` | **运行时主配置**（本地 dev/start；云托管在控制台填同名变量） |
-
-### 可选能力（按需开启）
-
-| 目的 | 变量 |
-| --- | --- |
-| 每任务独立沙箱实例 | `SANDBOX_INSTANCE_MODE=isolated`（默认 `shared`） |
-| 每用户独立 CloudBase 环境 | `TCB_PROVISION_MODE=isolated` 或 `task` |
-| 自研 TRW 镜像 | `STATEFUL_SANDBOX_IMAGE` 或 `TCR_IMAGE`（`pnpm setup:tcr`） |
-| 任务结束推归档仓 | `GIT_ARCHIVE_REPO` + `GIT_ARCHIVE_TOKEN`（+ `GIT_ARCHIVE_USER`） |
-| UI Link 用户仓库 | `GIT_PERSONAL_AUTH` + 任务内 Link |
-| 小程序部署 MCP | `STATEFUL_MINIPROGRAM_FEATURE=true`（TRW 需 vibecoding preset） |
-| OpenCode 回调公网地址 | `ASK_USER_BASE_URL`（云托管必填公网 URL） |
-
-**不要写入 `.env`（仅运维脚本调试）**：`STATEFUL_TOOL_ID`、`STATEFUL_SANDBOX_ID`、`STATEFUL_GATEWAY_URL`（有默认值）。
-
-**Git 归档注入**：`GIT_ARCHIVE_*` 在沙箱 **启动成功后** 经 `PUT /api/workspace/env` 写入，不在 `StartSandboxInstance` 传 boot Env（避免探活失败）。详见 [docs/trw-api-alignment.md](docs/trw-api-alignment.md)。
-
-沙箱 Tool 名 `ovc-{TCB_ENV_ID}`，ID 存 DB；镜像漂移时自动 `UpdateSandboxTool`（保留 Ports/Probe）。两套「共享/隔离」说明见 [docs/setup.md](docs/setup.md#沙箱实例模式sandbox_instance_mode)。
+```
+├── docs/
+│   ├── setup.md                  # Setup walkthrough & troubleshooting
+│   ├── architecture.md           # System architecture
+│   ├── trw-api-alignment.md      # OVC ↔ TRW routes
+│   ├── cloudrun-deploy.md        # CloudRun deploy & env
+│   ├── upstream-fork.md          # Fork baseline & sync
+│   └── scf-session-sharing.md    # (legacy) SCF session sharing
+├── packages/
+│   ├── web/                      # React 19 + Vite frontend
+│   ├── server/                   # Hono backend: Auth, Agent orchestration, Sandbox
+│   ├── dashboard/                # CloudBase resource UI (DB / Storage / Functions)
+│   └── shared/                   # ACP protocol types, task / message schemas
+├── scripts/
+│   ├── init.mjs                  # Interactive init script
+│   ├── deploy.mjs                # CloudRun one-click deploy
+│   └── setup-tcr.mjs             # TCR image registry setup
+└── init.sh                       # Quick entry
+```
 
 ---
 
-## OpenCode 模型配置
+## Tech stack
 
-项目内置 OpenCode ACP runtime。如果前端需要使用 OpenCode agent，需要先配置至少一个
-provider（model 提供商）。
+| Layer    | Stack                                                  |
+| -------- | ------------------------------------------------------ |
+| Frontend | React 19, Vite, Tailwind CSS 4, shadcn/ui, Jotai       |
+| Backend  | Hono, Node.js, Drizzle ORM                             |
+| Database | CloudBase DB (primary), SQLite (local fallback)        |
+| AI       | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP      |
+| Sandbox  | CloudBase AGS Stateful + TRW, TCR images               |
+| Auth     | JWE session, bcrypt, Arctic (OAuth)                    |
+| Storage  | CloudBase DB, local .jsonl, Git archive                |
+| Protocol | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |
 
-### 前置：安装 opencode CLI
+Full module design, data flow, and API routes are in [docs/architecture.md](docs/architecture.md).
+
+---
+
+## Environment variables
+
+Full variable reference is in [docs/setup.md](docs/setup.md). Core variables:
+
+```env
+# Encryption keys (auto-generated by init script)
+JWE_SECRET=
+ENCRYPTION_KEY=
+
+# Auth
+NEXT_PUBLIC_AUTH_PROVIDERS=local   # local | github | cloudbase
+
+# CloudBase
+TCB_SECRET_ID=
+TCB_SECRET_KEY=
+TENCENTCLOUD_ACCOUNT_ID=
+TCB_ENV_ID=
+TCB_PROVISION_MODE=shared          # shared | isolated | task
+
+# TCR
+TCR_NAMESPACE=
+TCR_PASSWORD=
+TCR_IMAGE=
+
+# Optional
+MAX_MESSAGES_PER_DAY=50
+MAX_SANDBOX_DURATION=300
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+GIT_PERSONAL_AUTH=
+```
+
+---
+
+## OpenCode model configuration
+
+The project ships with an OpenCode ACP runtime. To use the OpenCode agent from the frontend, configure at least one model provider first.
+
+### Prerequisite: install the opencode CLI
 
 ```bash
 npm i -g opencode-ai
-# 验证
+# verify
 opencode --version
 ```
 
-### 一键配置
+### One-shot setup
 
 ```bash
 pnpm opencode:setup
 ```
 
-该命令会：
+The command will:
 
-1. 调用 腾讯云开发 AI+ 接口 [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) 拉取模型
-2. 引导并配置腾讯云开发 API Key
-3. 从 catalog 取完整配置写入 `.opencode/opencode.json`（含 npm/baseURL/models 等）
-4. 把 API Key 写入 `packages/server/.env`
+1. Call the Tencent CloudBase AI+ endpoint [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) to fetch models
+2. Walk you through configuring the Tencent CloudBase API Key
+3. Take the complete config from the catalog and write it to `.opencode/opencode.json` (including npm / baseURL / models)
+4. Append the API Key to `packages/server/.env`
 
-### 生成结果示例
+### Example output
 
 ```jsonc
-// .opencode/opencode.json（自动生成，字段从 models.dev 获取）
+// .opencode/opencode.json (auto-generated; fields pulled from models.dev)
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "cloudbase/deepseek-v4-flash",
@@ -242,8 +322,7 @@ pnpm opencode:setup
       "models": {
         "glm-5": {
           "name": "glm-5"
-        },
-        // 其他模型
+        }
       }
     }
   }
@@ -251,58 +330,54 @@ pnpm opencode:setup
 ```
 
 ```bash
-# packages/server/.env 会追加 API Key
+# packages/server/.env gets the API Key appended
 CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 ```
 
-> **为什么写完整字段而不是空对象？** opencode 子进程启动时也需要这些配置。如果只写 `{}`，
-> 子进程要自己从 models.dev 拉 catalog 才知道 npm / baseURL / models 等信息，一旦拉取失败
-> （网络/超时）就无法正常工作。写入完整字段让配置自包含，不依赖运行时网络请求。
+> **Why write the full fields instead of an empty object?** The opencode child process also needs these settings on startup. With just `{}`, the child would have to fetch the catalog from models.dev itself to learn npm / baseURL / models, and a network failure would break it. Writing the full fields makes the config self-contained, with no runtime network dependency.
 
-### 高级：自定义 provider / 覆盖字段
+### Advanced: custom provider / overrides
 
-如果需要：
+If you need to:
 
-- 非 catalog 内置的 provider（如内网 LLM 网关、本地 Ollama）
-- 覆盖 catalog 默认的 `baseURL` / `headers`（如走国内镜像）
-- 用 `whitelist` / `blacklist` 限制要展示的模型
-- 配置 variants（如 Anthropic 的 thinking 预算）
+- Use a provider not in the built-in catalog (e.g. an internal LLM gateway, local Ollama)
+- Override the catalog's default `baseURL` / `headers` (e.g. route through a regional mirror)
+- Restrict which models are exposed via `whitelist` / `blacklist`
+- Configure variants (e.g. Anthropic thinking budget)
 
-请参考 `.opencode/opencode.example.json` 和 [OpenCode 官方 providers 文档](https://opencode.ai/docs/zh-cn/providers/)
-直接手动编辑 `.opencode/opencode.json`。
+Refer to `.opencode/opencode.example.json` and the [OpenCode providers docs](https://opencode.ai/docs/providers/) and edit `.opencode/opencode.json` manually.
 
-> 提示：`opencode.json` 顶部的 `$schema` 字段让 VS Code / Cursor 等编辑器支持字段自动补全
-> 和悬停文档，编辑时按 Ctrl+Space 可查看所有可选字段。
+> Tip: the `$schema` field at the top of `opencode.json` enables auto-completion and hover docs in VS Code / Cursor — press Ctrl+Space while editing to inspect all available fields.
 
-### 重新配置 / 新增 provider
+### Re-running / adding providers
 
-`pnpm opencode:setup` 幂等，可多次运行：
+`pnpm opencode:setup` is idempotent and can be run multiple times:
 
-- **已存在的 provider** 不会被覆盖（避免丢失手动调整）
-- **已设置的 env key** 不会被重复询问
-- **缺失 env 的 provider** 会在启动时提示补齐
+- **Existing providers** are not overwritten (to preserve manual tweaks)
+- **Already-set env keys** are not asked for again
+- **Providers with missing env** are flagged at startup
 
-## CodeBuddy 模型配置
+## CodeBuddy model configuration
 
-项目默认使用 CodeBuddy（`@tencent-ai/agent-sdk`）官方模型服务。如果需要使用 CloudBase 上的自定义 AI 模型（如 DeepSeek、混元等），可通过以下方式配置。
+By default the project uses CodeBuddy's (`@tencent-ai/agent-sdk`) official model service. To use custom AI models on CloudBase (e.g. DeepSeek, Hunyuan), configure as below.
 
-### 一键配置
+### One-shot setup
 
 ```bash
 pnpm codebuddy:setup
 ```
 
-该命令会：
+The command will:
 
-1. 调用 腾讯云开发 AI+ 接口 [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) 拉取当前环境已开通的模型
-2. 检查 `CLOUDBASE_API_KEY`，缺失时引导输入并自动写入 `packages/server/.env`
-3. 同时设置 `CODEBUDDY_USE_CUSTOM_MODELS=true`
-4. 生成 `packages/server/.config/.codebuddy/models.json` 供 SDK 读取
+1. Call the Tencent CloudBase AI+ endpoint [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) to fetch models enabled in the current environment
+2. Check for `CLOUDBASE_API_KEY`; if missing, prompt for input and write it to `packages/server/.env`
+3. Also set `CODEBUDDY_USE_CUSTOM_MODELS=true`
+4. Generate `packages/server/.config/.codebuddy/models.json` for the SDK to read
 
-### 生成结果示例
+### Example output
 
 ```jsonc
-// packages/server/.config/.codebuddy/models.json（自动生成）
+// packages/server/.config/.codebuddy/models.json (auto-generated)
 {
   "models": [
     {
@@ -320,30 +395,29 @@ pnpm codebuddy:setup
 ```
 
 ```bash
-# packages/server/.env 会自动追加
+# packages/server/.env gets auto-appended
 CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 CODEBUDDY_USE_CUSTOM_MODELS=true
 ```
 
-> **关于 `${CLOUDBASE_API_KEY}` 占位符**：`models.json` 中的 `apiKey` 字段使用 `${VAR_NAME}` 语法，
-> 由 `@tencent-ai/agent-sdk` 在运行时解析为对应的环境变量值，避免将敏感密钥硬编码到配置文件中。
+> **About the `${CLOUDBASE_API_KEY}` placeholder**: the `apiKey` field in `models.json` uses `${VAR_NAME}` syntax, resolved at runtime by `@tencent-ai/agent-sdk` to the corresponding env value — avoids hard-coding secrets in config files.
 
-### 同步与自定义模型
+### Syncing & custom models
 
-`pnpm codebuddy:setup` 幂等，可多次运行：
+`pnpm codebuddy:setup` is idempotent:
 
-- **CloudBase 模型以 API 返回为准**：如果你在 CloudBase 控制台新增或删除了模型，重新运行脚本会同步更新 `models.json`
-- **已设置的 env key** 不会被重复询问
+- **CloudBase models follow the API** — if you add or remove models in the CloudBase console, re-running the script syncs `models.json`
+- **Already-set env keys** are not asked for again
 
-### 手动添加自定义模型
+### Manually adding custom models
 
-如需接入非 CloudBase 的模型（如本地 Ollama、私有 LLM 网关），可直接编辑：
+To plug in non-CloudBase models (e.g. local Ollama, private LLM gateway), edit:
 
 ```bash
 packages/server/.config/.codebuddy/models.json
 ```
 
-在 `models` 数组中添加自定义条目（注意 `vendor` 不要写 `cloudbase`，避免被同步覆盖）：
+Append a custom entry to the `models` array (note: do **not** set `vendor` to `cloudbase`, or the sync will overwrite it):
 
 ```json
 {
@@ -357,61 +431,37 @@ packages/server/.config/.codebuddy/models.json
 }
 ```
 
-同时确保在 `packages/server/.env` 中提供对应的环境变量，并设置：
+Make sure the matching env variable is defined in `packages/server/.env`, and set:
 
 ```bash
 CODEBUDDY_USE_CUSTOM_MODELS=true
 ```
 
-## 技术栈
-
-| 层      | 技术                                                    |
-| ------- | ------------------------------------------------------- |
-| 前端    | React 19, Vite, Tailwind CSS 4, shadcn/ui, Jotai        |
-| 后端    | Hono, Node.js, Drizzle ORM                              |
-| 数据库  | CloudBase DB（主），SQLite（本地回退）                  |
-| AI      | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP, MiMo |
-| Sandbox | 沙箱 infra（Stateful + TRW）, TCR 镜像                  |
-| 认证    | JWE session, bcrypt, Arctic (OAuth)                     |
-| 持久化  | CloudBase DB, 本地 .jsonl, Git archive                  |
-| 协议    | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol)  |
-
-完整的模块设计、数据流与 API 路由见 [docs/architecture.md](docs/architecture.md)。
-
 ---
 
-## 与上游的关系
+## Further reading
 
-- 最初模板：[vercel-labs/coding-agent-template](https://github.com/vercel-labs/coding-agent-template)
-- **直接上游**：[TencentCloudBase/OpenVibeCoding](https://github.com/TencentCloudBase/OpenVibeCoding)（`origin`）
-
-**硬分叉基线**（不变）：`43c3e6038d833481c2fd0d4d206f4a801de7a750`（2026-05-21，`feautre/env-pool` 合入点）。本线此后增加沙箱 infra，与上游 **不保证长期可 merge**。
-
-**上游同步**（2026-05-21）：已 merge 至 `a878ddb`。此后上游 `main` 另有 CloudRun `pnpm deploy:cloud` 等提交，本线已引入 `scripts/deploy.mjs`；**尚未** merge `origin/main` 最新（见 [docs/upstream-fork.md](docs/upstream-fork.md)）。
-
-|          | 本线 `feature/stateful-infra` 侧重 |
-| -------- | ------------------------------------ |
-| Sandbox  | AGS Stateful + TRW、公开 TCR 默认、workspace/env 注入 Git |
-| 实例策略 | `SANDBOX_INSTANCE_MODE`、复用/启动进度文案 |
-| 部署     | `pnpm deploy:cloud` + [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md) |
+- [Setup guide](docs/setup.md) — init flow, env variables, verification checklist, troubleshooting
+- [Architecture](docs/architecture.md) — system layers, module design, key data flows
+- [SCF session sharing](docs/scf-session-sharing.md) — sandbox session reuse design
 
 ---
 
 ## Contributing
 
-1. Fork 并创建功能分支 (`git checkout -b feature/xxx`)
-2. 开发完成后确保通过：`pnpm type-check && pnpm lint && pnpm format`
-3. 提交 Pull Request
+1. Fork and create a feature branch (`git checkout -b feature/xxx`)
+2. Before submitting, make sure these pass: `pnpm type-check && pnpm lint && pnpm format`
+3. Open a Pull Request
 
-**日志安全规则**：所有 `logger.*` / `console.*` 调用必须使用静态字符串，不得包含 `${动态值}`。详见 [AGENTS.md](./AGENTS.md)。
+**Logging safety rule**: every `logger.*` / `console.*` call must use static strings only — no `${dynamic values}`. See [AGENTS.md](./AGENTS.md).
 
 ## Acknowledgments
 
 - [coding-agent-template](https://github.com/vercel-labs/coding-agent-template) by Vercel
-- [CloudBase](https://cloudbase.net/) — 云开发基础设施
-- [CodeBuddy](https://copilot.tencent.com/) — AI 编程助手
-- [Hono](https://hono.dev/) — 轻量级 Web 框架
+- [CloudBase](https://cloudbase.net/) — cloud development infrastructure
+- [CodeBuddy](https://copilot.tencent.com/) — AI Agent
+- [Hono](https://hono.dev/) — lightweight web framework
 
 ## License
 
-基于 [coding-agent-template](https://github.com/vercel-labs/coding-agent-template) (Copyright 2025 Vercel, Inc.) 改造，沿用 Apache License 2.0。详见 [LICENSE](./LICENSE) 和 [NOTICE](./NOTICE)。
+Derived from [coding-agent-template](https://github.com/vercel-labs/coding-agent-template) (Copyright 2025 Vercel, Inc.) under Apache License 2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).
