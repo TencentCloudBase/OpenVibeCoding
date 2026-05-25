@@ -399,6 +399,7 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
             taskId={task.id}
             isActive={activeTab === 'terminal' && !isCollapsed}
             isMobile={!isDesktop}
+            sandboxReady={!!task.sandboxId}
           />
         </div>
       </div>

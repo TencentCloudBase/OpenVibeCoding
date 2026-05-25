@@ -125,14 +125,13 @@ flowchart TD
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
 | `TCB_API_KEY` | 是 | gateway 数据面 Bearer（与 `TCB_ENV_ID` 配套） |
-| `STATEFUL_TOOL_ID` | **否（仅调试）** | 跳过 DB/创建；正常由 Tool 名 `ovc-{TCB_ENV_ID}` + DB 解析，见 README |
-| `STATEFUL_SANDBOX_IMAGE` | 首次 `CreateSandboxTool` | TCR 完整 URI；不配则用代码公开默认或 `TCR_IMAGE`（见 README） |
-| `STATEFUL_SANDBOX_IMAGE_TAG` | 否 | URI 无 `:tag` 时补全 |
-| `SANDBOX_INSTANCE_MODE` | 否 | `shared` / `isolated` — **沙箱实例**是否跨任务复用（写在 `packages/server/.env`） |
-| `STATEFUL_GATEWAY_URL` | 否 | 默认 `https://{TCB_ENV_ID}.api.tcloudbasegateway.com/v1/sandbox/-` |
-| `STATEFUL_SANDBOX_ID` | 否 | 调试时固定实例 ID |
-| `STATEFUL_TOOL_WARMUP_POLL_MS` / `STATEFUL_TOOL_WARMUP_POLL_MAX` | 否 | 镜像更新后预热轮询（默认 10s × 6） |
-| `TCR_IMAGE` | 自管镜像时 | `pnpm setup:tcr` 写入**你的**命名空间；可当作 `STATEFUL_SANDBOX_IMAGE` |
+| `STATEFUL_SANDBOX_IMAGE` | 否 | 首次 `CreateSandboxTool` 或镜像漂移 reconcile；不配则用公开 TCR 默认或 `TCR_IMAGE` |
+| `TCR_IMAGE` | 否 | `pnpm setup:tcr` 写入你的命名空间 |
+| `SANDBOX_INSTANCE_MODE` | 否 | `shared` / `isolated` — 沙箱**实例**是否跨任务复用 |
+| `GIT_ARCHIVE_*` / `GIT_PERSONAL_AUTH` | 否 | 归档与 Link；实例就绪后 `PUT /api/workspace/env` 注入，见 [trw-api-alignment.md](./trw-api-alignment.md) |
+| `STATEFUL_MINIPROGRAM_FEATURE` | 否 | `true` 时启用 TRW 小程序 job API |
+
+**仅调试脚本**：`STATEFUL_TOOL_ID`、`STATEFUL_SANDBOX_ID`、`STATEFUL_GATEWAY_URL`（默认 gateway 可省略）。
 
 **镜像**：须为 `ccr.ccs.tencentyun.com/...`（沙箱 infra 使用 TCR 个人版，`ImageRegistryType: personal`）。团队公开默认见 `packages/server/src/sandbox/stateful-vibecoding-image.ts`；自部署用自有命名空间推送后设 `STATEFUL_SANDBOX_IMAGE` 或跑 `pnpm setup:tcr`。勿在文档或 git 中提交 API Key / TCR 密码。
 

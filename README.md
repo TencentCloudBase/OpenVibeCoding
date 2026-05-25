@@ -8,8 +8,10 @@
 
 ## 延伸阅读
 
-- [Setup 指南](docs/setup.md) — 初始化流程、环境变量、验证清单与排障
+- [Setup 指南](docs/setup.md) — 初始化流程、验证清单与排障
 - [系统架构](docs/architecture.md) — 系统分层、模块设计与关键数据流
+- [TRW API 对齐](docs/trw-api-alignment.md) — OVC 调用的 TRW 路由与开关
+- [CloudRun 部署](docs/cloudrun-deploy.md) — 云托管一键部署与控制台 env
 - [上游分叉与同步](docs/upstream-fork.md) — 硬分叉基线、merge 历史、下次同步命令
 
 ---
@@ -81,7 +83,10 @@
 ├── docs/
 │   ├── setup.md                  # setup 详解与排障
 │   ├── architecture.md           # 系统架构文档
-│   └── scf-session-sharing.md    # （历史）SCF Session 共享，stateful 分支已废弃
+│   ├── trw-api-alignment.md      # OVC ↔ TRW 路由
+│   ├── cloudrun-deploy.md        # 云托管部署
+│   ├── upstream-fork.md          # 上游分叉与同步
+│   └── scf-session-sharing.md    # （历史）SCF，已废弃
 ├── packages/
 │   ├── web/                      # React 19 + Vite 前端
 │   ├── server/                   # Hono 后端：Auth、Agent 编排、Sandbox 管理
@@ -89,64 +94,61 @@
 │   └── shared/                   # ACP 协议类型、任务 / 消息 schema
 ├── scripts/
 │   ├── init.mjs                  # 交互式初始化脚本
+│   ├── deploy.mjs                # 云托管一键部署
 │   └── setup-tcr.mjs             # TCR 镜像仓库配置
 └── init.sh                       # 快速入口
 ```
 
 ---
 
-## 快速开始
+## 本地启动（最小路径）
 
-**前置条件**
-
-开始前请确认：
-- **Node.js 22.x**（必需；`better-sqlite3` 原生模块与 server build target 对齐 **node22**，勿用 Node 23+ 或 brew 默认 Node 26）。推荐：`mise use node@22` 或 `nvm use`（根目录 `.nvmrc` 为 `22`）
-- pnpm 10+
-- Docker 已安装并启动（stateful 分支本地 dev **不**需要本机 TRW；沙箱在云端）
-- 已准备 CloudBase 环境和腾讯云 API 密钥
-- 已准备 CodeBuddy API Key 或 OAuth 配置
-
-**一键初始化**
+**前置**：Node **22.x**（见 `.nvmrc`）、pnpm 10+、CloudBase 支撑环境 + API 密钥、CodeBuddy API Key。本地 **不**跑 TRW 容器，编码沙箱在云端 AGS + TRW。
 
 ```bash
 git clone <repository-url>
-cd coding-agent-template
-./init.sh
+cd OpenVibeCoding
+./init.sh              # 生成 .env.local + packages/server/.env
+pnpm dev               # Web http://localhost:5174  API http://localhost:3001/api
 ```
 
-初始化脚本依次完成：Node.js 检查 → pnpm 安装 → `.env.local` 生成 → Docker 检查 → CloudBase 配置 → 依赖安装 → CodeBuddy 认证 → TCR 配置 → 数据库初始化。
+**`packages/server/.env` 最少要有**（`init.sh` 会写入大部分）：
 
-详细步骤与排障见 [docs/setup.md](docs/setup.md)。
+| 变量 | 作用 |
+| --- | --- |
+| `JWE_SECRET` / `ENCRYPTION_KEY` | 会话与敏感字段加密 |
+| `TCB_ENV_ID` / `TCB_SECRET_ID` / `TCB_SECRET_KEY` | CloudBase 管理面（环境、沙箱 Tool/实例） |
+| `TCB_API_KEY` | 数据面 gateway 访问 TRW |
+| `CODEBUDDY_API_KEY` | Agent（或 OAuth 一套，见 init） |
+
+首次创建任务时，平台会按 `ovc-{TCB_ENV_ID}` 自动 **CreateSandboxTool** 并写入 DB，**无需**配置 `STATEFUL_TOOL_ID`。沙箱镜像默认用代码内置公开 TCR；自研 TRW 镜像再设 `STATEFUL_SANDBOX_IMAGE` 或 `pnpm setup:tcr`。
+
+排障与完整清单：[docs/setup.md](docs/setup.md)。Server 模板：[packages/server/.env.example](packages/server/.env.example)。
 
 ---
 
 ## 开发
 
 ```bash
-pnpm dev          # 同时启动 web (localhost:5174) 和 server (localhost:3001)
-pnpm dev:web      # 仅启动前端
-pnpm dev:server   # 仅启动后端
+pnpm dev          # web :5174 + server :3001
+pnpm dev:web
+pnpm dev:server
 ```
 
 ## 生产（本机）
 
 ```bash
-pnpm build        # 构建所有包
-pnpm start        # 启动生产服务（端口 3001，同时服务 API 和静态文件）
+pnpm build
+pnpm start        # :3001，API + 静态资源
 ```
 
 ## 云托管（CloudRun）
 
-OVC 以**容器**部署到 CloudBase 云托管：根目录 `Dockerfile` 构建前后端一体镜像，监听 **80**。
-
 ```bash
-tcb env use <TCB_ENV_ID>
-tcb cloudrun deploy -e <TCB_ENV_ID> -s <服务名> --port 80 --source . --force
+pnpm deploy:cloud   # 需 init 后的 TCB_*；云端构建 Dockerfile
 ```
 
-构建日志与访问地址在控制台「云托管 → 服务详情 → 部署」。环境变量在**同一服务的「服务设置 → 环境变量」**配置（见下节），不要依赖把 `packages/server/.env` 打进镜像（`.dockerignore` 已排除 `.env*`）。
-
-更细的初始化与排障见 [docs/setup.md](docs/setup.md)。
+控制台补全与 `ASK_USER_BASE_URL` 等见 [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md)。
 
 ## 常用命令
 
@@ -171,114 +173,30 @@ pnpm opencode:setup   # 配置 OpenCode provider 和模型
 
 ---
 
-## 环境变量
-
-配置文件分工：
+## 环境变量（精简）
 
 | 文件 | 用途 |
 | --- | --- |
-| `.env.local` | 根目录；`init.sh` 写入 `JWE_SECRET`、`ENCRYPTION_KEY`、`NEXT_PUBLIC_AUTH_PROVIDERS` 等 |
-| `packages/server/.env` | **Server 运行时**（本地 `pnpm dev` / `pnpm start` 读这里；云托管在控制台填同等变量） |
+| `.env.local` | 根目录会话/认证；`init.sh` 生成 |
+| `packages/server/.env` | **运行时主配置**（本地 dev/start；云托管在控制台填同名变量） |
 
-更多字段说明见 [docs/setup.md](docs/setup.md)。
+### 可选能力（按需开启）
 
-### 沙箱 infra · Tool 模板（`STATEFUL_TOOL_ID` 要不要配？）
-
-**结论：日常开发/上线都不要配 `STATEFUL_TOOL_ID`。** 它只用于调试或运维脚本（`describe-stateful-tool.ts` 等）。
-
-代码里 **Tool 名称是固定的**，由支撑环境 ID 推导：
-
-```text
-ToolName = ovc-{TCB_ENV_ID}   # 非法字符会替换为 -，最长 48 字符
-```
-
-例如 `TCB_ENV_ID=<your-support-env-id>` → Tool 名 `ovc-<your-support-env-id>`（非法字符会替换为 `-`）。
-
-**正常解析顺序**（`ensureStatefulTool`）：
-
-1. ~~`STATEFUL_TOOL_ID` 环境变量~~ — **仅调试**，会跳过 DB 与创建逻辑，不应写入 `.env`
-2. **数据库** — `shared` 模式：`settings.stateful_tool_id`；`isolated` / `task`：`user_resources.statefulToolId`
-3. **按名绑定** — 沙箱控制面 `DescribeSandboxToolList`，匹配 `ToolName`，写回 DB
-4. **首次创建** — 尚无记录时 `CreateSandboxTool`，使用上述 `ToolName`，再把返回的 `sdt-xxx` 写入 DB
-
-因此：本地第一次跑任务时会创建 Tool 并落库；换机器只要连同一套 CloudBase DB，就会复用同一个 `sdt-xxx`，**不必**在 `.env` 里手写 ToolId。若 DB 被清空但平台上仍有同名 Tool，会先按 `ToolName` 查询再写回 DB。
-
-### 两套「共享 / 隔离」别混
-
-| 维度 | 环境变量 / 配置 | 管什么 | `shared` | `isolated` |
-| --- | --- | --- | --- | --- |
-| **CloudBase 用户环境** | `TCB_PROVISION_MODE`（init 或 `/admin/settings`） | 用户是否共用**支撑环境**、是否预建 `user_resources` | 全员共用 `TCB_ENV_ID` | 每用户独立 env + CAM |
-| **沙箱实例** | `SANDBOX_INSTANCE_MODE`（`packages/server/.env` 或 DB `sandbox_instance_mode`） | **运行时容器**是否跨任务复用 | 同一支撑 env 下多任务共用一个实例 | 每任务独立实例（复用该任务的 `sandboxId`） |
-
-- 本地试 OVC 沙箱行为：改 **`SANDBOX_INSTANCE_MODE`** 即可（`shared` / `isolated`），与是否多租户无关。
-- **`TCB_PROVISION_MODE=task`** 时新建任务默认实例模式倾向 `isolated`（见 `sandbox-config.ts`），仍可用 Admin 或 env 覆盖。
-- 优先级（实例模式）：DB `sandbox_instance_mode` → env `SANDBOX_INSTANCE_MODE` → 内置默认 `shared`。
-- UI 进度文案：`shared` 会出现「复用环境沙箱（多任务共享）」；`isolated` 为「复用任务沙箱」/「为当前任务启动沙箱实例」。
-
-### 沙箱镜像（`STATEFUL_SANDBOX_IMAGE`）
-
-沙箱 infra 首次创建 Tool（`CreateSandboxTool`）需要 **腾讯云 TCR 个人版** 完整 URI（`ccr.ccs.tencentyun.com/<namespace>/<repo>:<tag>`），不能填 Docker Hub / GHCR 直链。
-
-**解析顺序**（`resolveStatefulSandboxImage`，见 `stateful-vibecoding-image.ts`）：
-
-1. `packages/server/.env` 的 **`STATEFUL_SANDBOX_IMAGE`**
-2. 同文件或根目录 `.env.local` 的 **`TCR_IMAGE`**（`pnpm setup:tcr` 写入）
-3. **代码内置默认**（团队公开 TCR，开箱首次建 Tool）：  
-   `ccr.ccs.tencentyun.com/tcb-sandbox-public-cbe88d/tcb-sandbox-public-cbe88d:<tag>`  
-   默认 tag 与常量 `VIBECODING_PUBLIC_TCR_DEFAULT_TAG` 同步（当前为带时间的 `…-vibecoding` 后缀，非 `latest`）。
-
-**用你自己的 TCR 镜像（推荐自部署 / 定制 TRW 时）**
-
-1. 在 [腾讯云 TCR 个人版](https://console.cloud.tencent.com/tcr) 创建命名空间，`docker login ccr.ccs.tencentyun.com`（用户名一般为账号 UIN）。
-2. 构建 TRW vibecoding 镜像后推送，tag 建议一条龙格式：`YYMMDD-HHMM-<随机>-vibecoding`（见仓库外 `code_sandbox/一条龙.md` § Tag & Push）。
-3. 写入 **`packages/server/.env`**（云托管写控制台同等变量）：
-
-```bash
-# 二选一即可；显式优先
-STATEFUL_SANDBOX_IMAGE=ccr.ccs.tencentyun.com/<your-namespace>/tcb-sandbox-ags:<your-tag>
-# 或跑 pnpm setup:tcr 后使用生成的 TCR_IMAGE（会同步到 server .env）
-```
-
-也可只写无 tag 的路径，由 `STATEFUL_SANDBOX_IMAGE_TAG` 补默认 tag。首次建 Tool 成功后，镜像 URI 已绑在沙箱 Tool 模板上，**之后可删掉 env**（仍靠 DB / `ovc-{TCB_ENV_ID}` 复用 Tool）。
-
-> **隐私**：勿把 `TCB_SECRET_*`、`TCB_API_KEY`、`CODEBUDDY_API_KEY`、个人 TCR 密码等写入 README 或提交 git；`packages/server/.env` 已在 `.gitignore`。
-
-### 本地开发（`pnpm dev`）
-
-| 变量 | 必需 | 说明 |
-| --- | --- | --- |
-| `JWE_SECRET` / `ENCRYPTION_KEY` | 是 | 会话与敏感字段加密（`init.sh` 可生成） |
-| `TCB_ENV_ID` | 是 | 支撑环境 ID |
-| `TCB_SECRET_ID` / `TCB_SECRET_KEY` | 是 | 管理面：建环境、沙箱 Tool/实例、provision |
-| `TCB_API_KEY` | 是 | 数据面：gateway 访问 TRW（CloudBase 控制台创建 API Key） |
-| `CODEBUDDY_API_KEY` 或 OAuth 一套 | 是 | Agent 调用 |
-| `STATEFUL_SANDBOX_IMAGE` | 首次 `CreateSandboxTool` | 见上节；不配则用公开 TCR 默认或 `TCR_IMAGE` |
-| `TCR_IMAGE` | 自管镜像时 | `pnpm setup:tcr` 推到**你的**命名空间后写入 |
-| `SANDBOX_INSTANCE_MODE` | 否 | `shared`（默认）/ `isolated` — **沙箱实例**是否跨任务复用 |
-| `TCB_PROVISION_MODE` | 否 | `shared` / `isolated` / `task` — **CloudBase 用户环境**隔离粒度 |
-| `DB_PROVIDER` | 否 | 默认 `cloudbase`；本地纯离线可 `drizzle`（SQLite） |
-| `PORT` | 否 | 默认 `3001` |
-| `ASK_USER_BASE_URL` | 否 | 默认 `http://127.0.0.1:${PORT}`，OpenCode 子进程回调用 |
-
-**不要配（除非调试）**：`STATEFUL_TOOL_ID`、`STATEFUL_SANDBOX_ID`（固定实例）、`STATEFUL_GATEWAY_URL`（默认 `https://{TCB_ENV_ID}.api.tcloudbasegateway.com/v1/sandbox/-`）。
-
-可选：`GITHUB_*`、`GIT_ARCHIVE_*`、`STATEFUL_MINIPROGRAM_FEATURE`、`STATEFUL_TOOL_WARMUP_*` 等见 [docs/setup.md](docs/setup.md)。
-
-### 云托管（CloudRun）
-
-与本地 **同一套变量名**，在控制台配置；差异主要是运行形态：
-
-| 变量 | 云托管注意点 |
+| 目的 | 变量 |
 | --- | --- |
-| `PORT` | 必须为 **80**（与 `Dockerfile` / `--port 80` 一致） |
-| `NODE_ENV` | `production` |
-| `JWE_SECRET` / `ENCRYPTION_KEY` | 与本地相同密钥体系，**勿**每次部署随机换（否则已有 session 失效） |
-| `TCB_*` / `TCB_API_KEY` / `CODEBUDDY_*` | 与本地相同；Secret 走控制台「环境变量」，不要打进镜像 |
-| `ASK_USER_BASE_URL` | 必须设为 **公网可访问的 OVC 根 URL**（如 `https://<云托管默认域名>`），不能依赖默认的 `127.0.0.1` |
-| `STATEFUL_SANDBOX_IMAGE` | 首次在该环境创建 Tool 时需要；之后靠 DB 里的 `stateful_tool_id` |
-| `STATEFUL_TOOL_ID` | **不要配**（多副本共用 DB 时也应走 DB + ToolName 逻辑） |
+| 每任务独立沙箱实例 | `SANDBOX_INSTANCE_MODE=isolated`（默认 `shared`） |
+| 每用户独立 CloudBase 环境 | `TCB_PROVISION_MODE=isolated` 或 `task` |
+| 自研 TRW 镜像 | `STATEFUL_SANDBOX_IMAGE` 或 `TCR_IMAGE`（`pnpm setup:tcr`） |
+| 任务结束推归档仓 | `GIT_ARCHIVE_REPO` + `GIT_ARCHIVE_TOKEN`（+ `GIT_ARCHIVE_USER`） |
+| UI Link 用户仓库 | `GIT_PERSONAL_AUTH` + 任务内 Link |
+| 小程序部署 MCP | `STATEFUL_MINIPROGRAM_FEATURE=true`（TRW 需 vibecoding preset） |
+| OpenCode 回调公网地址 | `ASK_USER_BASE_URL`（云托管必填公网 URL） |
 
-云托管不跑 `pnpm dev`：无 Vite 代理，浏览器只访问容器内的 80 端口（静态 + API 一体）。
+**不要写入 `.env`（仅运维脚本调试）**：`STATEFUL_TOOL_ID`、`STATEFUL_SANDBOX_ID`、`STATEFUL_GATEWAY_URL`（有默认值）。
+
+**Git 归档注入**：`GIT_ARCHIVE_*` 在沙箱 **启动成功后** 经 `PUT /api/workspace/env` 写入，不在 `StartSandboxInstance` 传 boot Env（避免探活失败）。详见 [docs/trw-api-alignment.md](docs/trw-api-alignment.md)。
+
+沙箱 Tool 名 `ovc-{TCB_ENV_ID}`，ID 存 DB；镜像漂移时自动 `UpdateSandboxTool`（保留 Ports/Probe）。两套「共享/隔离」说明见 [docs/setup.md](docs/setup.md#沙箱实例模式sandbox_instance_mode)。
 
 ---
 
@@ -469,13 +387,13 @@ CODEBUDDY_USE_CUSTOM_MODELS=true
 
 **硬分叉基线**（不变）：`43c3e6038d833481c2fd0d4d206f4a801de7a750`（2026-05-21，`feautre/env-pool` 合入点）。本线此后增加沙箱 infra，与上游 **不保证长期可 merge**。
 
-**最近一次上游同步**（2026-05-21）：`git merge origin/main`，已对齐至上游 `main` 的 `a878ddb`（CodeBuddy TokenHub、自定义模型、`codebuddy-setup`、agent 选项等）。完整记录见 [docs/upstream-fork.md](docs/upstream-fork.md)。
+**上游同步**（2026-05-21）：已 merge 至 `a878ddb`。此后上游 `main` 另有 CloudRun `pnpm deploy:cloud` 等提交，本线已引入 `scripts/deploy.mjs`；**尚未** merge `origin/main` 最新（见 [docs/upstream-fork.md](docs/upstream-fork.md)）。
 
-|          | 上游 `main`（已 merge 部分） | 本线独有（`feature/stateful-infra`）     |
-| -------- | ---------------------------- | ---------------------------------------- |
-| Agent    | TokenHub、自定义模型、选项更新 | 同左（已并入）                           |
-| Sandbox  | 环境池 / 演进中              | 沙箱 infra（Stateful + TRW）、公开 TCR 默认 |
-| 实例策略 | shared / isolated / task     | + `SANDBOX_INSTANCE_MODE`、细粒度进度文案 |
+|          | 本线 `feature/stateful-infra` 侧重 |
+| -------- | ------------------------------------ |
+| Sandbox  | AGS Stateful + TRW、公开 TCR 默认、workspace/env 注入 Git |
+| 实例策略 | `SANDBOX_INSTANCE_MODE`、复用/启动进度文案 |
+| 部署     | `pnpm deploy:cloud` + [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md) |
 
 ---
 

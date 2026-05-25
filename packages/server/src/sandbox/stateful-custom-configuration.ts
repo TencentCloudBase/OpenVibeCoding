@@ -1,7 +1,7 @@
 /**
- * AGS treats StartSandboxInstance / UpdateSandboxTool CustomConfiguration as a full
- * object — passing only `{ Env }` drops Ports/Probe and causes port binding failures.
- * Describe returns read-only fields (e.g. ImageDigest) that Start rejects.
+ * Helpers for StartSandboxInstance / UpdateSandboxTool CustomConfiguration.
+ * Production injects GIT_ARCHIVE via workspace/env after health — not at Start.
+ * Describe may return read-only fields (e.g. ImageDigest) that Start rejects.
  */
 
 export type StatefulEnvVar = { Name: string; Value: string }

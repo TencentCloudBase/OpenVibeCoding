@@ -275,9 +275,9 @@ flowchart LR
 ### Stateful Sandbox Lifecycle
 
 1. **Ensure Tool** — `ensureStatefulTool(envId)` 为环境创建或复用沙箱 Tool 模板（`sdt-xxx`），镜像来自 `STATEFUL_SANDBOX_IMAGE` → `TCR_IMAGE` → 公开 TCR 代码默认
-2. **Acquire Instance** — `SANDBOX_INSTANCE_MODE`：`shared` 每 env 单实例；`isolated` 每 task。`StatefulSandboxProvider`：running 复用、paused 恢复、缺失则 `StartSandboxInstance`；`stateful-tool-warmup` 轮询预热
+2. **Acquire Instance** — `SANDBOX_INSTANCE_MODE`：`shared` 每 env 单实例；`isolated` 每 task。`StartSandboxInstance` 使用 Tool 模板（不传 boot `CustomConfiguration.Env`）；`stateful-tool-warmup` 处理镜像拉取重试
 3. **Data Plane** — `TCB_API_KEY` + `E2b-Sandbox-Id` / `E2b-Sandbox-Port: 9000` 经 gateway 访问 TRW
-4. **Init Workspace** — `PUT /api/workspace/env` 注入凭证，`POST /api/workspace/init` 初始化 `/home/user`
+4. **Init Workspace** — 实例健康后 `PUT /api/workspace/env`（凭证 + 可选 `GIT_ARCHIVE_*`），`POST /api/workspace/init` 初始化 `/home/user`
 5. **Execute** — Agent 工具经 TRW `/api/tools/*`；CloudBase MCP 由 server 侧 `stateful-mcp-client` 转发
 6. **Archive** — 任务结束时 Git 归档工作区
 
@@ -300,7 +300,7 @@ flowchart LR
 | Bash | `/api/tools/bash` | Shell 命令执行 |
 | Web Terminal | `/preview/7681/` (ttyd) | 浏览器终端 |
 | Vite preview | `/preview/5173/` | 开发服务器（默认端口 5173） |
-| Git Push | `POST /api/extend/git_push` | 工作区推送到远端（TRW `ENABLE_GIT_ARCHIVE` + OVC `GIT_ARCHIVE_*`） |
+| Git Push | `POST /api/extend/git_push` | 工作区推送到远端（OVC 经 workspace/env 注入 `GIT_ARCHIVE_*` / `ENABLE_GIT_ARCHIVE`） |
 | Miniprogram deploy | `POST /api/jobs/miniprogram-deploy` | 启动部署 job（TRW `ENABLE_VIBECODING`） |
 | Job poll | `GET /api/jobs/:jobId` | 轮询 job 状态 / 日志 |
 | Health | `/health` | 实例健康检查 |

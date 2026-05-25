@@ -13,6 +13,9 @@ importers:
 
   .:
     devDependencies:
+      '@cloudbase/manager-node':
+        specifier: ^4.10.6
+        version: 4.10.6
       '@cloudbase/node-sdk':
         specifier: ^3.18.1
         version: 3.18.1

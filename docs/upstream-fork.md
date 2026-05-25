@@ -48,10 +48,11 @@
 | `4669043` | Merge pull request #23（CodeBuddy TokenHub） |
 | `a878ddb` | feat: 更新 agent 选项 |
 
-**当前对齐状态**（2026-05-21 merge 后）：
+**当前对齐状态**（2026-05-25）：
 
-- `git merge-base HEAD origin/main` → `a878ddb`（本分支已包含当时上游 `main` 全部历史）
-- 本线 **独有** 提交仍在 `a878ddb` 之上（stateful-infra、沙箱进度、TCR 默认等）
+- `git merge-base HEAD origin/main` → `a878ddb`（已 merge 的上游截止点）
+- `origin/main` 在 `a878ddb` 之后另有提交（如 `pnpm deploy:cloud`、`scripts/deploy.mjs`、README CloudRun 章节）；本线已通过 cherry-pick 引入 `deploy.mjs`，**尚未**完整 merge 最新 `main`
+- 本线 **独有**：stateful 沙箱、git workspace/env 注入、TRW 对齐文档等（`0699323` 等）
 
 下次看上游新提交：
 

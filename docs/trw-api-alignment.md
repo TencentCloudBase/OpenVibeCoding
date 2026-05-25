@@ -37,4 +37,4 @@
 - **CodeBuddy / Stateful MCP**：`stateful-mcp-client.ts`
 - **OpenCode CloudBase MCP**：`publishMiniprogram.ts`、`getDeployJobStatus.ts`
 - **小程序开关**：`STATEFUL_MINIPROGRAM_FEATURE=true`（TRW 镜像需 `ENABLE_VIBECODING`）
-- **Git 归档**：OVC 配 `GIT_ARCHIVE_*`；TRW 容器配同名变量 + `ENABLE_GIT_ARCHIVE`
+- **Git 归档**：OVC 在实例就绪后 `PUT /api/workspace/env` 注入 `GIT_ARCHIVE_*`（勿在 `StartSandboxInstance` boot Env 传 `ENABLE_GIT_ARCHIVE`，会拖垮 `/health`）
