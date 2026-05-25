@@ -8,12 +8,13 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/** Public CCR namespace for OVC / vibecoding (see code_sandbox/一条龙.md §账号与 CCR). */
+/** Public CCR namespace for OpenVibeCoding / vibecoding (see code_sandbox/一条龙.md §账号与 CCR). */
 export const VIBECODING_PUBLIC_TCR_REGISTRY = 'ccr.ccs.tencentyun.com'
 export const VIBECODING_PUBLIC_TCR_NAMESPACE = 'tcb-sandbox-public-cbe88d'
 
 /** Repository name under public namespace (一条龙 CCR repo 名一般为 tcb-sandbox-ags；公开 ns 用团队约定名). */
-export const VIBECODING_PUBLIC_TCR_REPO = process.env.OVC_PUBLIC_TCR_REPO?.trim() || 'tcb-sandbox-public-cbe88d'
+export const VIBECODING_PUBLIC_TCR_REPO =
+  process.env.STATEFUL_PUBLIC_TCR_REPOSITORY?.trim() || 'tcb-sandbox-public-cbe88d'
 
 /** Default tag when URI has no `:tag` (一条龙格式 YYMMDD-HHMM-…-vibecoding). */
 export const VIBECODING_PUBLIC_TCR_DEFAULT_TAG =

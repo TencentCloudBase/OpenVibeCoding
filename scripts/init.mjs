@@ -882,7 +882,7 @@ ENCRYPTION_KEY=${crypto.randomBytes(32).toString('hex')}
 # Auth Providers
 NEXT_PUBLIC_AUTH_PROVIDERS=local
 
-# Workspace isolation: each task gets its own SCF sandbox instance
+# Sandbox instance mode: shared (one instance per env) | isolated (per task). Same env name as upstream main.
 WORKSPACE_ISOLATION=isolated
 
 # Rate Limiting
@@ -1004,12 +1004,14 @@ GIT_ARCHIVE_REPO=${getPreserved('GIT_ARCHIVE_REPO')}
 GIT_ARCHIVE_USER=${getPreserved('GIT_ARCHIVE_USER')}
 GIT_ARCHIVE_TOKEN=${getPreserved('GIT_ARCHIVE_TOKEN')}
 
-# ==================== Stateful Sandbox (AGS + TRW) ====================
+# ==================== Stateful Sandbox (AGS + 沙箱业务镜像) ====================
 
 # TCB_API_KEY: CloudBase console API Key (gateway data plane)
 TCB_API_KEY=${get('TCB_API_KEY')}
+ENABLE_AUTH_MODE=${get('ENABLE_AUTH_MODE', 'false')}
+# TCB_ACCESS_TOKEN=            # sit_* when ENABLE_AUTH_MODE=true
 STATEFUL_SANDBOX_IMAGE=${get('STATEFUL_SANDBOX_IMAGE', get('TCR_IMAGE'))}
-SANDBOX_INSTANCE_MODE=${get('SANDBOX_INSTANCE_MODE', 'shared')}
+WORKSPACE_ISOLATION=${get('WORKSPACE_ISOLATION', get('SANDBOX_INSTANCE_MODE', 'shared'))}
 # STATEFUL_TOOL_ID=              # debug only
 # STATEFUL_SANDBOX_ID=           # debug: pin instance
 

@@ -1,14 +1,14 @@
 /**
  * Stateful sandbox MCP client
  *
- * TRW for_vibecoding / vibecoding preset data plane.
+ * 沙箱业务镜像 for_vibecoding / vibecoding preset data plane.
  * Protocol:
  *   - PUT /api/workspace/env       inject credentials (NOT /api/session/env)
  *   - POST /api/tools/{tool}       tool execution
  *   - mcporter in vibecoding image (/opt/cloudbase-mcp)
  *
  * Shared workspace at /home/user (no scope headers).
- * Miniprogram: POST /api/jobs/miniprogram-deploy (STATEFUL_MINIPROGRAM_FEATURE=true).
+ * Miniprogram: POST /api/jobs/miniprogram-deploy (enabled by default).
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -145,8 +145,6 @@ function serializeFnCall(toolName: string, args: Record<string, unknown>): strin
 }
 
 // ─── MCP Client factory ──────────────────────────────────────────
-
-const MINIPROGRAM_FEATURE_ENABLED = (process.env.STATEFUL_MINIPROGRAM_FEATURE || '').toLowerCase() === 'true'
 
 async function resolveMiniprogramPrivateKey(
   appId: string,
@@ -398,23 +396,7 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
     }))
   }
 
-  // ── publishMiniprogram (gated by env: AGS master may not have the endpoint) ──
-  const miniprogramDegradedResponse = (extra?: Record<string, unknown>) => ({
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({
-          error: true,
-          message:
-            'Miniprogram deploy is not enabled on this AGS deployment. ' +
-            'Set STATEFUL_MINIPROGRAM_FEATURE=true once /api/jobs/miniprogram-deploy is available.',
-          ...extra,
-        }),
-      },
-    ],
-    isError: true,
-  })
-
+  // ── publishMiniprogram (沙箱业务镜像 /api/jobs/miniprogram-deploy) ──
   server.tool(
     'publishMiniprogram',
     '小程序发布/预览工具。支持预览（preview）和上传（upload）两种操作。',
@@ -427,7 +409,6 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
       robot: z.number().optional().describe('CI 机器人编号'),
     },
     async (args: Record<string, unknown>) => {
-      if (!MINIPROGRAM_FEATURE_ENABLED) return miniprogramDegradedResponse()
       try {
         return await runStatefulPublishMiniprogram(args, (p, init) => sandbox.request(p, init), getMpDeployCredentials)
       } catch (e: unknown) {
@@ -442,7 +423,6 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
     '查询小程序发布/预览任务的状态。',
     { jobId: z.string().describe('publishMiniprogram 返回的 jobId') },
     async (args: Record<string, unknown>) => {
-      if (!MINIPROGRAM_FEATURE_ENABLED) return miniprogramDegradedResponse({ jobId: args.jobId })
       try {
         return await runStatefulDeployJobStatus(args.jobId as string, (p, init) => sandbox.request(p, init))
       } catch (e: unknown) {
@@ -496,7 +476,7 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
       )
     })
 
-  // SDK-wrapped publishMiniprogram (mirrors server.tool above, gated)
+  // SDK-wrapped publishMiniprogram (mirrors server.tool above)
   sdkTools.push(
     sdkTool(
       'publishMiniprogram',
@@ -510,7 +490,6 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
         robot: z.number().optional().describe('CI 机器人编号'),
       },
       async (args: Record<string, unknown>) => {
-        if (!MINIPROGRAM_FEATURE_ENABLED) return miniprogramDegradedResponse()
         try {
           return await runStatefulPublishMiniprogram(
             args,
@@ -531,7 +510,6 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
       '查询小程序发布/预览任务的状态。',
       { jobId: z.string().describe('publishMiniprogram 返回的 jobId') },
       async (args: Record<string, unknown>) => {
-        if (!MINIPROGRAM_FEATURE_ENABLED) return miniprogramDegradedResponse({ jobId: args.jobId })
         try {
           return await runStatefulDeployJobStatus(args.jobId as string, (p, init) => sandbox.request(p, init))
         } catch (e: unknown) {
@@ -542,7 +520,7 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
     ),
   )
 
-  // ── cronTask (CRUD via OVC local DB; identical to SCF version) ──
+  // ── cronTask (CRUD via OpenVibeCoding 本地 DB; identical to SCF version) ──
   if (depsUserId) {
     sdkTools.push(
       sdkTool(
@@ -735,7 +713,7 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
   })
 
   log(
-    `[stateful-mcp] Ready. baseUrl=${sandbox.baseUrl} sandboxId=${sandbox.id} tools=${cloudbaseTools.length} miniprogram=${MINIPROGRAM_FEATURE_ENABLED}\n`,
+    `[stateful-mcp] Ready. baseUrl=${sandbox.baseUrl} sandboxId=${sandbox.id} tools=${cloudbaseTools.length} miniprogram=enabled\n`,
   )
 
   return {

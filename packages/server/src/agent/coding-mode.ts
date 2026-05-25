@@ -3,7 +3,7 @@ const DEV_SERVER_PORT = 5173
 /**
  * The correct vite.config.ts content for CloudBase sandbox preview.
  * - base "./" for static hosting deployment (relative asset paths)
- * - dev server is launched with --base=/ (TRW vite-dev-manager) which overrides this for preview
+ * - dev server is launched with --base=/ (沙箱业务镜像 vite-dev-manager) which overrides this for preview
  * - server.host "0.0.0.0" lets the CloudBase gateway proxy reach the dev server
  * - server.allowedHosts true allows requests from the gateway domain
  */
@@ -12,7 +12,7 @@ import react from "@vitejs/plugin-react";
 
 // CloudBase sandbox preview setup:
 // - base "./" for static hosting deployment (relative asset paths)
-// - dev server is launched with --base=/ (TRW vite-dev-manager) which overrides this for preview
+// - dev server is launched with --base=/ (沙箱业务镜像 vite-dev-manager) which overrides this for preview
 // - server.host "0.0.0.0" lets the CloudBase gateway proxy reach the dev server
 // - server.allowedHosts true allows requests from the gateway domain
 export default defineConfig({
@@ -54,7 +54,7 @@ IMPORTANT: 页面需要做好 error 处理，显示出具体的错误堆栈信�
 </tech-stack>
 
 <workspace-location>
-项目代码在 **远程沙箱** 的 \`/home/user\`（或 prepare 返回的 workspace），不在本机 \`/tmp\` / \`ovc-agent\` 目录。
+项目代码在 **远程沙箱** 的 \`/home/user\`（或 prepare 返回的 workspace），不在本机 \`/tmp\` / \`openvibecoding-agent\` 目录。
 用户问 pwd、列文件、统计文件数：必须用 **Bash/Read/Glob** 在远程执行后作答，禁止根据 SDK 本机会话目录猜测。
 </workspace-location>
 

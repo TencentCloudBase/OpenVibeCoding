@@ -1,6 +1,6 @@
 /**
- * Wait for TRW vite-dev-manager (vibecoding) — do not spawn a second dev server.
- * TRW master has no /api/vibecoding/status; use /preview/ports + /preview/{port}/ probe only.
+ * Wait for 沙箱业务镜像 vite-dev-manager (vibecoding) — do not spawn a second dev server.
+ * 沙箱业务镜像 master has no /api/vibecoding/status; use /preview/ports + /preview/{port}/ probe only.
  */
 
 import type { SandboxInstance } from './provider/types.js'
@@ -18,7 +18,7 @@ export interface ViteReadyResult {
 
 async function probePreviewPort(sandbox: SandboxInstance, port: number): Promise<boolean> {
   try {
-    // Hits TRW preview proxy → maybeEnsureViteDevForPreview (lazy unpack + vite start).
+    // Hits 沙箱业务镜像 preview proxy → maybeEnsureViteDevForPreview (lazy unpack + vite start).
     const res = await sandbox.request(`/preview/${port}/`, {
       method: 'GET',
       signal: AbortSignal.timeout(30_000),
@@ -49,7 +49,7 @@ function progressMessage(ports: number[], targetPort: number, probed: boolean): 
 }
 
 /**
- * Poll TRW until vite preview is reachable. Relies on ensureViteDev() started at workspace init.
+ * Poll 沙箱业务镜像 until vite preview is reachable. Relies on ensureViteDev() started at workspace init.
  */
 export async function waitForSandboxViteReady(
   sandbox: SandboxInstance,

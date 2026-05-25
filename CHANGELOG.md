@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **沙箱 infra（Stateful + TRW）**：`StatefulSandboxProvider` + `ensureStatefulTool` + TRW 数据面；移除 SCF `scf-sandbox-manager` / `sandbox-mcp-proxy`；预览经 OVC → gateway → TRW `/preview/5173/`；终端 ttyd `/preview/7681/`；镜像更新后 `stateful-tool-warmup` 轮询
+- **沙箱 infra（Stateful + 沙箱业务镜像）**：`StatefulSandboxProvider` + `ensureStatefulTool` + 沙箱业务镜像 数据面；移除 SCF `scf-sandbox-manager` / `sandbox-mcp-proxy`；预览经 OpenVibeCoding → gateway → 沙箱业务镜像 `/preview/5173/`；终端 ttyd `/preview/7681/`；镜像更新后 `stateful-tool-warmup` 轮询
 
 ### Changed
 

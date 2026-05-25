@@ -200,7 +200,7 @@ async function sandboxReadFile(sandbox: SandboxConfig, filePath: string): Promis
   }
 }
 
-/** Find SKILL.md paths under a directory via TRW /api/tools/glob. */
+/** Find SKILL.md paths under a directory via 沙箱业务镜像 /api/tools/glob. */
 async function sandboxFindSkillMdPaths(sandbox: SandboxConfig, dirPath: string): Promise<string[]> {
   try {
     const res = await fetch(`${sandbox.url}/api/tools/glob`, {

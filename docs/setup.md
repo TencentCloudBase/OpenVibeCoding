@@ -12,7 +12,7 @@
 ### 必需项
 - **Node.js 22.x**（`>=22 <23`）。`packages/server` 使用 `better-sqlite3` 与 `tsup --target node22`；更高主版本（如 26）会导致原生模块 ABI 不匹配或安装失败。根目录 `.nvmrc` 为 `22`；可用 `mise use node@22` / `nvm use`。
 - pnpm 10+
-- Docker 已安装并已启动（**stateful 分支**：本地只跑 OVC，沙箱连云端沙箱 infra + TRW，无需本机 `tcb-sandbox serve`）
+- Docker 已安装并已启动（**stateful 分支**：本地只跑 OpenVibeCoding，沙箱连云端沙箱 infra + 沙箱业务镜像，无需本机 `tcb-sandbox serve`）
 - 腾讯云账号，且已准备 CloudBase 环境
 - 可用的腾讯云 API 密钥（`SecretId` / `SecretKey`）
 - 至少一种 CodeBuddy 认证方式：
@@ -95,7 +95,7 @@ flowchart TD
 - CloudBase 相关配置（`TCB_ENV_ID`、`TCB_SECRET_ID`、`TCB_SECRET_KEY`）
 - CodeBuddy 认证配置
 - 数据库提供方配置
-- Stateful 沙箱 infra（控制面 + TRW 数据面）/ TCR 镜像配置
+- Stateful 沙箱 infra（控制面 + 沙箱业务镜像 数据面）/ TCR 镜像配置
 - 可选的 GitHub OAuth、代理配置
 
 初始化脚本会优先把 CloudBase 和服务端相关配置写入这里。
@@ -127,17 +127,25 @@ flowchart TD
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
 | `TCB_API_KEY` | 是 | gateway 数据面 Bearer（与 `TCB_ENV_ID` 配套） |
+| `ENABLE_AUTH_MODE` | 否 | 默认 `false`：`StartSandboxInstance` 使用 `AuthMode: NONE`，数据面仅 gateway 头 |
+| `TCB_ACCESS_TOKEN` | 条件 | `ENABLE_AUTH_MODE=true` 时**必填**（`sit_*`）；server 请求加 `X-Access-Token`，起实例不传 `NONE` |
 | `STATEFUL_SANDBOX_IMAGE` | 否 | 首次 `CreateSandboxTool` 或镜像漂移 reconcile；不配则用公开 TCR 默认或 `TCR_IMAGE` |
 | `TCR_IMAGE` | 否 | `pnpm setup:tcr` 写入你的命名空间 |
-| `SANDBOX_INSTANCE_MODE` | 否 | `shared` / `isolated` — 沙箱**实例**是否跨任务复用 |
-| `GIT_ARCHIVE_*` / `GIT_PERSONAL_AUTH` | 否 | 归档与 Link；实例就绪后 `PUT /api/workspace/env` 注入，见 [trw-api-alignment.md](./trw-api-alignment.md) |
-| `STATEFUL_MINIPROGRAM_FEATURE` | 否 | `true` 时启用 TRW 小程序 job API |
+| `WORKSPACE_ISOLATION` | 否 | `shared` / `isolated` — 沙箱**实例**是否跨任务复用（与 main 同名；`SANDBOX_INSTANCE_MODE` 仍可读作兼容别名） |
+| `GIT_ARCHIVE_*` / `GIT_PERSONAL_AUTH` | 否 | 归档与 Link；实例就绪后 `PUT /api/workspace/env` 注入（非 Start 时传 boot env） |
+| `STATEFUL_PUBLIC_TCR_REPOSITORY` | 否 | 公开 TCR 仓库名，默认 `tcb-sandbox-public-cbe88d` |
 
-**仅调试脚本**：`STATEFUL_TOOL_ID`、`STATEFUL_SANDBOX_ID`、`STATEFUL_GATEWAY_URL`（默认 gateway 可省略）。
+**网关**：固定 `https://{TCB_ENV_ID}.api.tcloudbasegateway.com/v1/sandbox/-`，无 env 覆盖。
+
+**数据面鉴权（两层）**：`X-Cloudbase-Authorization`（`TCB_API_KEY`）始终需要；开启 `ENABLE_AUTH_MODE` 后还需 `X-Access-Token`（`TCB_ACCESS_TOKEN`，来自 AGS `AcquireSandboxInstanceToken`）。`ENABLE_AUTH_MODE` 会通过 `PUT /api/workspace/env` 注入沙箱业务镜像（不含 token）。
+
+**小程序**：沙箱业务镜像 `/api/jobs/miniprogram-deploy` **默认开启**，无需 env 开关。
+
+**仅调试脚本**：`STATEFUL_TOOL_ID`、`STATEFUL_SANDBOX_ID`。
 
 **镜像**：须为 `ccr.ccs.tencentyun.com/...`（沙箱 infra 使用 TCR 个人版，`ImageRegistryType: personal`）。团队公开默认见 `packages/server/src/sandbox/stateful-vibecoding-image.ts`；自部署用自有命名空间推送后设 `STATEFUL_SANDBOX_IMAGE` 或跑 `pnpm setup:tcr`。勿在文档或 git 中提交 API Key / TCR 密码。
 
-### 沙箱实例模式（`SANDBOX_INSTANCE_MODE`）
+### 沙箱实例模式（`WORKSPACE_ISOLATION`）
 
 与 **`TCB_PROVISION_MODE`（用户 CloudBase 环境）** 独立，详见 [README-zh.md](../README-zh.md) 环境变量一节。
 
@@ -146,7 +154,7 @@ flowchart TD
 | `shared`（默认） | 同一支撑 `TCB_ENV_ID` 下，多任务复用沙箱 infra 上同一运行实例（`ensureSingleEnvInstance`） |
 | `isolated` | 每任务独立实例；优先复用任务上的 `sandboxId`，否则新建 |
 
-配置位置：`packages/server/.env` 的 `SANDBOX_INSTANCE_MODE`；Admin「系统设置」里的 `sandbox_instance_mode`（DB）优先级更高。改模式后**新建任务**最可靠；旧任务若 DB 里已写死 `sandboxMode` 可能仍为旧值。
+配置位置：`packages/server/.env` 的 `WORKSPACE_ISOLATION`；Admin「系统设置」里的 `sandbox_instance_mode`（DB）优先级更高。改模式后**新建任务**最可靠；旧任务若 DB 里已写死 `sandboxMode` 可能仍为旧值。
 
 ## 用户环境模式
 

@@ -46,7 +46,7 @@
 | 基础设施   | 绑定特定平台            | 腾讯云 CloudBase（DB / Storage / Functions / CDN） |
 | Agent 引擎 | 内置单一模型            | CodeBuddy + OpenCode 双引擎，模型自由切换          |
 | 环境隔离   | 用户级隔离              | shared / isolated / task 三级隔离，支持多租户      |
-| 沙箱       | 平台托管                | CloudBase AGS Stateful + TRW（TCR 镜像），gateway 数据面 |
+| 沙箱       | 平台托管                | CloudBase AGS Stateful + 沙箱业务镜像（TCR 镜像），gateway 数据面 |
 | 云资源操作 | 无 / 有限               | MCP 工具直接操作 DB、存储、函数、域名              |
 | 部署目标   | 平台内托管              | Web CDN / 微信小程序 / 自定义域名                  |
 | 人机协作   | 基础对话                | Plan 模式 + ToolConfirm 四值权限 + 内联提问表单    |
@@ -61,7 +61,7 @@
 | **双 Agent 引擎** | CodeBuddy 与 OpenCode 可选，各自独立模型列表，前端一键切换                                           |
 | **三级环境隔离**  | shared（共用）/ isolated（用户独立）/ task（独立子账号），Admin 后台热切换，无需重启                 |
 | **环境池预热**    | 预创建 CloudBase 环境 + CAM + Policy，获取延迟从分钟级降至毫秒级；池空时自动回退实时创建             |
-| **编码沙箱**      | AGS Tool/实例；TRW 工作区 `/home/user`；预览 `/preview/5173`、终端 `/preview/7681` 经 OVC 反代 |
+| **编码沙箱**      | AGS Tool/实例；沙箱业务镜像 工作区 `/home/user`；预览 `/preview/5173`、终端 `/preview/7681` 经 OpenVibeCoding 反代 |
 | **实时预览**      | 内嵌 Browser 工具栏（地址栏 / 导航 / 刷新）；HMR 热更新；预览错误自动修复反馈                        |
 | **CloudBase MCP** | 50+ 工具覆盖 DB、Storage、Functions、域名、安全规则，Agent 可直接操作云资源                          |
 | **Human-in-Loop** | 工具执行四值确认（allow / always / deny / exit）；内联提问表单，不打断对话上下文                     |
@@ -115,7 +115,9 @@
 
 ## 本地启动（最小路径）
 
-**前置**：Node **22.x**（`.nvmrc`）、pnpm 10+、CloudBase 支撑环境 + API 密钥、CodeBuddy API Key。本地不跑 TRW 容器，编码沙箱在云端 AGS + TRW。
+**前置**：Node **22.x**（`.nvmrc`）、pnpm 10+、CloudBase 支撑环境 + API 密钥、CodeBuddy 或 OpenCode API Key（`npm i -g opencode-ai`）。本地只跑 OpenVibeCoding 前后端；编码沙箱在云端 AGS + 沙箱业务镜像。
+
+**Agent**：任务可选 **CodeBuddy** 或 **OpenCode**（`opencode-acp`），二者共用同一套 AGS 沙箱与沙箱业务镜像（`BaseAgentRuntime.setupSandbox`）。
 
 ```bash
 git clone https://github.com/TencentCloudBase/OpenVibeCoding.git
@@ -130,10 +132,11 @@ pnpm dev    # Web http://localhost:5174  API http://localhost:3001/api
 | --- | --- |
 | `JWE_SECRET` / `ENCRYPTION_KEY` | 会话加密 |
 | `TCB_ENV_ID` / `TCB_SECRET_ID` / `TCB_SECRET_KEY` | 管理面 |
-| `TCB_API_KEY` | TRW 数据面 gateway |
-| `CODEBUDDY_API_KEY` | Agent |
+| `TCB_API_KEY` | 沙箱业务镜像 数据面 gateway |
+| `CODEBUDDY_API_KEY` | CodeBuddy Agent |
+| （可选）本机 `opencode` / `opencode-ai` CLI | OpenCode Agent |
 
-Tool 名 `ovc-{TCB_ENV_ID}` 自动创建/复用，勿配 `STATEFUL_TOOL_ID`。模板见 [packages/server/.env.example](packages/server/.env.example)。排障：[docs/setup.md](docs/setup.md)。
+Tool 名 `openvibecoding-{TCB_ENV_ID}` 自动创建/复用，勿配 `STATEFUL_TOOL_ID`。模板见 [packages/server/.env.example](packages/server/.env.example)。排障：[docs/setup.md](docs/setup.md)。
 
 ---
 
@@ -207,7 +210,6 @@ pnpm opencode:setup   # 配置 OpenCode provider 和模型
 ├── docs/
 │   ├── setup.md                  # setup 详解与排障
 │   ├── architecture.md           # 系统架构文档
-│   ├── trw-api-alignment.md      # OVC ↔ TRW 路由
 │   ├── cloudrun-deploy.md        # 云托管部署
 │   ├── upstream-fork.md          # 上游分叉与同步
 │   └── scf-session-sharing.md    # （历史）SCF
@@ -233,7 +235,7 @@ pnpm opencode:setup   # 配置 OpenCode provider 和模型
 | 后端    | Hono, Node.js, Drizzle ORM                             |
 | 数据库  | CloudBase DB（主），SQLite（本地回退）                 |
 | AI      | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP      |
-| Sandbox | CloudBase AGS Stateful + TRW，TCR 镜像                 |
+| Sandbox | CloudBase AGS Stateful + 沙箱业务镜像，TCR 镜像                 |
 | 认证    | JWE session, bcrypt, Arctic (OAuth)                    |
 | 持久化  | CloudBase DB, 本地 .jsonl, Git archive                 |
 | 协议    | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |

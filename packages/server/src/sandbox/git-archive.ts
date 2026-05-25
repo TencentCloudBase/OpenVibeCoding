@@ -8,6 +8,7 @@
 
 import type { SandboxInstance } from './provider/types.js'
 import { STATEFUL_WORKSPACE_ROOT } from '../lib/sandbox-config.js'
+import { buildStatefulWorkspaceAuthEnv } from './stateful-sandbox-auth.js'
 
 // ─── Types ────────────────────────────────────────────────────────
 
@@ -65,7 +66,7 @@ export function isGitArchiveConfigured(): boolean {
 }
 
 /**
- * TRW git archive vars for PUT /api/workspace/env or workspace/init `env`.
+ * 沙箱业务镜像 git archive vars for PUT /api/workspace/env or workspace/init `env`.
  * Do not pass via StartSandboxInstance CustomConfiguration.Env — boot-time
  * ENABLE_GIT_ARCHIVE blocks /health and fails AGS port binding.
  */
@@ -80,7 +81,7 @@ export function buildGitArchiveWorkspaceEnv(): Record<string, string> {
   const personal = process.env.GIT_PERSONAL_AUTH?.trim()
   if (personal) env.GIT_PERSONAL_AUTH = personal
   if (repo && token && user) env.ENABLE_GIT_ARCHIVE = 'true'
-  return env
+  return { ...env, ...buildStatefulWorkspaceAuthEnv() }
 }
 
 /** Debug-only: AGS CustomConfiguration.Env array shape. */
@@ -110,7 +111,7 @@ export async function injectGitArchiveWorkspaceEnv(sandbox: SandboxInstance): Pr
 /**
  * 将沙箱中的变更推送到 Git 归档仓库
  *
- * 通过 TRW POST /api/extend/git_push 端点执行 git 操作
+ * 通过 沙箱业务镜像 POST /api/extend/git_push 端点执行 git 操作
  *
  * @param sandbox 沙箱实例
  * @param conversationId 会话 ID（用作分支名）

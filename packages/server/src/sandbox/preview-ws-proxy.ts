@@ -1,5 +1,5 @@
 /**
- * WebSocket upgrade proxy: browser → OVC → TRW /preview/{port}/ (vite HMR).
+ * WebSocket upgrade proxy: browser → OpenVibeCoding → 沙箱业务镜像 /preview/{port}/ (vite HMR).
  */
 
 import type { IncomingMessage, Server } from 'node:http'

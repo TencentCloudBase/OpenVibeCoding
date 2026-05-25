@@ -82,8 +82,8 @@ export async function waitForSandboxHealth(
 }
 
 /**
- * @deprecated Use SandboxProvider.prepare() (TRW POST /api/workspace/init).
- * Kept for exports/tests; stateful path returns TRW workspace root immediately.
+ * @deprecated Use SandboxProvider.prepare() (沙箱业务镜像 POST /api/workspace/init).
+ * Kept for exports/tests; stateful path returns 沙箱业务镜像 workspace root immediately.
  */
 export async function initSandboxWorkspace(
   sandbox: SandboxInstance,
@@ -156,9 +156,9 @@ export async function getPublishableKey(envId: string): Promise<string> {
 }
 
 export interface BuildAppendPromptOptions {
-  /** CodeBuddy SDK session dir on the OVC host (not the user workspace). */
+  /** CodeBuddy SDK session dir on the OpenVibeCoding 服务端主机 (not the user workspace). */
   localHostCwd?: string
-  /** Bash/Read/Write/Glob/Grep are routed to the remote TRW sandbox. */
+  /** Bash/Read/Write/Glob/Grep are routed to the remote 沙箱业务镜像 sandbox. */
   remoteToolsActive?: boolean
 }
 
@@ -172,11 +172,11 @@ function buildRemoteWorkspaceSection(
 
   if (remoteActive) {
     const localLine = localHostCwd
-      ? `- **本机 SDK 会话目录** \`${localHostCwd}\`：仅用于 CodeBuddy 落盘 JSONL，**不是**用户工作区。禁止把该路径、\`/tmp\`、\`/var/folders\`、\`ovc-agent\` 说成「当前工作目录」。`
-      : `- **本机 SDK 会话目录**：仅用于 CodeBuddy 落盘，**不是**用户工作区。禁止把 \`/tmp\`、\`/var/folders\`、\`ovc-agent\` 说成「当前工作目录」。`
+      ? `- **本机 SDK 会话目录** \`${localHostCwd}\`：仅用于 CodeBuddy 落盘 JSONL，**不是**用户工作区。禁止把该路径、\`/tmp\`、\`/var/folders\`、\`openvibecoding-agent\` 说成「当前工作目录」。`
+      : `- **本机 SDK 会话目录**：仅用于 CodeBuddy 落盘，**不是**用户工作区。禁止把 \`/tmp\`、\`/var/folders\`、\`openvibecoding-agent\` 说成「当前工作目录」。`
     return `
 <remote-workspace priority="highest">
-你已连接 **CloudBase 远程沙箱**（Stateful TRW）。用户项目只存在于沙箱 VM 内。
+你已连接 **CloudBase 远程沙箱**（Stateful 沙箱业务镜像）。用户项目只存在于沙箱 VM 内。
 
 - **远程工作区根目录**：\`${sandboxCwd}\` — 所有 Bash / Read / Write / Glob / Grep 在该 VM 上执行。
 ${localLine}

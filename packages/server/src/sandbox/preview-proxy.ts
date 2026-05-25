@@ -1,5 +1,5 @@
 /**
- * Proxy browser preview requests to TRW /preview/{port}/ via stateful gateway auth headers.
+ * Proxy browser preview requests to 沙箱业务镜像 /preview/{port}/ via stateful gateway auth headers.
  */
 
 import type { Context } from 'hono'
@@ -40,7 +40,7 @@ function trwPreviewPrefix(port: string): string {
   return `/preview/${normalizePort(port)}`
 }
 
-/** Rewrite TRW vite base paths so subresources load through the OVC proxy route. */
+/** Rewrite 沙箱业务镜像 vite base paths so subresources load through OpenVibeCoding 预览反代 route. */
 export function rewritePreviewPaths(body: string, taskId: string, port: string): string {
   const from = trwPreviewPrefix(port)
   const to = proxyPreviewPrefix(taskId, port)

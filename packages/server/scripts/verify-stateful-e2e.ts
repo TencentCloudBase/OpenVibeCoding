@@ -73,15 +73,12 @@ async function trwBash(
 
 async function main() {
   const t0 = Date.now()
-  const envId = process.env.TCB_ENV_ID || 'ovc-verify-env'
-  const conversationId = `ovc-verify-${Date.now()}`
+  const envId = process.env.TCB_ENV_ID || 'openvibecoding-verify-env'
+  const conversationId = `openvibecoding-verify-${Date.now()}`
   const provider = getSandboxProvider()
 
   emit('config_tool_id', !!(process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID))
-  emit(
-    'config_gateway_url',
-    !!(process.env.STATEFUL_GATEWAY_URL?.includes('tcloudbasegateway.com') || process.env.TCB_ENV_ID),
-  )
+  emit('config_gateway_url', !!process.env.TCB_ENV_ID)
   emit('config_tcb_api_key', !!process.env.TCB_API_KEY)
 
   let inst: Awaited<ReturnType<typeof provider.acquire>>

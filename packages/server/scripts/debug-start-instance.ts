@@ -5,6 +5,7 @@ import { config } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildGitArchiveInstanceEnv } from '../src/sandbox/git-archive.js'
+import { isStatefulAuthModeEnabled } from '../src/sandbox/stateful-sandbox-auth.js'
 import { describeStatefulToolCustomConfiguration } from '../src/sandbox/ensure-stateful-tool.js'
 import {
   mergeInstanceEnvIntoToolConfiguration,
@@ -58,12 +59,13 @@ async function main() {
     } else if (toolCfg && withMergedCfg) {
       customConfiguration = pickStartCustomConfigurationFromTool(toolCfg)
     }
-    const resp = await callAgs('StartSandboxInstance', {
+    const startParam: Record<string, unknown> = {
       ToolId: toolId,
       Timeout: '30m',
-      AuthMode: 'NONE',
       ...(customConfiguration ? { CustomConfiguration: customConfiguration } : {}),
-    })
+    }
+    if (!isStatefulAuthModeEnabled()) startParam.AuthMode = 'NONE'
+    const resp = await callAgs('StartSandboxInstance', startParam)
     console.log('OK:', JSON.stringify(resp, null, 2))
   } catch (err) {
     const e = err as Error & { code?: string; requestId?: string; data?: unknown }

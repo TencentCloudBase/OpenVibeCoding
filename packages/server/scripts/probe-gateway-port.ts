@@ -12,7 +12,7 @@ import {
   buildGatewayTarget,
   buildTrwPreviewGatewayTarget,
   gatewayFetch,
-  TRW_SERVICE_PORT,
+  SANDBOX_BUSINESS_IMAGE_PORT,
 } from '../src/sandbox/stateful/gateway.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -22,6 +22,7 @@ async function main() {
   const sandboxId = process.env.SANDBOX_ID || process.env.STATEFUL_SANDBOX_ID || ''
   const envId = process.env.TCB_ENV_ID || ''
   const tcbApiKey = process.env.TCB_API_KEY || ''
+  const accessToken = process.env.TCB_ACCESS_TOKEN?.trim() || undefined
   if (!sandboxId) throw new Error('SANDBOX_ID required')
   if (!tcbApiKey || !envId) throw new Error('TCB_ENV_ID and TCB_API_KEY required')
 
@@ -37,8 +38,9 @@ async function main() {
           tcbApiKey,
           vitePort: port,
           subpath: path === '/' ? '/' : path,
+          accessToken,
         })
-      : buildGatewayTarget({ envId, sandboxId, tcbApiKey, port, path })
+      : buildGatewayTarget({ envId, sandboxId, tcbApiKey, port, path, accessToken })
 
   console.log('target.url', target.url)
   console.log('E2b-Sandbox-Port', target.port)
@@ -48,7 +50,7 @@ async function main() {
   const snippet = (await res.text()).slice(0, 200).replace(/\s+/g, ' ')
   console.log('status', res.status, 'content-type', ct, 'content-encoding', enc)
   console.log('body', snippet)
-  if (port !== TRW_SERVICE_PORT && res.status === 500) {
+  if (port !== SANDBOX_BUSINESS_IMAGE_PORT && res.status === 500) {
     console.log('\nHint: port not declared on AGS tool — run describe-stateful-tool.ts')
   }
 }

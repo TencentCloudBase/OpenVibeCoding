@@ -214,7 +214,7 @@ export interface CreateInjectCredentialsOptions {
 
 /**
  * 创建一个 injectCredentials 函数：通过 issueTempCredentials 拿凭证（永久密钥优先），
- * 调 TRW PUT /api/workspace/env 写入。
+ * 调 沙箱业务镜像 PUT /api/workspace/env 写入。
  */
 export function createInjectCredentials(opts: CreateInjectCredentialsOptions): InjectCredentialsFn {
   const { userId, envId, conversationId, sandboxFetch, workspaceFolderPaths, on401 } = opts

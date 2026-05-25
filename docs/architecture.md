@@ -2,7 +2,7 @@
 
 ## Overview
 
-CloudBase VibeCoding Platform 是一个基于腾讯云 CloudBase 的 AI 编程助手平台。用户通过 Web 界面向 Agent 下达编程指令，Agent 在 **沙箱 infra**（Stateful 控制面 + TRW 数据面 + gateway 路由）中执行代码操作，结果通过 SSE 流式返回并持久化到 CloudBase 数据库。
+CloudBase VibeCoding Platform 是一个基于腾讯云 CloudBase 的 AI 编程助手平台。用户通过 Web 界面向 Agent 下达编程指令，Agent 在 **沙箱 infra**（Stateful 控制面 + 沙箱业务镜像 数据面 + gateway 路由）中执行代码操作，结果通过 SSE 流式返回并持久化到 CloudBase 数据库。
 
 ```mermaid
 graph TB
@@ -251,7 +251,7 @@ Agent 调用子 Agent 时，`parent_tool_use_id` 从 SDK 顶层透传至前端 `
 
 ## Sandbox Module
 
-Sandbox 模块为每个 **envId** 提供 Stateful 执行环境（沙箱 infra 控制面 + TRW 数据面），任务共享同一实例上的 `/home/user` 工作区。
+Sandbox 模块为每个 **envId** 提供 Stateful 执行环境（沙箱 infra 控制面 + 沙箱业务镜像 数据面），任务共享同一实例上的 `/home/user` 工作区。
 
 ### Architecture
 
@@ -259,29 +259,29 @@ Sandbox 模块为每个 **envId** 提供 Stateful 执行环境（沙箱 infra �
 flowchart LR
     Agent["Agent Runtime"] --> Provider["StatefulSandboxProvider"]
     Provider --> SbxInfra["启动沙箱实例"]
-    SbxInfra --> TRW["TRW :9000"]
-    TRW --> FS["File System /home/user"]
-    TRW --> Bash["Bash / PTY"]
-    TRW --> Preview["/preview/5173 / 7681"]
-    TRW --> Git["Git Archive"]
+    SbxInfra --> 沙箱业务镜像["沙箱业务镜像 :9000"]
+    沙箱业务镜像 --> FS["File System /home/user"]
+    沙箱业务镜像 --> Bash["Bash / PTY"]
+    沙箱业务镜像 --> Preview["/preview/5173 / 7681"]
+    沙箱业务镜像 --> Git["Git Archive"]
     Provider --> McpClient["stateful-mcp-client"]
     McpClient --> CloudBase["CloudBase Tools"]
     McpClient --> Deploy["Deployment Tools"]
-    Web["Web UI"] --> OvcProxy["OVC preview proxy"]
+    Web["Web UI"] --> OvcProxy["OpenVibeCoding preview proxy"]
     OvcProxy --> Gateway["tcloudbasegateway.com"]
-    Gateway --> TRW
+    Gateway --> 沙箱业务镜像
 ```
 
 ### Stateful Sandbox Lifecycle
 
 1. **Ensure Tool** — `ensureStatefulTool(envId)` 为环境创建或复用沙箱 Tool 模板（`sdt-xxx`），镜像来自 `STATEFUL_SANDBOX_IMAGE` → `TCR_IMAGE` → 公开 TCR 代码默认
-2. **Acquire Instance** — `SANDBOX_INSTANCE_MODE`：`shared` 每 env 单实例；`isolated` 每 task。`StartSandboxInstance` 使用 Tool 模板（不传 boot `CustomConfiguration.Env`）；`stateful-tool-warmup` 处理镜像拉取重试
-3. **Data Plane** — `TCB_API_KEY` + `E2b-Sandbox-Id` / `E2b-Sandbox-Port: 9000` 经 gateway 访问 TRW
+2. **Acquire Instance** — `WORKSPACE_ISOLATION`：`shared` 每 env 单实例；`isolated` 每 task。`StartSandboxInstance` 使用 Tool 模板（不传 boot `CustomConfiguration.Env`）；`stateful-tool-warmup` 处理镜像拉取重试
+3. **Data Plane** — `TCB_API_KEY` + `E2b-Sandbox-Id` / `E2b-Sandbox-Port: 9000` 经 gateway 访问 沙箱业务镜像
 4. **Init Workspace** — 实例健康后 `PUT /api/workspace/env`（凭证 + 可选 `GIT_ARCHIVE_*`），`POST /api/workspace/init` 初始化 `/home/user`
-5. **Execute** — Agent 工具经 TRW `/api/tools/*`；CloudBase MCP 由 server 侧 `stateful-mcp-client` 转发
+5. **Execute** — Agent 工具经 沙箱业务镜像 `/api/tools/*`；CloudBase MCP 由 server 侧 `stateful-mcp-client` 转发
 6. **Archive** — 任务结束时 Git 归档工作区
 
-### TRW Workspace API
+### 沙箱业务镜像 Workspace API
 
 | API | Description |
 | --- | --- |
@@ -292,20 +292,20 @@ flowchart LR
 
 ### Sandbox Capabilities
 
-经 gateway 路由到 TRW（OVC 对浏览器暴露 `/api/tasks/:id/preview/:port/*` 反向代理）：
+经 gateway 路由到 沙箱业务镜像（OpenVibeCoding 对浏览器暴露 `/api/tasks/:id/preview/:port/*` 反向代理）：
 
-| Capability | TRW path | Description |
+| Capability | 沙箱业务镜像 path | Description |
 | --- | --- | --- |
 | File System | `/api/tools/read`, `write`, … | 文件读写 |
 | Bash | `/api/tools/bash` | Shell 命令执行 |
 | Web Terminal | `/preview/7681/` (ttyd) | 浏览器终端 |
 | Vite preview | `/preview/5173/` | 开发服务器（默认端口 5173） |
-| Git Push | `POST /api/extend/git_push` | 工作区推送到远端（OVC 经 workspace/env 注入 `GIT_ARCHIVE_*` / `ENABLE_GIT_ARCHIVE`） |
-| Miniprogram deploy | `POST /api/jobs/miniprogram-deploy` | 启动部署 job（TRW `ENABLE_VIBECODING`） |
+| Git Push | `POST /api/extend/git_push` | 工作区推送到远端（OpenVibeCoding 经 workspace/env 注入 `GIT_ARCHIVE_*` / `ENABLE_GIT_ARCHIVE`） |
+| Miniprogram deploy | `POST /api/jobs/miniprogram-deploy` | 启动部署 job（沙箱业务镜像 `ENABLE_VIBECODING`） |
 | Job poll | `GET /api/jobs/:jobId` | 轮询 job 状态 / 日志 |
 | Health | `/health` | 实例健康检查 |
 
-> **已移除**：旧 SCF 时代的子工作区 Scope API（`X-Scope-Id`、`/api/scope/info`、5173–5199 多端口）。`user_resources.scope` 仍指 **CloudBase 环境隔离**（shared / isolated / task），与 TRW Scope 无关。
+> **已移除**：旧 SCF 时代的子工作区 Scope API（`X-Scope-Id`、`/api/scope/info`、5173–5199 多端口）。`user_resources.scope` 仍指 **CloudBase 环境隔离**（shared / isolated / task），与 沙箱业务镜像 Scope 无关。
 
 ### MCP Tool Proxy
 
@@ -374,7 +374,7 @@ interface Artifact {
 | 微信小程序 | MCP 工具 `publishMiniprogram` | `'image'`（预览二维码）/ `'json'`（上传结果） |
 | 图片生成 | Default 模式 ImageGen tool | `'link'`（CDN URL） |
 
-小程序部署超过 60s 时 TRW 返回 HTTP 202 + `jobId`；Agent 用 `getDeployJobStatus` 轮询 `GET /api/jobs/:jobId`（OVC 经 `trw-deploy-adapter` 转成旧 envelope）。
+小程序部署超过 60s 时 沙箱业务镜像 返回 HTTP 202 + `jobId`；Agent 用 `getDeployJobStatus` 轮询 `GET /api/jobs/:jobId`（OpenVibeCoding 服务端适配层转成旧 envelope）。
 
 前端 Deployments 标签页统一渲染所有 deployment 记录，根据字段自动选择卡片样式（链接卡片 / 二维码卡片 / 通用卡片）。
 
@@ -413,7 +413,7 @@ sequenceDiagram
     participant Web
     participant Server
     participant Runtime as ACP Runtime
-    participant Sandbox as 沙箱 infra + TRW
+    participant Sandbox as 沙箱 infra + 沙箱业务镜像
     participant DB as CloudBase DB
     participant Git as Git Archive
 
@@ -455,7 +455,7 @@ sequenceDiagram
 | Backend | Hono, Node.js, Drizzle ORM |
 | Database | CloudBase DB (primary), SQLite (local fallback) |
 | AI | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP, MiMo |
-| Sandbox | 沙箱 infra（Stateful + TRW）, TCR images |
+| Sandbox | 沙箱 infra（Stateful + 沙箱业务镜像）, TCR images |
 | Auth | JWE session, bcrypt, Arctic (OAuth) |
 | Persistence | CloudBase DB, local .jsonl, Git archive |
 | Protocol | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |

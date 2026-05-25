@@ -1,7 +1,7 @@
 /**
  * Augmented tool: getDeployJobStatus
  *
- * Poll TRW: GET /api/jobs/:jobId (replaces /api/miniprogram/deploy/status)
+ * Poll 沙箱业务镜像: GET /api/jobs/:jobId (replaces /api/miniprogram/deploy/status)
  */
 
 import type { McpPolicy } from './_index.js'

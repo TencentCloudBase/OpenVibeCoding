@@ -1,7 +1,7 @@
 /**
- * TRW vibecoding miniprogram deploy HTTP client (shared by Stateful MCP + OpenCode middleware).
+ * 沙箱业务镜像 vibecoding miniprogram deploy HTTP client (shared by Stateful MCP + OpenCode middleware).
  *
- * TRW routes (ENABLE_VIBECODING):
+ * 沙箱业务镜像 routes (ENABLE_VIBECODING):
  *   POST /api/jobs/miniprogram-deploy
  *   GET  /api/jobs/:jobId
  *
@@ -35,7 +35,7 @@ function trwErrorMessage(raw: unknown, httpStatus: number): string {
   return `HTTP ${httpStatus}`
 }
 
-/** Start miniprogram deploy; adapts TRW Job / 202 body to legacy MCP envelope. */
+/** Start miniprogram deploy; adapts 沙箱业务镜像 Job / 202 body to legacy MCP envelope. */
 export async function startTrwMiniprogramDeploy(
   http: TrwHttp,
   params: MiniprogramDeployRequest,

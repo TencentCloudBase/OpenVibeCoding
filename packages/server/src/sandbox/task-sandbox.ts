@@ -129,7 +129,7 @@ export async function readFileFromSandbox(
   }
 }
 
-/** Download file bytes via TRW POST /api/tools/files_download (production TRW has no /e2b-compatible). */
+/** Download file bytes via 沙箱业务镜像 POST /api/tools/files_download (production 沙箱业务镜像 has no /e2b-compatible). */
 export async function downloadFileFromSandbox(sandbox: SandboxInstance, filePath: string): Promise<Uint8Array | null> {
   try {
     const res = await sandbox.request('/api/tools/files_download', {
@@ -168,7 +168,7 @@ export function getProvider(): SandboxProvider {
 }
 
 /**
- * @deprecated Prefer waitForSandboxViteReady — TRW vite-dev-manager owns port 5173.
+ * @deprecated Prefer waitForSandboxViteReady — 沙箱业务镜像 vite-dev-manager owns port 5173.
  */
 export async function ensureDevServerStarted(
   sandbox: SandboxInstance,

@@ -416,7 +416,7 @@ async function drainPtyOutput(baseUrl: string, headers: Record<string, string>, 
 }
 
 /**
- * 确保指定 pid 在 ptyTaskRegistry 中存在（仅内存；TRW 无 e2b Process/List）。
+ * 确保指定 pid 在 ptyTaskRegistry 中存在（仅内存；沙箱业务镜像 无 e2b Process/List）。
  */
 async function ensurePtyTask(taskId: string): Promise<PtyTask | null> {
   return ptyTaskRegistry.get(taskId) ?? null
@@ -822,7 +822,7 @@ export function overrideTools(toolMap: Map<string, any>): void {
         return cdnUrl
       }
 
-      // ── fallback：上传到沙箱 via TRW /api/tools/files_upload ──
+      // ── fallback：上传到沙箱 via 沙箱业务镜像 /api/tools/files_upload ──
       const sandboxRelPath = `generated-images/${filename}`
       const contentBase64 = Buffer.from(await blob.arrayBuffer()).toString('base64')
       const uploadRes = await fetch(`${baseUrl}/api/tools/files_upload`, {

@@ -1,7 +1,7 @@
 /**
- * TRW miniprogram deploy job adapter.
+ * 沙箱业务镜像 miniprogram deploy job adapter.
  *
- * As of the TRW route refactor (post commit f930f87), the miniprogram deploy
+ * As of the 沙箱业务镜像 route refactor (post commit f930f87), the miniprogram deploy
  * surface lives at:
  *
  *   POST /api/jobs/miniprogram-deploy   → start a job
@@ -14,7 +14,7 @@
  * legacy envelope so the MCP tool layer can stay simple and stable.
  */
 
-/** TRW Job record returned by /api/jobs/* endpoints. */
+/** 沙箱业务镜像 Job record returned by /api/jobs/* endpoints. */
 export interface TrwJob {
   jobId: string
   kind: 'miniprogram-deploy' | string

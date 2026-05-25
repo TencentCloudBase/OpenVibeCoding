@@ -1,5 +1,5 @@
 /**
- * Point an existing stateful SDT at a new container image (after TRW rebuild).
+ * Point an existing stateful SDT at a new container image (after 沙箱业务镜像 rebuild).
  *
  * Usage (from packages/server, with .env loaded):
  *   STATEFUL_TOOL_ID=sdt-xxx STATEFUL_SANDBOX_IMAGE=ccr.../tcb-sandbox-ags:app-vibecoding \

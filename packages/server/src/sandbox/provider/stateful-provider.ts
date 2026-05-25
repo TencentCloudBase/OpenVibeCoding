@@ -1,7 +1,7 @@
 /**
- * Stateful sandbox provider (CloudBase AGS control plane + TRW data plane).
+ * Stateful sandbox provider (CloudBase AGS control plane + 沙箱业务镜像 data plane).
  *
- * TRW workspace protocol:
+ * 沙箱业务镜像 workspace protocol:
  *   - PUT /api/workspace/env       inject credentials
  *   - POST /api/workspace/init     initialize workspace
  *   - GET /health                  health probe
@@ -14,7 +14,8 @@
  *       isolated: per-task instance (task sandboxId → resume/reuse, else Start).
  *   - Process cache: healthy in-memory instance per cache key (env vs task).
  *
- * Auth: TCB_API_KEY (long-lived JWT) used as X-Cloudbase-Authorization Bearer.
+ * Auth: TCB_API_KEY → X-Cloudbase-Authorization; optional TCB_ACCESS_TOKEN → X-Access-Token
+ * when ENABLE_AUTH_MODE=true (StartSandboxInstance omits AuthMode NONE).
  * Routing: E2b-Sandbox-Id + E2b-Sandbox-Port: 9000 headers route to instance.
  */
 
@@ -41,7 +42,12 @@ import { STATEFUL_WORKSPACE_ROOT } from '../../lib/sandbox-config.js'
 import { buildGitArchiveWorkspaceEnv, injectGitArchiveWorkspaceEnv } from '../git-archive.js'
 import { ensureStatefulTool, resolveStatefulGatewayUrl } from '../ensure-stateful-tool.js'
 import { startStatefulInstanceWithWarmup } from '../stateful-tool-warmup.js'
-import { buildDataPlaneHeaders, TRW_SERVICE_PORT } from '../stateful/gateway.js'
+import {
+  assertStatefulSandboxAuthConfig,
+  getTcbAccessToken,
+  isStatefulAuthModeEnabled,
+} from '../stateful-sandbox-auth.js'
+import { buildDataPlaneHeaders, SANDBOX_BUSINESS_IMAGE_PORT } from '../stateful/gateway.js'
 import { createStatefulMcpClient } from '../stateful/stateful-mcp-client.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────
@@ -55,6 +61,8 @@ const PREPARE_INIT_TIMEOUT_MS = 300_000
 
 interface StatefulRuntimeConfig {
   tcbApiKey: string
+  enableAuthMode: boolean
+  accessToken: string
   sandboxBaseUrl: string
   toolId: string
   preCreatedSandboxId: string
@@ -65,7 +73,10 @@ interface StatefulRuntimeConfig {
 }
 
 function readStatefulRuntimeConfig(envId: string, toolId: string): StatefulRuntimeConfig {
+  assertStatefulSandboxAuthConfig()
   const tcbApiKey = process.env.TCB_API_KEY || ''
+  const enableAuthMode = isStatefulAuthModeEnabled()
+  const accessToken = getTcbAccessToken()
   const sandboxBaseUrl = resolveStatefulGatewayUrl(envId)
   const preCreatedSandboxId = process.env.STATEFUL_SANDBOX_ID || ''
   const managerSecretId =
@@ -85,6 +96,8 @@ function readStatefulRuntimeConfig(envId: string, toolId: string): StatefulRunti
 
   return {
     tcbApiKey,
+    enableAuthMode,
+    accessToken,
     sandboxBaseUrl,
     toolId,
     preCreatedSandboxId,
@@ -95,6 +108,19 @@ function readStatefulRuntimeConfig(envId: string, toolId: string): StatefulRunti
   }
 }
 
+function buildStatefulDataPlaneHeaders(
+  cfg: StatefulRuntimeConfig,
+  sandboxId: string,
+  port: number = SANDBOX_BUSINESS_IMAGE_PORT,
+): Record<string, string> {
+  return buildDataPlaneHeaders({
+    tcbApiKey: cfg.tcbApiKey,
+    sandboxId,
+    port,
+    accessToken: cfg.enableAuthMode ? cfg.accessToken : undefined,
+  })
+}
+
 // ─── Instance meta bag ────────────────────────────────────────────────────
 
 interface StatefulMetaBag {
@@ -102,6 +128,8 @@ interface StatefulMetaBag {
   conversationId: string
   toolId: string
   tcbApiKey: string
+  enableAuthMode: boolean
+  accessToken: string
   sandboxMode: SandboxInstanceMode
   cacheKey: string
 }
@@ -122,13 +150,23 @@ function buildStatefulInstance(args: {
   baseUrl: string
   envId: string
   conversationId: string
-  tcbApiKey: string
+  cfg: StatefulRuntimeConfig
   sandboxMode: SandboxInstanceMode
   cacheKey: string
 }): SandboxInstance {
-  const { sandboxId, toolId, baseUrl, envId, conversationId, tcbApiKey, sandboxMode, cacheKey } = args
-  const meta: StatefulMetaBag = { envId, conversationId, toolId, tcbApiKey, sandboxMode, cacheKey }
-  const authHeaders = buildDataPlaneHeaders({ tcbApiKey, sandboxId, port: TRW_SERVICE_PORT })
+  const { sandboxId, toolId, baseUrl, envId, conversationId, cfg, sandboxMode, cacheKey } = args
+  const meta: StatefulMetaBag = {
+    envId,
+    conversationId,
+    toolId,
+    tcbApiKey: cfg.tcbApiKey,
+    enableAuthMode: cfg.enableAuthMode,
+    accessToken: cfg.accessToken,
+    sandboxMode,
+    cacheKey,
+  }
+  const authHeaders = () => buildStatefulDataPlaneHeaders(cfg, sandboxId)
+  const initialHeaders = authHeaders()
   return {
     backend: 'stateful',
     id: sandboxId,
@@ -138,16 +176,16 @@ function buildStatefulInstance(args: {
     mcpConfig: {
       type: 'http',
       url: `${baseUrl}/mcp`,
-      headers: authHeaders,
+      headers: initialHeaders,
     },
     async getAuthHeaders() {
-      return { ...authHeaders }
+      return authHeaders()
     },
     async request(p, opts) {
       return fetch(`${baseUrl}${p}`, {
         ...opts,
         headers: {
-          ...authHeaders,
+          ...authHeaders(),
           ...((opts?.headers as Record<string, string> | undefined) ?? {}),
         },
       })
@@ -157,7 +195,7 @@ function buildStatefulInstance(args: {
 
 // ─── Tool override module path ────────────────────────────────────────────
 // Stateful runtime reuses tool-override.cjs; CLI patch consumes protocol-neutral
-// payload (TRW /api/tools/* + e2b envd). Only {url, headers} differ per instance.
+// payload (沙箱业务镜像 /api/tools/* + e2b envd). Only {url, headers} differ per instance.
 
 function getStatefulToolOverridePath(): string {
   const here = path.dirname(fileURLToPath(import.meta.url))
@@ -200,15 +238,9 @@ async function callAgsManagerApi(
 }
 
 async function startStatefulInstance(cfg: StatefulRuntimeConfig, toolId: string): Promise<string> {
-  const result = (await callAgsManagerApi(
-    'StartSandboxInstance',
-    {
-      ToolId: toolId,
-      Timeout: '30m',
-      AuthMode: 'NONE',
-    },
-    cfg,
-  )) as Record<string, unknown>
+  const startParam: Record<string, unknown> = { ToolId: toolId, Timeout: '30m' }
+  if (!cfg.enableAuthMode) startParam.AuthMode = 'NONE'
+  const result = (await callAgsManagerApi('StartSandboxInstance', startParam, cfg)) as Record<string, unknown>
   const data = result?.data as Record<string, unknown> | undefined
   const instanceObj = result?.Instance as Record<string, unknown> | undefined
   const instanceId = String(result?.InstanceId || instanceObj?.InstanceId || data?.InstanceId || '') || ''
@@ -358,8 +390,8 @@ async function checkHealth(baseUrl: string, headers: Record<string, string>): Pr
   }
 }
 
-async function waitForReady(baseUrl: string, sandboxId: string, tcbApiKey: string): Promise<void> {
-  const headers = buildDataPlaneHeaders({ tcbApiKey, sandboxId, port: TRW_SERVICE_PORT })
+async function waitForReady(baseUrl: string, sandboxId: string, cfg: StatefulRuntimeConfig): Promise<void> {
+  const headers = buildStatefulDataPlaneHeaders(cfg, sandboxId)
   const start = Date.now()
   while (Date.now() - start < READY_TIMEOUT_MS) {
     if (await checkHealth(baseUrl, headers)) return
@@ -420,15 +452,11 @@ class StatefulProvider implements SandboxProvider {
         sandboxId = ensured.sandboxId
       }
       onProgress?.({ phase: 'wait_ready', message: '确认沙箱实例健康状态...\n' })
-      await waitForReady(cfg.sandboxBaseUrl, sandboxId, cfg.tcbApiKey)
+      await waitForReady(cfg.sandboxBaseUrl, sandboxId, cfg)
     }
 
     // Final health check (covers pre-created path too).
-    const headers = buildDataPlaneHeaders({
-      tcbApiKey: cfg.tcbApiKey,
-      sandboxId,
-      port: TRW_SERVICE_PORT,
-    })
+    const headers = buildStatefulDataPlaneHeaders(cfg, sandboxId)
     if (!(await checkHealth(cfg.sandboxBaseUrl, headers))) {
       throw new Error(`Sandbox ${sandboxId} not healthy at ${cfg.sandboxBaseUrl}`)
     }
@@ -439,7 +467,7 @@ class StatefulProvider implements SandboxProvider {
       baseUrl: cfg.sandboxBaseUrl,
       envId: ctx.envId,
       conversationId: ctx.conversationId,
-      tcbApiKey: cfg.tcbApiKey,
+      cfg,
       sandboxMode,
       cacheKey: key,
     })
@@ -503,7 +531,7 @@ class StatefulProvider implements SandboxProvider {
   }
 
   async release(inst: SandboxInstance, ctx: ReleaseContext): Promise<void> {
-    // AGS persistence: COS snapshot is auto-managed by TRW (periodic 60s + shutdown).
+    // AGS persistence: COS snapshot is auto-managed by 沙箱业务镜像 (periodic 60s + shutdown).
     // We only flush explicitly when the caller asks for it (rare path).
     const flushSnapshot = ctx.backendOptions?.backend === 'stateful' && ctx.backendOptions.flushSnapshot === true
     if (!flushSnapshot) return
@@ -565,7 +593,7 @@ class StatefulProvider implements SandboxProvider {
       await this.destroy(inst)
       return
     }
-    // shared: one /home/user per env instance — no per-task workspace teardown in TRW.
+    // shared: one /home/user per env instance — no per-task workspace teardown in 沙箱业务镜像.
   }
 
   // ── Optional admin helpers (not on SandboxProvider interface, but useful) ──

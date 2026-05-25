@@ -567,9 +567,9 @@ export class CloudbaseAgentService {
       .catch(() => null)
 
     const { sandboxCwd: resolvedCwd } = sandboxConfig
-    // Remote TRW workspace path (semantic only on stateful; tools run in sandbox via MCP).
+    // Remote 沙箱业务镜像 workspace path (semantic only on stateful; tools run in sandbox via MCP).
     const workspaceCwd = cwd || resolvedCwd
-    // CodeBuddy SDK runs on the OVC host — never mkdir/query against /home/user on macOS.
+    // CodeBuddy SDK runs on the OpenVibeCoding 服务端主机 — never mkdir/query against /home/user on macOS.
     const localCwd = resolveAgentHostCwd(workspaceCwd, conversationId)
     console.log(`[Agent] sandboxConfig: workspaceCwd=${workspaceCwd}, localCwd=${localCwd}, cwd=${cwd ?? '(none)'}`)
     mkdirSync(localCwd, { recursive: true })
@@ -929,7 +929,7 @@ export class CloudbaseAgentService {
     }
 
     // ── Coding mode: mark preview ready ─────────────────────────────────────
-    // TRW POST /api/workspace/init handles workspace bootstrap in the stateful provider.
+    // 沙箱业务镜像 POST /api/workspace/init handles workspace bootstrap in the stateful provider.
     //   - seedCodingTemplate: 从内置模板复制（零延迟）
     //   - ensureViteDev: 自动启动 vite dev server + crash 重启
     //   - node_modules 恢复: tar.gz 缓存 / npm install
@@ -1211,7 +1211,7 @@ export class CloudbaseAgentService {
       const publishableKey = await getPublishableKey(userContext.envId)
 
       // 构建 query 参数 - 和 tcb-headless-service buildQueryOptions 一致
-      // cwd=localCwd：仅 SDK 会话 JSONL 落盘；Bash/Read/Write 经 CODEBUDDY_TOOL_OVERRIDE 走远程 TRW。
+      // cwd=localCwd：仅 SDK 会话 JSONL 落盘；Bash/Read/Write 经 CODEBUDDY_TOOL_OVERRIDE 走远程 沙箱业务镜像。
       const appendPromptOpts = {
         remoteToolsActive: !!toolOverrideConfig,
         localHostCwd: localCwd,

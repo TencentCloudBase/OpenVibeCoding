@@ -1,6 +1,6 @@
 # CloudRun 部署（云托管）
 
-OVC 以根目录 `Dockerfile` 构建**前后端一体**容器，监听 **80**。环境变量在控制台配置，**不要**把 `packages/server/.env` 打进镜像（`.dockerignore` 已排除）。
+OpenVibeCoding 以根目录 `Dockerfile` 构建**前后端一体**容器，监听 **80**。环境变量在控制台配置，**不要**把 `packages/server/.env` 打进镜像（`.dockerignore` 已排除）。
 
 ## 前置
 
@@ -26,7 +26,7 @@ pnpm deploy:cloud
 | `NODE_ENV` | `production` |
 | `ASK_USER_BASE_URL` | 云托管公网根 URL（如 `https://xxx.run.tcloudbase.com`），**不能**用 `127.0.0.1` |
 
-其余与本地 `packages/server/.env` 同名：`TCB_*`、`TCB_API_KEY`、`CODEBUDDY_*`、可选 `GIT_ARCHIVE_*` 等。勿配置 `STATEFUL_TOOL_ID`（多副本应走 DB + `ovc-{TCB_ENV_ID}` Tool 名）。
+其余与本地 `packages/server/.env` 同名：`TCB_*`、`TCB_API_KEY`、`CODEBUDDY_*`、可选 `GIT_ARCHIVE_*` 等。勿配置 `STATEFUL_TOOL_ID`（多副本应走 DB + `openvibecoding-{TCB_ENV_ID}` Tool 名）。
 
 ## 部署后验证
 

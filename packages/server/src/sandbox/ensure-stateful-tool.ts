@@ -20,7 +20,7 @@ const DEFAULT_TOOL_ROLE_ARN = 'qcs::cam::uin/691612481:roleName/agent-sandbox'
 /** Stable AGS ToolName for a CloudBase env (AppId-unique). */
 export function statefulToolNameForEnv(envId: string): string {
   const slug = envId.replace(/[^a-zA-Z0-9-]/g, '-').slice(0, 48)
-  return `ovc-${slug || 'default'}`
+  return `openvibecoding-${slug || 'default'}`
 }
 
 function extractSandboxToolSet(resp: Record<string, unknown>): Array<Record<string, unknown>> {
@@ -65,8 +65,6 @@ async function findSandboxToolIdByName(toolName: string): Promise<string | null>
 }
 
 function resolveSandboxGatewayUrl(envId: string): string {
-  const explicit = process.env.STATEFUL_GATEWAY_URL || process.env.STATEFUL_SANDBOX_URL || ''
-  if (explicit) return explicit.replace(/\/$/, '')
   if (!envId) throw new Error('Missing envId to derive stateful sandbox gateway URL')
   return `https://${envId}.api.tcloudbasegateway.com/v1/sandbox/-`
 }

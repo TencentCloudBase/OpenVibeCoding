@@ -46,7 +46,7 @@ An open-source alternative to [Lovable](https://lovable.dev) / [v0](https://v0.d
 | Infrastructure        | Vendor-locked             | Tencent CloudBase (DB / Storage / Functions / CDN)                        |
 | Agent engine          | Single built-in model     | CodeBuddy + OpenCode dual engines, free model switching                   |
 | Environment isolation | User-level only           | shared / isolated / task three-tier isolation, multi-tenant ready         |
-| Sandbox               | Platform-managed          | CloudBase AGS Stateful + TRW (TCR images), gateway data plane              |
+| Sandbox               | Platform-managed          | CloudBase AGS Stateful + 沙箱业务镜像 (TCR images), gateway data plane              |
 | Cloud resource ops    | None / limited            | MCP tools operate DB, Storage, Functions, domains directly                |
 | Deploy targets        | Platform-hosted only      | Web CDN / WeChat Mini Program / custom domains                            |
 | Human-in-the-loop     | Basic chat                | Plan mode + four-value ToolConfirm + inline AskUser form                  |
@@ -61,7 +61,7 @@ An open-source alternative to [Lovable](https://lovable.dev) / [v0](https://v0.d
 | **Dual Agent engines**      | Choose between CodeBuddy and OpenCode, each with its own model list, one-click switch from the UI                     |
 | **Three-tier isolation**    | shared / isolated (per user) / task (per-task subaccount), hot-switchable from Admin without restart                  |
 | **Environment pool**        | Pre-created CloudBase env + CAM + Policy; acquisition latency drops from minutes to milliseconds; fallback on miss   |
-| **Coding sandbox**          | AGS tool/instance per env; TRW at `/home/user`; preview `/preview/5173`, terminal ttyd `/preview/7681` via OVC proxy |
+| **Coding sandbox**          | AGS tool/instance per env; 沙箱业务镜像 at `/home/user`; preview `/preview/5173`, terminal ttyd `/preview/7681` via OpenVibeCoding proxy |
 | **Live preview**            | Embedded browser toolbar (address bar / nav / refresh); HMR; auto-feedback loop on preview errors                    |
 | **CloudBase MCP**           | 50+ tools covering DB, Storage, Functions, domains, security rules — Agent operates cloud resources directly         |
 | **Human-in-Loop**           | Four-value tool confirmation (allow / always / deny / exit); inline AskUser form without breaking chat context        |
@@ -211,7 +211,6 @@ pnpm opencode:setup   # Configure OpenCode provider and models
 ├── docs/
 │   ├── setup.md                  # Setup walkthrough & troubleshooting
 │   ├── architecture.md           # System architecture
-│   ├── trw-api-alignment.md      # OVC ↔ TRW routes
 │   ├── cloudrun-deploy.md        # CloudRun deploy & env
 │   ├── upstream-fork.md          # Fork baseline & sync
 │   └── scf-session-sharing.md    # (legacy) SCF session sharing
@@ -237,7 +236,7 @@ pnpm opencode:setup   # Configure OpenCode provider and models
 | Backend  | Hono, Node.js, Drizzle ORM                             |
 | Database | CloudBase DB (primary), SQLite (local fallback)        |
 | AI       | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP      |
-| Sandbox  | CloudBase AGS Stateful + TRW, TCR images               |
+| Sandbox  | CloudBase AGS Stateful + 沙箱业务镜像, TCR images               |
 | Auth     | JWE session, bcrypt, Arctic (OAuth)                    |
 | Storage  | CloudBase DB, local .jsonl, Git archive                |
 | Protocol | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |

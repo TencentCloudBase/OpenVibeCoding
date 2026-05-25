@@ -1,5 +1,5 @@
 /**
- * Sandbox config — TRW workspace root + instance isolation mode (shared | isolated).
+ * Sandbox config — 沙箱业务镜像 workspace root + instance isolation mode (shared | isolated).
  */
 
 import os from 'node:os'
@@ -7,7 +7,7 @@ import path from 'node:path'
 import { getDb } from '../db/index.js'
 import { getProvisionMode, type ProvisionMode } from './provision-config.js'
 
-/** TRW vibecoding preset workspace root (flat project tree). */
+/** 沙箱业务镜像 vibecoding preset workspace root (flat project tree). */
 export const STATEFUL_WORKSPACE_ROOT = '/home/user'
 
 export type SandboxInstanceMode = 'shared' | 'isolated'
@@ -47,12 +47,12 @@ export function normalizeSandboxCwd(cwd: string | null | undefined): string {
 
 /**
  * Host path for CodeBuddy SDK session JSONL (hash(cwd) under ~/.codebuddy/projects).
- * TRW workspace is /home/user on the sandbox VM; the SDK must not use that path on macOS.
+ * 沙箱业务镜像 workspace is /home/user on the sandbox VM; the SDK must not use that path on macOS.
  * Keep in sync with CloudbaseAgentService query({ cwd }).
  */
 export function resolveAgentHostCwd(workspaceCwd: string, conversationId: string): string {
   if (workspaceCwd === STATEFUL_WORKSPACE_ROOT || workspaceCwd.startsWith('/home/user')) {
-    return path.join(os.tmpdir(), 'ovc-agent', conversationId)
+    return path.join(os.tmpdir(), 'openvibecoding-agent', conversationId)
   }
   return workspaceCwd
 }
@@ -65,14 +65,16 @@ export function resolveSandboxConfig(params: ResolveParams): SandboxConfig {
 
 /**
  * Default instance mode for new tasks (before per-task override).
- * Priority: DB `sandbox_instance_mode` → env `SANDBOX_INSTANCE_MODE` → provision-aware builtin.
+ * Priority: DB `sandbox_instance_mode` → env `WORKSPACE_ISOLATION` → provision-aware builtin.
  */
 export async function resolveSandboxInstanceMode(): Promise<{
   value: SandboxInstanceMode
   source: SandboxInstanceModeSource
   envDefault: SandboxInstanceMode
 }> {
-  const envDefault = normalizeSandboxMode(process.env.SANDBOX_INSTANCE_MODE || BUILTIN_DEFAULT)
+  const envIsolation =
+    process.env.WORKSPACE_ISOLATION || process.env.SANDBOX_INSTANCE_MODE || ''
+  const envDefault = normalizeSandboxMode(envIsolation || BUILTIN_DEFAULT)
 
   try {
     const setting = await getDb().settings.findSystemSetting('sandbox_instance_mode')
@@ -83,7 +85,7 @@ export async function resolveSandboxInstanceMode(): Promise<{
     // DB unavailable
   }
 
-  if (process.env.SANDBOX_INSTANCE_MODE) {
+  if (envIsolation) {
     return { value: envDefault, source: 'env', envDefault }
   }
 

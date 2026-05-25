@@ -1,5 +1,5 @@
 /**
- * Web terminal via TRW ttyd — virtual port 7681, proxied as /api/tasks/:id/preview/7681/.
+ * Web terminal via 沙箱业务镜像 ttyd — virtual port 7681, proxied as /api/tasks/:id/preview/7681/.
  */
 
 import { forwardRef, useImperativeHandle } from 'react'

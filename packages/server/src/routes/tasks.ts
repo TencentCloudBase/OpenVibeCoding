@@ -2396,7 +2396,7 @@ tasksRouter.get('/:taskId/sandbox-health', requireUserEnv, async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// GET /:taskId/preview-health — dev server via TRW GET /preview/ports
+// GET /:taskId/preview-health — dev server via 沙箱业务镜像 GET /preview/ports
 // ---------------------------------------------------------------------------
 
 tasksRouter.get('/:taskId/preview-health', requireUserEnv, async (c) => {
@@ -2757,7 +2757,7 @@ tasksRouter.get('/:taskId/preview-url', requireUserEnv, async (c) => {
         }
       }
 
-      await emit('progress', '正在等待 TRW Vite 开发服务器就绪...')
+      await emit('progress', '正在等待 沙箱业务镜像 Vite 开发服务器就绪...')
       const viteReady = await waitForSandboxViteReady(sandbox, {
         port: STATEFUL_DEFAULT_VITE_PORT,
         maxWaitMs: 120_000,
@@ -2779,7 +2779,7 @@ tasksRouter.get('/:taskId/preview-url', requireUserEnv, async (c) => {
         previewBase = `${sandbox!.baseUrl}/preview`
       }
 
-      // Stateful: browser cannot attach gateway auth headers — proxy via OVC.
+      // Stateful: browser cannot attach gateway auth headers — 经 OpenVibeCoding 反代.
       const gatewayUrl = `/api/tasks/${taskId}/preview/${port}/`
       await emit('ready', 'Dev server ready', { gatewayUrl, port })
     } catch (err) {
@@ -2819,7 +2819,7 @@ tasksRouter.get('/:taskId/preview-errors', requireUserEnv, async (c) => {
       return c.json({ ok: true, buildErrors: [], runtimeErrors: [] })
     }
 
-    // 1) TRW GET /preview/ports — no vite → no errors
+    // 1) 沙箱业务镜像 GET /preview/ports — no vite → no errors
     let vitePort: number | null = null
     try {
       const portsRes = await sandbox.request('/preview/ports', {
@@ -2837,7 +2837,7 @@ tasksRouter.get('/:taskId/preview-errors', requireUserEnv, async (c) => {
       return c.json({ ok: true, buildErrors: [], runtimeErrors: [] })
     }
 
-    // 2) Same path as preview iframe: TRW /preview/{port}/__dev_errors via gateway auth
+    // 2) Same path as preview iframe: 沙箱业务镜像 /preview/{port}/__dev_errors via gateway auth
     const authHeaders = await sandbox.getAuthHeaders()
     const devErrorsUrl = `${sandbox.baseUrl}/preview/${vitePort}/__dev_errors`
     const res = await fetch(devErrorsUrl, {

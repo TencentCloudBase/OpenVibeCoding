@@ -1,7 +1,7 @@
 /**
  * Augmented tool: publishMiniprogram
  *
- * Calls TRW vibecoding jobs API:
+ * Calls 沙箱业务镜像 vibecoding jobs API:
  *   POST /api/jobs/miniprogram-deploy
  * Poll via getDeployJobStatus → GET /api/jobs/:jobId
  */
