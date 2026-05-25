@@ -7,7 +7,8 @@
  *   - POST /api/tools/{tool}       tool execution
  *   - mcporter in vibecoding image (/opt/cloudbase-mcp)
  *
- * Shared workspace at /home/user (no scope headers). Miniprogram jobs: STATEFUL_MINIPROGRAM_FEATURE.
+ * Shared workspace at /home/user (no scope headers).
+ * Miniprogram: POST /api/jobs/miniprogram-deploy (STATEFUL_MINIPROGRAM_FEATURE=true).
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -19,7 +20,13 @@ import { nanoid } from 'nanoid'
 import cron from 'node-cron'
 
 import type { McpClientBundle, McpDeps } from '../provider/types.js'
-import { adaptDeployJobStatus, adaptMiniprogramDeployStart } from '../trw-deploy-adapter.js'
+import { buildGitArchiveWorkspaceEnv } from '../git-archive.js'
+import {
+  miniprogramStartToJson,
+  pollTrwMiniprogramJob,
+  startTrwMiniprogramDeploy,
+  type MiniprogramDeployRequest,
+} from '../trw-miniprogram-client.js'
 import { getDb } from '../../db/index.js'
 import { scheduleTask, unscheduleTask } from '../../services/cron-scheduler.js'
 
@@ -141,6 +148,64 @@ function serializeFnCall(toolName: string, args: Record<string, unknown>): strin
 
 const MINIPROGRAM_FEATURE_ENABLED = (process.env.STATEFUL_MINIPROGRAM_FEATURE || '').toLowerCase() === 'true'
 
+async function resolveMiniprogramPrivateKey(
+  appId: string,
+  getMpDeployCredentials: McpDeps['getMpDeployCredentials'],
+): Promise<string | undefined> {
+  if (!getMpDeployCredentials) return undefined
+  const creds = await getMpDeployCredentials(appId)
+  return creds?.privateKey
+}
+
+function mcpTextPayload(text: string, isError = false) {
+  return isError
+    ? { content: [{ type: 'text' as const, text }], isError: true as const }
+    : { content: [{ type: 'text' as const, text }] }
+}
+
+async function runStatefulPublishMiniprogram(
+  args: Record<string, unknown>,
+  http: (path: string, init?: RequestInit) => Promise<Response>,
+  getMpDeployCredentials: McpDeps['getMpDeployCredentials'],
+) {
+  const appId = args.appId as string
+  const privateKey = await resolveMiniprogramPrivateKey(appId, getMpDeployCredentials)
+  if (!privateKey) {
+    return mcpTextPayload(
+      JSON.stringify({
+        error: true,
+        message: `未找到 appId ${appId} 的部署密钥，请先在小程序管理中关联该 appId`,
+      }),
+      true,
+    )
+  }
+
+  const req: MiniprogramDeployRequest = {
+    appid: appId,
+    privateKey,
+    action: args.action as 'preview' | 'upload',
+    projectPath: args.projectPath as string,
+    version: args.version as string | undefined,
+    description: args.description as string | undefined,
+    robot: args.robot as number | undefined,
+  }
+
+  const outcome = await startTrwMiniprogramDeploy(http, req)
+  const text = miniprogramStartToJson(outcome)
+  if (!outcome.ok) return mcpTextPayload(text, true)
+  if (outcome.envelope.async) return mcpTextPayload(text)
+  if (!outcome.envelope.success) return mcpTextPayload(text, true)
+  return mcpTextPayload(text)
+}
+
+async function runStatefulDeployJobStatus(
+  jobId: string,
+  http: (path: string, init?: RequestInit) => Promise<Response>,
+) {
+  const polled = await pollTrwMiniprogramJob(http, jobId)
+  return mcpTextPayload(JSON.stringify(polled.body ?? { error: true, status: polled.httpStatus }))
+}
+
 export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientBundle> {
   const {
     sandbox,
@@ -186,6 +251,7 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
         TENCENTCLOUD_SESSIONTOKEN: creds.sessionToken ?? '',
         INTEGRATION_IDE: 'codebuddy',
         WORKSPACE_FOLDER_PATHS: workspaceFolderPaths,
+        ...buildGitArchiveWorkspaceEnv(),
       }),
     })
     if (res.status === 401 || res.status === 403) throw new AuthRequiredError(res.status)
@@ -363,93 +429,10 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
     async (args: Record<string, unknown>) => {
       if (!MINIPROGRAM_FEATURE_ENABLED) return miniprogramDegradedResponse()
       try {
-        let privateKey: string | undefined
-        const appId = args.appId as string
-        if (getMpDeployCredentials) {
-          const creds = await getMpDeployCredentials(appId)
-          if (creds) privateKey = creds.privateKey
-        }
-        if (!privateKey) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({
-                  error: true,
-                  message: `未找到 appId ${appId} 的部署密钥，请先在小程序管理中关联该 appId`,
-                }),
-              },
-            ],
-            isError: true,
-          }
-        }
-        const res = await sandbox.request('/api/jobs/miniprogram-deploy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            appid: appId,
-            privateKey,
-            action: args.action,
-            projectPath: args.projectPath,
-            version: args.version,
-            description: args.description,
-            robot: args.robot,
-          }),
-          signal: AbortSignal.timeout(120_000),
-        })
-        const rawBody = (await res.json().catch(() => null)) as unknown
-        if (!res.ok && res.status !== 202) {
-          const r = (rawBody ?? {}) as Record<string, unknown>
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({
-                  error: true,
-                  status: res.status,
-                  message: (r.error as string | undefined) || (r.message as string | undefined) || `HTTP ${res.status}`,
-                }),
-              },
-            ],
-            isError: true,
-          }
-        }
-        const body = adaptMiniprogramDeployStart(res.status, rawBody)
-        if (body.async) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({
-                  async: true,
-                  jobId: body.jobId,
-                  message: '部署仍在进行中，请稍后使用 getDeployJobStatus 工具查询结果',
-                }),
-              },
-            ],
-          }
-        }
-        if (!body.success) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({
-                  error: true,
-                  message: body.error || (body.result as { errMsg?: string } | undefined)?.errMsg || 'Deploy failed',
-                  result: body.result,
-                }),
-              },
-            ],
-            isError: true,
-          }
-        }
-        return { content: [{ type: 'text' as const, text: JSON.stringify(body) }] }
-      } catch (e: any) {
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: true, message: e.message }) }],
-          isError: true,
-        }
+        return await runStatefulPublishMiniprogram(args, (p, init) => sandbox.request(p, init), getMpDeployCredentials)
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e)
+        return mcpTextPayload(JSON.stringify({ error: true, message }), true)
       }
     },
   )
@@ -461,19 +444,10 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
     async (args: Record<string, unknown>) => {
       if (!MINIPROGRAM_FEATURE_ENABLED) return miniprogramDegradedResponse({ jobId: args.jobId })
       try {
-        const res = await sandbox.request(`/api/jobs/${encodeURIComponent(args.jobId as string)}`, {
-          signal: AbortSignal.timeout(30_000),
-        })
-        const rawBody = (await res.json().catch(() => null)) as unknown
-        const body = res.ok && rawBody ? adaptDeployJobStatus(rawBody) : { error: true, status: res.status }
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify(body) }],
-        }
-      } catch (e: any) {
-        return {
-          content: [{ type: 'text' as const, text: JSON.stringify({ error: true, message: e.message }) }],
-          isError: true,
-        }
+        return await runStatefulDeployJobStatus(args.jobId as string, (p, init) => sandbox.request(p, init))
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e)
+        return mcpTextPayload(JSON.stringify({ error: true, message }), true)
       }
     },
   )
@@ -538,48 +512,14 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
       async (args: Record<string, unknown>) => {
         if (!MINIPROGRAM_FEATURE_ENABLED) return miniprogramDegradedResponse()
         try {
-          let privateKey: string | undefined
-          const appId = args.appId as string
-          if (getMpDeployCredentials) {
-            const creds = await getMpDeployCredentials(appId)
-            if (creds) privateKey = creds.privateKey
-          }
-          if (!privateKey) {
-            return {
-              content: [
-                {
-                  type: 'text' as const,
-                  text: JSON.stringify({ error: true, message: `未找到 appId ${appId} 的部署密钥` }),
-                },
-              ],
-              isError: true,
-            }
-          }
-          const res = await sandbox.request('/api/jobs/miniprogram-deploy', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              appid: appId,
-              privateKey,
-              action: args.action,
-              projectPath: args.projectPath,
-              version: args.version,
-              description: args.description,
-              robot: args.robot,
-            }),
-            signal: AbortSignal.timeout(120_000),
-          })
-          const rawBody = (await res.json().catch(() => null)) as unknown
-          if (!res.ok && res.status !== 202) {
-            return {
-              content: [{ type: 'text' as const, text: JSON.stringify({ error: true, status: res.status }) }],
-              isError: true,
-            }
-          }
-          const body = adaptMiniprogramDeployStart(res.status, rawBody)
-          return { content: [{ type: 'text' as const, text: JSON.stringify(body) }] }
-        } catch (e: any) {
-          return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true }
+          return await runStatefulPublishMiniprogram(
+            args,
+            (p, init) => sandbox.request(p, init),
+            getMpDeployCredentials,
+          )
+        } catch (e: unknown) {
+          const message = e instanceof Error ? e.message : String(e)
+          return mcpTextPayload(JSON.stringify({ error: true, message }), true)
         }
       },
     ),
@@ -593,16 +533,10 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
       async (args: Record<string, unknown>) => {
         if (!MINIPROGRAM_FEATURE_ENABLED) return miniprogramDegradedResponse({ jobId: args.jobId })
         try {
-          const res = await sandbox.request(`/api/jobs/${encodeURIComponent(args.jobId as string)}`, {
-            signal: AbortSignal.timeout(30_000),
-          })
-          const rawBody = (await res.json().catch(() => null)) as unknown
-          const body = res.ok && rawBody ? adaptDeployJobStatus(rawBody) : { error: true, status: res.status }
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(body) }],
-          }
-        } catch (e: any) {
-          return { content: [{ type: 'text' as const, text: `Error: ${e.message}` }], isError: true }
+          return await runStatefulDeployJobStatus(args.jobId as string, (p, init) => sandbox.request(p, init))
+        } catch (e: unknown) {
+          const message = e instanceof Error ? e.message : String(e)
+          return mcpTextPayload(JSON.stringify({ error: true, message }), true)
         }
       },
     ),

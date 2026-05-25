@@ -1050,7 +1050,7 @@ export function TaskChat({
                         {!readOnly &&
                           isLatestGroup &&
                           isLatestMessage &&
-                          isStreamingResponse &&
+                          (isStreamingResponse || isSending) &&
                           agentPhase?.phase &&
                           agentPhase.phase !== 'idle' && (
                             <div className="px-2 pb-1">
@@ -1064,7 +1064,13 @@ export function TaskChat({
                           ) &&
                           (task.status === 'processing' || task.status === 'pending') ? (
                             <div className="opacity-50">
-                              <div className="italic">Generating response...</div>
+                              {agentPhase?.phase &&
+                              agentPhase.phase !== 'idle' &&
+                              !readOnly &&
+                              isLatestGroup &&
+                              isLatestMessage ? null : (
+                                <div className="italic">Generating response...</div>
+                              )}
                               <div className="text-right font-mono opacity-70 mt-1">
                                 {formatDuration(group.userMessage.createdAt)}
                               </div>

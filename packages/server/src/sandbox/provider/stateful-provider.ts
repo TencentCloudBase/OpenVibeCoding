@@ -38,6 +38,7 @@ import type {
   ToolOverrideHosting,
 } from './types.js'
 import { STATEFUL_WORKSPACE_ROOT } from '../../lib/sandbox-config.js'
+import { buildGitArchiveWorkspaceEnv, injectGitArchiveWorkspaceEnv } from '../git-archive.js'
 import { ensureStatefulTool, resolveStatefulGatewayUrl } from '../ensure-stateful-tool.js'
 import { startStatefulInstanceWithWarmup } from '../stateful-tool-warmup.js'
 import { buildDataPlaneHeaders, TRW_SERVICE_PORT } from '../stateful/gateway.js'
@@ -443,6 +444,12 @@ class StatefulProvider implements SandboxProvider {
       cacheKey: key,
     })
 
+    try {
+      await injectGitArchiveWorkspaceEnv(inst)
+    } catch (err) {
+      console.warn('[StatefulProvider] Git archive workspace env injection failed:', (err as Error).message)
+    }
+
     this.instanceCache.set(key, inst)
     onProgress?.({ phase: 'ready', message: '沙箱已就绪\n' })
     return inst
@@ -473,6 +480,7 @@ class StatefulProvider implements SandboxProvider {
             ...(ctx.credentials.sessionToken ? { TENCENTCLOUD_SESSIONTOKEN: ctx.credentials.sessionToken } : {}),
             INTEGRATION_IDE: 'codebuddy',
             WORKSPACE_FOLDER_PATHS: ctx.workspaceHint || STATEFUL_WORKSPACE_ROOT,
+            ...buildGitArchiveWorkspaceEnv(),
           },
         }),
         signal: AbortSignal.timeout(PREPARE_INIT_TIMEOUT_MS),

@@ -18,7 +18,12 @@ import type {
 import { archiveToGit } from '../sandbox/git-archive.js'
 import { getCodingSystemPrompt } from './coding-mode.js'
 import { getDb } from '../db/index.js'
-import { STATEFUL_WORKSPACE_ROOT, resolveSandboxConfig, backfillSandboxConfig } from '../lib/sandbox-config.js'
+import {
+  STATEFUL_WORKSPACE_ROOT,
+  resolveSandboxConfig,
+  backfillSandboxConfig,
+  resolveAgentHostCwd,
+} from '../lib/sandbox-config.js'
 import { decrypt } from '../lib/crypto.js'
 import { encryptJWE } from '../lib/session.js'
 import type { AgentCallbackMessage, AgentOptions, CodeBuddyMessage, ExtendedSessionUpdate } from '@coder/shared'
@@ -565,10 +570,7 @@ export class CloudbaseAgentService {
     // Remote TRW workspace path (semantic only on stateful; tools run in sandbox via MCP).
     const workspaceCwd = cwd || resolvedCwd
     // CodeBuddy SDK runs on the OVC host — never mkdir/query against /home/user on macOS.
-    const localCwd =
-      workspaceCwd === STATEFUL_WORKSPACE_ROOT || workspaceCwd.startsWith('/home/user')
-        ? path.join(os.tmpdir(), 'ovc-agent', conversationId)
-        : workspaceCwd
+    const localCwd = resolveAgentHostCwd(workspaceCwd, conversationId)
     console.log(`[Agent] sandboxConfig: workspaceCwd=${workspaceCwd}, localCwd=${localCwd}, cwd=${cwd ?? '(none)'}`)
     mkdirSync(localCwd, { recursive: true })
 
@@ -787,10 +789,7 @@ export class CloudbaseAgentService {
       wrappedCallback({ type: 'agent_phase', phase, phaseToolName: toolName })
     }
 
-    // 首个 phase:准备阶段(沙箱启动、工作空间初始化、历史恢复全部发生在 query() 之前)
-    emitPhase('preparing')
-
-    // 沙箱子阶段 → emitPhase('preparing', 'sandbox:xxx') 桥接
+    // 沙箱子阶段 → emitPhase('preparing', 'sandbox:xxx') 桥接（勿先发无 toolName 的 preparing，否则会盖住复用/启动等细粒度文案）
     // 让前端 AgentStatusIndicator 能在长耗时的沙箱创建流程中持续看到细粒度进度
     const sandboxProgressBridge: SandboxProgressCallback = ({ phase }) => {
       emitPhase('preparing', `sandbox:${phase}`)
@@ -1100,7 +1099,7 @@ export class CloudbaseAgentService {
         conversationId,
         userContext.envId,
         userContext.userId,
-        workspaceCwd,
+        localCwd,
       )
       historicalMessages = restored.messages
       lastRecordId = restored.lastRecordId
@@ -1212,7 +1211,11 @@ export class CloudbaseAgentService {
       const publishableKey = await getPublishableKey(userContext.envId)
 
       // 构建 query 参数 - 和 tcb-headless-service buildQueryOptions 一致
-      // 注意: cwd 必须是本地路径, 即使沙箱启用. 沙箱只提供 MCP 工具, agent 进程在本地运行.
+      // cwd=localCwd：仅 SDK 会话 JSONL 落盘；Bash/Read/Write 经 CODEBUDDY_TOOL_OVERRIDE 走远程 TRW。
+      const appendPromptOpts = {
+        remoteToolsActive: !!toolOverrideConfig,
+        localHostCwd: localCwd,
+      }
 
       // 多模态 prompt：有图片时构建 ContentBlock[] 作为 UserMessage，否则直接用字符串
       let queryPrompt: string | any
@@ -1257,8 +1260,22 @@ export class CloudbaseAgentService {
             append: isCodingMode
               ? getCodingSystemPrompt(userContext.envId, publishableKey) +
                 '\n\n' +
-                buildAppendPrompt(workspaceCwd, conversationId, userContext.envId, sandboxConfig.sandboxMode, true)
-              : buildAppendPrompt(workspaceCwd, conversationId, userContext.envId, sandboxConfig.sandboxMode, false),
+                buildAppendPrompt(
+                  workspaceCwd,
+                  conversationId,
+                  userContext.envId,
+                  sandboxConfig.sandboxMode,
+                  true,
+                  appendPromptOpts,
+                )
+              : buildAppendPrompt(
+                  workspaceCwd,
+                  conversationId,
+                  userContext.envId,
+                  sandboxConfig.sandboxMode,
+                  false,
+                  appendPromptOpts,
+                ),
           },
           mcpServers,
           abortController,
@@ -1896,7 +1913,7 @@ export class CloudbaseAgentService {
           userContext.userId,
           historicalMessages,
           lastRecordId,
-          workspaceCwd,
+          localCwd,
           assistantMessageId,
           isResumeFromInterrupt,
           preSavedUserRecordId,

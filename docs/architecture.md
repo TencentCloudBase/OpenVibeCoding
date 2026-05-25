@@ -300,7 +300,9 @@ flowchart LR
 | Bash | `/api/tools/bash` | Shell 命令执行 |
 | Web Terminal | `/preview/7681/` (ttyd) | 浏览器终端 |
 | Vite preview | `/preview/5173/` | 开发服务器（默认端口 5173） |
-| Git Push | `POST /api/extend/git_push` | 工作区推送到远端（`ENABLE_GIT_ARCHIVE`） |
+| Git Push | `POST /api/extend/git_push` | 工作区推送到远端（TRW `ENABLE_GIT_ARCHIVE` + OVC `GIT_ARCHIVE_*`） |
+| Miniprogram deploy | `POST /api/jobs/miniprogram-deploy` | 启动部署 job（TRW `ENABLE_VIBECODING`） |
+| Job poll | `GET /api/jobs/:jobId` | 轮询 job 状态 / 日志 |
 | Health | `/health` | 实例健康检查 |
 
 > **已移除**：旧 SCF 时代的子工作区 Scope API（`X-Scope-Id`、`/api/scope/info`、5173–5199 多端口）。`user_resources.scope` 仍指 **CloudBase 环境隔离**（shared / isolated / task），与 TRW Scope 无关。
@@ -372,7 +374,7 @@ interface Artifact {
 | 微信小程序 | MCP 工具 `publishMiniprogram` | `'image'`（预览二维码）/ `'json'`（上传结果） |
 | 图片生成 | Default 模式 ImageGen tool | `'link'`（CDN URL） |
 
-小程序部署超过 60s 时接口异步返回 `{ async: true, jobId }`，客户端轮询 `GET /api/miniprogram/deploy/:jobId` 获取实时构建日志。
+小程序部署超过 60s 时 TRW 返回 HTTP 202 + `jobId`；Agent 用 `getDeployJobStatus` 轮询 `GET /api/jobs/:jobId`（OVC 经 `trw-deploy-adapter` 转成旧 envelope）。
 
 前端 Deployments 标签页统一渲染所有 deployment 记录，根据字段自动选择卡片样式（链接卡片 / 二维码卡片 / 通用卡片）。
 

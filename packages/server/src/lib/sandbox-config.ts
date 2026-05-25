@@ -2,6 +2,8 @@
  * Sandbox config — TRW workspace root + instance isolation mode (shared | isolated).
  */
 
+import os from 'node:os'
+import path from 'node:path'
 import { getDb } from '../db/index.js'
 import { getProvisionMode, type ProvisionMode } from './provision-config.js'
 
@@ -41,6 +43,18 @@ export function isLegacyScfSandboxCwd(cwd: string | null | undefined): boolean {
 export function normalizeSandboxCwd(cwd: string | null | undefined): string {
   if (!cwd || isLegacyScfSandboxCwd(cwd)) return STATEFUL_WORKSPACE_ROOT
   return cwd
+}
+
+/**
+ * Host path for CodeBuddy SDK session JSONL (hash(cwd) under ~/.codebuddy/projects).
+ * TRW workspace is /home/user on the sandbox VM; the SDK must not use that path on macOS.
+ * Keep in sync with CloudbaseAgentService query({ cwd }).
+ */
+export function resolveAgentHostCwd(workspaceCwd: string, conversationId: string): string {
+  if (workspaceCwd === STATEFUL_WORKSPACE_ROOT || workspaceCwd.startsWith('/home/user')) {
+    return path.join(os.tmpdir(), 'ovc-agent', conversationId)
+  }
+  return workspaceCwd
 }
 
 export function resolveSandboxConfig(params: ResolveParams): SandboxConfig {

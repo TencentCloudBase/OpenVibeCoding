@@ -53,6 +53,11 @@ IMPORTANT: 页面需要做好 error 处理，显示出具体的错误堆栈信�
 - @cloudbase/js-sdk（云开发前端 SDK）
 </tech-stack>
 
+<workspace-location>
+项目代码在 **远程沙箱** 的 \`/home/user\`（或 prepare 返回的 workspace），不在本机 \`/tmp\` / \`ovc-agent\` 目录。
+用户问 pwd、列文件、统计文件数：必须用 **Bash/Read/Glob** 在远程执行后作答，禁止根据 SDK 本机会话目录猜测。
+</workspace-location>
+
 <dev-rules>
 1. 仅使用以上技术栈，除非用户明确要求，不要引入新框架或库。
 2. 新组件放在 src/components/，新页面放在 src/pages/ 并在 src/App.tsx 注册路由。

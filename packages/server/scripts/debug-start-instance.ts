@@ -4,6 +4,12 @@
 import { config } from 'dotenv'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { buildGitArchiveInstanceEnv } from '../src/sandbox/git-archive.js'
+import { describeStatefulToolCustomConfiguration } from '../src/sandbox/ensure-stateful-tool.js'
+import {
+  mergeInstanceEnvIntoToolConfiguration,
+  pickStartCustomConfigurationFromTool,
+} from '../src/sandbox/stateful-custom-configuration.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(here, '../.env') })
@@ -38,12 +44,25 @@ async function main() {
   console.log('=== Tool CustomConfiguration ===')
   console.log(JSON.stringify(tool?.CustomConfiguration, null, 2))
 
-  console.log('\n=== StartSandboxInstance ===')
+  const withGitEnv = process.env.WITH_GIT_ENV === '1'
+  const withMergedCfg = process.env.WITH_MERGED_CFG === '1'
+  const instanceEnv = buildGitArchiveInstanceEnv()
+  const toolCfg = withGitEnv || withMergedCfg ? await describeStatefulToolCustomConfiguration(toolId) : null
+  const mode = withGitEnv ? '(merged GIT_ARCHIVE Env)' : withMergedCfg ? '(merged template, no Env)' : '(plain)'
+  console.log('\n=== StartSandboxInstance ===', mode)
+  if (withGitEnv) console.log('Env keys:', instanceEnv.map((e) => e.Name).join(', '))
   try {
+    let customConfiguration: Record<string, unknown> | undefined
+    if (toolCfg && withGitEnv && instanceEnv.length > 0) {
+      customConfiguration = mergeInstanceEnvIntoToolConfiguration(toolCfg, instanceEnv)
+    } else if (toolCfg && withMergedCfg) {
+      customConfiguration = pickStartCustomConfigurationFromTool(toolCfg)
+    }
     const resp = await callAgs('StartSandboxInstance', {
       ToolId: toolId,
       Timeout: '30m',
       AuthMode: 'NONE',
+      ...(customConfiguration ? { CustomConfiguration: customConfiguration } : {}),
     })
     console.log('OK:', JSON.stringify(resp, null, 2))
   } catch (err) {

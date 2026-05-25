@@ -48,12 +48,32 @@ async function callAgsManagerApi(action: string, param: Record<string, unknown>)
   return (await agsService.request(action, param)) as Record<string, unknown>
 }
 
-async function main() {
-  const toolId = process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID || ''
-  if (!toolId) {
-    console.error('Set STATEFUL_TOOL_ID in packages/server/.env')
-    process.exit(1)
+async function resolveToolId(): Promise<string> {
+  const override = process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID || ''
+  if (override) return override
+
+  const envId = process.env.TCB_ENV_ID || ''
+  if (!envId) {
+    throw new Error('Set STATEFUL_TOOL_ID or TCB_ENV_ID in packages/server/.env')
   }
+
+  const { statefulToolNameForEnv } = await import('../src/sandbox/ensure-stateful-tool.js')
+  const toolName = statefulToolNameForEnv(envId)
+  const resp = await callAgsManagerApi('DescribeSandboxToolList', {
+    Filters: [{ Name: 'ToolName', Values: [toolName] }],
+    Limit: 20,
+  })
+  const set = (resp.SandboxToolSet || (resp.data as Record<string, unknown> | undefined)?.SandboxToolSet) as
+    | Array<Record<string, unknown>>
+    | undefined
+  const hit = Array.isArray(set) ? set.find((t) => t.ToolName === toolName && typeof t.ToolId === 'string') : undefined
+  if (hit?.ToolId) return hit.ToolId as string
+
+  throw new Error(`No AGS tool found for ToolName=${toolName} (env ${envId})`)
+}
+
+async function main() {
+  const toolId = await resolveToolId()
 
   const list = await callAgsManagerApi('DescribeSandboxInstanceList', { ToolId: toolId, Limit: 100 })
   const data = list?.data as Record<string, unknown> | undefined

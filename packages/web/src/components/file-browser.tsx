@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   File,
   Folder,
@@ -418,6 +418,7 @@ export function FileBrowser({
   }, [
     branchName,
     taskId,
+    sandboxId,
     onFilesLoaded,
     viewMode,
     setState,
@@ -654,6 +655,23 @@ export function FileBrowser({
     [taskId, viewMode, currentViewData, setState],
   )
 
+  const prevSandboxIdRef = useRef<string | null | undefined>(sandboxId)
+
+  useEffect(() => {
+    const prev = prevSandboxIdRef.current
+    prevSandboxIdRef.current = sandboxId ?? null
+    if (!prev && sandboxId) {
+      setState((prevState) => ({
+        ...prevState,
+        [viewMode]: {
+          ...((prevState[viewMode as ViewModeKey] as ViewModeData | undefined) ?? currentViewData),
+          fetchAttempted: false,
+          error: null,
+        },
+      }))
+    }
+  }, [sandboxId, viewMode, setState, currentViewData])
+
   useEffect(() => {
     if ((hasBranch || sandboxId) && files.length === 0 && !loading && !fetchAttempted) {
       fetchBranchFiles()
@@ -794,14 +812,32 @@ export function FileBrowser({
   }, [])
 
   const handleDownload = useCallback(
-    (filePath: string) => {
+    async (filePath: string, options?: { asZip?: boolean }) => {
       const url = `/api/tasks/${taskId}/files/download?path=${encodeURIComponent(filePath)}`
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filePath.split('/').pop() || filePath
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+      try {
+        const response = await fetch(url, { credentials: 'include' })
+        if (!response.ok) {
+          const data = (await response.json().catch(() => ({}))) as { error?: string }
+          throw new Error(data.error || 'Download failed')
+        }
+        const blob = await response.blob()
+        const disposition = response.headers.get('Content-Disposition')
+        let filename = filePath.split('/').pop() || 'download'
+        if (options?.asZip && !filename.endsWith('.zip')) filename = `${filename}.zip`
+        const match = disposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i)
+        if (match?.[1]) filename = decodeURIComponent(match[1])
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(objectUrl)
+      } catch (err) {
+        console.error('Download failed:', err)
+        toast.error(err instanceof Error ? err.message : 'Download failed')
+      }
     },
     [taskId],
   )
@@ -1094,7 +1130,7 @@ export function FileBrowser({
                           <Clipboard className="w-4 h-4 mr-2" />
                           Paste<DropdownMenuShortcut>{isMac ? '⌘V' : 'Ctrl+V'}</DropdownMenuShortcut>
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleDownload(fullPath)}>
+                        <DropdownMenuItem onClick={() => handleDownload(fullPath, { asZip: true })}>
                           <Download className="w-4 h-4 mr-2" />
                           Download as zip
                         </DropdownMenuItem>

@@ -47,6 +47,7 @@ import { OpencodeMessageBuilder, findLastRecordIds, buildHistoryContextPrompt } 
 import { BaseAgentRuntime } from './base-runtime.js'
 import type { SandboxInstance } from '../../sandbox/provider/types.js'
 import { archiveToGit } from '../../sandbox/git-archive.js'
+import { resolveAgentHostCwd } from '../../lib/sandbox-config.js'
 import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -313,7 +314,6 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
       let sandboxResult: Awaited<ReturnType<typeof this.setupSandbox>> | null = null
 
       if (envId) {
-        await emit({ type: 'agent_phase', phase: 'preparing' })
         sandboxResult = await this.setupSandbox({
           conversationId,
           envId,
@@ -335,12 +335,15 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
       // 构建系统提示
       let systemPrompt = ''
       if (envId) {
+        const remoteCwd = sandboxResult?.sandboxCwd || null
         const promptResult = await this.buildSystemPrompt({
           envId,
           isCodingMode,
-          sandboxCwd: sandboxResult?.sandboxCwd || null,
+          sandboxCwd: remoteCwd,
           sandboxMode: sandboxResult?.sandboxMode || 'shared',
           conversationId,
+          remoteToolsActive: !!sandboxResult?.toolOverrideConfig,
+          localHostCwd: remoteCwd ? resolveAgentHostCwd(remoteCwd, conversationId) : undefined,
         })
         systemPrompt = promptResult.systemPrompt
       }

@@ -65,6 +65,49 @@ export function isGitArchiveConfigured(): boolean {
 }
 
 /**
+ * TRW git archive vars for PUT /api/workspace/env or workspace/init `env`.
+ * Do not pass via StartSandboxInstance CustomConfiguration.Env — boot-time
+ * ENABLE_GIT_ARCHIVE blocks /health and fails AGS port binding.
+ */
+export function buildGitArchiveWorkspaceEnv(): Record<string, string> {
+  const env: Record<string, string> = {}
+  const repo = process.env.GIT_ARCHIVE_REPO?.trim()
+  const token = process.env.GIT_ARCHIVE_TOKEN?.trim()
+  const user = process.env.GIT_ARCHIVE_USER?.trim()
+  if (repo) env.GIT_ARCHIVE_REPO = repo
+  if (token) env.GIT_ARCHIVE_TOKEN = token
+  if (user) env.GIT_ARCHIVE_USER = user
+  const personal = process.env.GIT_PERSONAL_AUTH?.trim()
+  if (personal) env.GIT_PERSONAL_AUTH = personal
+  if (repo && token && user) env.ENABLE_GIT_ARCHIVE = 'true'
+  return env
+}
+
+/** Debug-only: AGS CustomConfiguration.Env array shape. */
+export function buildGitArchiveInstanceEnv(): Array<{ Name: string; Value: string }> {
+  return Object.entries(buildGitArchiveWorkspaceEnv()).map(([Name, Value]) => ({ Name, Value }))
+}
+
+export async function injectGitArchiveWorkspaceEnv(sandbox: SandboxInstance): Promise<void> {
+  const env = buildGitArchiveWorkspaceEnv()
+  if (!Object.keys(env).length) return
+
+  const res = await sandbox.request('/api/workspace/env', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(env),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Git archive workspace env injection failed: ${res.status} ${text.slice(0, 200)}`)
+  }
+  const data = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null
+  if (data && data.success === false) {
+    throw new Error(data.error || 'Git archive workspace env injection failed')
+  }
+}
+
+/**
  * 将沙箱中的变更推送到 Git 归档仓库
  *
  * 通过 TRW POST /api/extend/git_push 端点执行 git 操作
@@ -94,13 +137,14 @@ export async function archiveToGit(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: commitMessage }),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(120_000),
     })
 
-    if (gitPushRes.ok) {
+    const body = (await gitPushRes.json().catch(() => null)) as { success?: boolean; error?: string } | null
+    if (gitPushRes.ok && body?.success !== false) {
       console.log('[GitArchive] Push completed')
     } else {
-      console.warn(`[GitArchive] Push failed: status=${gitPushRes.status}`)
+      console.warn('[GitArchive] Push failed')
     }
   } catch (err) {
     console.error('[GitArchive] Error:', (err as Error)?.message)

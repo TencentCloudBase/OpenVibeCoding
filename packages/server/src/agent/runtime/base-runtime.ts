@@ -155,6 +155,44 @@ export async function getPublishableKey(envId: string): Promise<string> {
   }
 }
 
+export interface BuildAppendPromptOptions {
+  /** CodeBuddy SDK session dir on the OVC host (not the user workspace). */
+  localHostCwd?: string
+  /** Bash/Read/Write/Glob/Grep are routed to the remote TRW sandbox. */
+  remoteToolsActive?: boolean
+}
+
+function buildRemoteWorkspaceSection(
+  sandboxCwd: string,
+  conversationId: string | undefined,
+  options?: BuildAppendPromptOptions,
+): string {
+  const localHostCwd = options?.localHostCwd?.trim()
+  const remoteActive = options?.remoteToolsActive === true
+
+  if (remoteActive) {
+    const localLine = localHostCwd
+      ? `- **本机 SDK 会话目录** \`${localHostCwd}\`：仅用于 CodeBuddy 落盘 JSONL，**不是**用户工作区。禁止把该路径、\`/tmp\`、\`/var/folders\`、\`ovc-agent\` 说成「当前工作目录」。`
+      : `- **本机 SDK 会话目录**：仅用于 CodeBuddy 落盘，**不是**用户工作区。禁止把 \`/tmp\`、\`/var/folders\`、\`ovc-agent\` 说成「当前工作目录」。`
+    return `
+<remote-workspace priority="highest">
+你已连接 **CloudBase 远程沙箱**（Stateful TRW）。用户项目只存在于沙箱 VM 内。
+
+- **远程工作区根目录**：\`${sandboxCwd}\` — 所有 Bash / Read / Write / Glob / Grep 在该 VM 上执行。
+${localLine}
+- 用户问 **pwd、当前目录、有哪些文件、统计文件数、目录结构、du/wc/find** 等：必须先调用 **Bash 或 Read/Glob** 在远程执行（例如 \`cd ${sandboxCwd} && pwd\`、\`cd ${sandboxCwd} && find . -type f | wc -l\`），**仅根据工具输出**回答。
+- **禁止**根据 SDK \`cwd\`、进程环境或未调用工具时的猜测回答工作区路径。
+- 若工具调用失败：说明沙箱/工具异常并请用户重试，**不要**编造本机临时目录。
+</remote-workspace>`
+  }
+
+  return `
+<remote-workspace>
+远程沙箱尚未连接或工具 override 未就绪。不要声称自己已在 \`/home/user\` 或本机临时目录中工作。
+若用户询问 pwd/文件列表：说明需等待沙箱就绪后再用 Bash 查询，勿用本机路径作答。
+</remote-workspace>`
+}
+
 /**
  * 构建通用 system prompt（任务分类 + CloudBase 指引 + 沙箱上下文）
  */
@@ -164,6 +202,7 @@ export function buildAppendPrompt(
   envId?: string,
   sandboxMode?: 'shared' | 'isolated',
   isCodingMode?: boolean,
+  promptOptions?: BuildAppendPromptOptions,
 ): string {
   const roleLine = isCodingMode
     ? '你是一个通用 AI 编程助手，同时具备腾讯云开发（CloudBase）能力。'
@@ -185,6 +224,9 @@ export function buildAppendPrompt(
 
 3) **自动化/定时类**（"每天…"、"每周…"、"定期…"）
    → 使用 cronTask 工具管理定时任务（见下面 cron-task 章节）。
+
+4) **工作区探查类**（pwd、当前目录、列文件、统计文件数、目录树、du/wc/find/ls）
+   → 必须使用 Bash / Read / Glob 在**远程沙箱**执行并据实回答；**禁止**用本机 SDK 临时目录或未调工具时的猜测作答。
 
 **不确定时优先问用户**："你希望我直接写文案给你，还是做一个可访问的网页？"，不要擅自升级为 2)。
 </task-classification>
@@ -224,11 +266,18 @@ Cron 表达式格式：分 时 日 月 周，例如 "0 20 * * *" 表示每天 20
 </tools-extra-info>`
 
   if (sandboxCwd) {
-    const homeDir = sandboxMode === 'isolated' ? sandboxCwd : sandboxCwd.substring(0, sandboxCwd.lastIndexOf('/'))
+    const homeDir =
+      sandboxCwd === STATEFUL_WORKSPACE_ROOT || sandboxCwd.startsWith('/home/user')
+        ? sandboxCwd
+        : sandboxMode === 'isolated'
+          ? sandboxCwd
+          : sandboxCwd.substring(0, sandboxCwd.lastIndexOf('/'))
     const sandboxPreamble = isCodingMode
       ? ''
-      : '（以下仅在你已判定任务属于"编程/工程类"、决定动手写文件或执行命令时适用；对话/创作类任务请忽略本节。）\n'
+      : '（以下仅在你已判定任务属于"编程/工程类"或"工作区探查类"、决定动手写文件或执行命令时适用；纯对话/创作类任务请忽略本节。）\n'
+    const remoteSection = buildRemoteWorkspaceSection(sandboxCwd, conversationId, promptOptions)
     return `${base}
+${remoteSection}
 
 <sandbox-context>
 ${sandboxPreamble}工具默认在 Home: ${homeDir} 下执行
@@ -499,18 +548,25 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     sandboxCwd: string | null
     sandboxMode: 'shared' | 'isolated'
     conversationId: string
+    remoteToolsActive?: boolean
+    localHostCwd?: string
   }): Promise<{ systemPrompt: string; publishableKey: string }> {
-    const { envId, isCodingMode, sandboxCwd, sandboxMode, conversationId } = options
+    const { envId, isCodingMode, sandboxCwd, sandboxMode, conversationId, remoteToolsActive, localHostCwd } = options
     const publishableKey = await getPublishableKey(envId)
+    const appendOpts: BuildAppendPromptOptions = {
+      remoteToolsActive,
+      localHostCwd,
+    }
+    const cwdForPrompt = sandboxCwd || undefined
 
     let systemPrompt: string
     if (isCodingMode) {
       systemPrompt =
         getCodingSystemPrompt(envId, publishableKey) +
         '\n\n' +
-        buildAppendPrompt(sandboxCwd || undefined, conversationId, envId, sandboxMode, true)
+        buildAppendPrompt(cwdForPrompt, conversationId, envId, sandboxMode, true, appendOpts)
     } else {
-      systemPrompt = buildAppendPrompt(sandboxCwd || undefined, conversationId, envId, sandboxMode, false)
+      systemPrompt = buildAppendPrompt(cwdForPrompt, conversationId, envId, sandboxMode, false, appendOpts)
     }
 
     return { systemPrompt, publishableKey }

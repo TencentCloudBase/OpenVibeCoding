@@ -51,6 +51,8 @@ const PHASE_CONFIG: Record<AgentPhaseName, PhaseConfig> = {
           return '沙箱模板生成中（本环境仅首次）...'
         case 'sandbox:template_warmup':
           return '沙箱模板预热中...'
+        case 'sandbox:template_update':
+          return '同步沙箱模板镜像...'
         case 'sandbox:instance_reuse_session':
           return '复用本会话沙箱连接...'
         case 'sandbox:instance_reuse_shared':

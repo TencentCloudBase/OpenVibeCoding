@@ -2934,12 +2934,13 @@ tasksRouter.get('/:taskId/files/download', requireUserEnv, async (c) => {
     const cleanup = () => runCommandInSandbox(sandbox!, `rm -f '${tmpZip}'`).catch(() => {})
 
     try {
+      // Run from workspace root: zip -r .tmp/archive.zip <dir> (do not cd into dir — relative .tmp/ would land inside it).
       const zipResult = await runCommandInSandbox(
         sandbox,
-        `mkdir -p .tmp && cd '${quoted}' && zip -r '${tmpZip}' . && echo ok`,
-        60000,
+        `mkdir -p .tmp && zip -qr '${tmpZip.replace(/'/g, "'\\''")}' '${quoted}'`,
+        120000,
       )
-      if (!zipResult.success || zipResult.output?.trim() !== 'ok') {
+      if (!zipResult.success) {
         return c.json({ error: 'Failed to create zip in sandbox' }, 500)
       }
 

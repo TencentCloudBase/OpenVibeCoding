@@ -1,12 +1,11 @@
 /**
  * Augmented tool: getDeployJobStatus
  *
- * 查询 publishMiniprogram 异步返回的 jobId。
- *
- * 历史背景：原本在已删除的 sandbox-mcp-proxy.ts 中硬编码（DEPLOY_STATUS_*）。
+ * Poll TRW: GET /api/jobs/:jobId (replaces /api/miniprogram/deploy/status)
  */
 
 import type { McpPolicy } from './_index.js'
+import { pollTrwMiniprogramJob } from '../../../sandbox/trw-miniprogram-client.js'
 
 export const policy: McpPolicy = {
   description: 'Query miniprogram deploy job status by jobId',
@@ -25,13 +24,11 @@ export const policy: McpPolicy = {
   async use(ctx) {
     const jobId = ctx.input.jobId as string
     try {
-      const res = await ctx.extra.sandboxFetch(`/api/miniprogram/deploy/status?jobId=${encodeURIComponent(jobId)}`, {
-        signal: AbortSignal.timeout(30_000),
-      })
-      const body = (await res.json().catch(() => null)) as any
-      return JSON.stringify(body ?? { error: true, status: res.status })
-    } catch (e: any) {
-      return JSON.stringify({ error: true, message: e.message })
+      const polled = await pollTrwMiniprogramJob(ctx.extra.sandboxFetch, jobId)
+      return JSON.stringify(polled.body ?? { error: true, status: polled.httpStatus })
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      return JSON.stringify({ error: true, message })
     }
   },
 }

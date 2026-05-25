@@ -40,7 +40,11 @@ export async function getTaskSandbox(
 
     const existing = provider.getExisting ? await provider.getExisting(acquireCtx) : null
     if (existing) return existing
-    if (!options?.allowCreate) return null
+
+    // Task already bound to a sandbox (e.g. after page refresh): reconnect like preview-url does.
+    // Without this, list-dir/files fail with 410 while preview still works (allowCreate there).
+    const mayAcquire = options?.allowCreate || !!task.sandboxId
+    if (!mayAcquire) return null
 
     const acquired = await provider.acquire(acquireCtx)
     if (task.sandboxId !== acquired.id) {
