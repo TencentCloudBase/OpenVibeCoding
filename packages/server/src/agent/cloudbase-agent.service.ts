@@ -27,6 +27,8 @@ import {
 import { decrypt } from '../lib/crypto.js'
 import { encryptJWE } from '../lib/session.js'
 import type { AgentCallbackMessage, AgentOptions, CodeBuddyMessage, ExtendedSessionUpdate } from '@coder/shared'
+import { isSandboxToolName, sandboxLogMessageForTool } from '@coder/shared'
+import { createTaskLogger } from '../lib/task-logger.js'
 import { registerAgent, getAgentRun, completeAgent, isAgentRunning, type StopReason } from './agent-registry.js'
 import { EventBuffer } from './event-buffer.js'
 import { sessionPermissions, normalizeToolName } from './session-permissions.js'
@@ -366,6 +368,14 @@ export class CloudbaseAgentService {
         sessionUpdate: 'log',
         level: 'error',
         message: msg.content || 'Unknown error',
+        timestamp: Date.now(),
+      } as ExtendedSessionUpdate
+    }
+    if (msg.type === 'log' && msg.content) {
+      return {
+        sessionUpdate: 'log',
+        level: msg.logLevel || 'info',
+        message: msg.content,
         timestamp: Date.now(),
       } as ExtendedSessionUpdate
     }
@@ -769,6 +779,15 @@ export class CloudbaseAgentService {
       }
     }
 
+    const taskLogger = createTaskLogger(conversationId)
+    taskLogger.registerACPNotifier((update) => {
+      if (update.sessionUpdate !== 'log') return
+      const seq = eventBuffer.pushAndGetSeq(update)
+      if (liveCallback) {
+        liveCallback({ type: 'log', content: update.message, logLevel: update.level }, seq)
+      }
+    })
+
     // ── 获取 stateful 沙箱 ───────────────────────────────────────────
     let sandboxInstance: SandboxInstance | null = null
     let toolOverrideConfig: ToolOverrideConfig | null = null
@@ -780,6 +799,7 @@ export class CloudbaseAgentService {
     // P4: 代理阶段上报助手 —— 在关键边界向前端透传当前状态
     // 去重:只在 phase 或 toolName 变化时 emit,避免密集的 tool_use stream_event 刷屏
     let lastEmittedPhase: { phase: string; toolName?: string } | null = null
+    let lastSandboxPrepareTool: string | undefined
     const emitPhase = (
       phase: 'preparing' | 'model_responding' | 'tool_executing' | 'compacting' | 'idle',
       toolName?: string,
@@ -787,6 +807,14 @@ export class CloudbaseAgentService {
       if (lastEmittedPhase && lastEmittedPhase.phase === phase && lastEmittedPhase.toolName === toolName) return
       lastEmittedPhase = { phase, toolName }
       wrappedCallback({ type: 'agent_phase', phase, phaseToolName: toolName })
+
+      if (isSandboxToolName(toolName)) {
+        const message = sandboxLogMessageForTool(toolName!, { previousPrepareTool: lastSandboxPrepareTool })
+        if (message) void taskLogger.info(message)
+        if (toolName !== 'sandbox:ready' && toolName !== 'sandbox:error') {
+          lastSandboxPrepareTool = toolName
+        }
+      }
     }
 
     // 沙箱子阶段 → emitPhase('preparing', 'sandbox:xxx') 桥接（勿先发无 toolName 的 preparing，否则会盖住复用/启动等细粒度文案）

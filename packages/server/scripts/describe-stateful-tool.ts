@@ -55,8 +55,13 @@ async function main() {
   for (const p of ports) {
     console.log(`  - ${p.Name ?? '?'}: ${p.Port} (${p.Protocol ?? 'TCP'})`)
   }
-  const has5173 = ports.some((p) => p.Port === 5173)
-  console.log('vite 5173 declared:', has5173 ? 'yes' : 'NO — gateway E2b-Sandbox-Port:5173 will 500')
+  const expected = [9000, 49983]
+  const actual = ports.map((p) => p.Port).filter((n): n is number => typeof n === 'number')
+  const extra = actual.filter((p) => !expected.includes(p))
+  console.log('standard ports (9000+49983):', expected.every((p) => actual.includes(p)) ? 'ok' : 'MISSING')
+  if (extra.length > 0) {
+    console.log('extra declared ports (may break /preview/7681/):', extra.join(', '))
+  }
 }
 
 main().catch((e) => {

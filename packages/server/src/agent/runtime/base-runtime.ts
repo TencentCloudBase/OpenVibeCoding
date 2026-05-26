@@ -16,6 +16,8 @@
  */
 
 import type { AgentCallback, AgentCallbackMessage, AgentOptions } from '@coder/shared'
+import { sandboxLogMessageForTool } from '@coder/shared'
+import { createTaskLogger } from '../../lib/task-logger.js'
 import type { ChatStreamResult, IAgentRuntime } from './types.js'
 import type { ModelInfo } from '../cloudbase-agent.service.js'
 import { buildStatefulAcquireContext } from '../../sandbox/acquire-context.js'
@@ -399,9 +401,26 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
       // Non-critical
     }
 
+    const taskLogger = createTaskLogger(conversationId)
+    if (callback) {
+      taskLogger.registerACPNotifier((update) => {
+        if (update.sessionUpdate !== 'log') return
+        callback({ type: 'log', content: update.message, logLevel: update.level })
+      })
+    }
+    let lastSandboxProgressTool: string | undefined
+    let lastSandboxPhaseEmitted: string | undefined
     const progressBridge: SandboxProgressCallback = ({ phase }) => {
+      const toolName = `sandbox:${phase}`
+      if (lastSandboxPhaseEmitted === toolName) return
+      lastSandboxPhaseEmitted = toolName
       if (callback) {
-        callback({ type: 'agent_phase', phase: 'preparing', phaseToolName: `sandbox:${phase}` })
+        callback({ type: 'agent_phase', phase: 'preparing', phaseToolName: toolName })
+      }
+      const message = sandboxLogMessageForTool(toolName, { previousPrepareTool: lastSandboxProgressTool })
+      if (message) void taskLogger.info(message)
+      if (toolName !== 'sandbox:ready' && toolName !== 'sandbox:error') {
+        lastSandboxProgressTool = toolName
       }
     }
 

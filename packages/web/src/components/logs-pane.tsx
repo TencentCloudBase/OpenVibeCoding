@@ -3,8 +3,10 @@ import { Button } from '@/components/ui/button'
 import { Copy, Check, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useState, useEffect, useRef } from 'react'
+import { useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import { useTasks } from '@/components/app-layout'
+import { streamLogsAtomFamily } from '@/lib/atoms/stream-logs'
 import { getLogsPaneHeight, setLogsPaneHeight, getLogsPaneCollapsed, setLogsPaneCollapsed } from '@/lib/utils/cookies'
 import { Terminal, TerminalRef } from '@/components/terminal'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -17,9 +19,13 @@ interface LogsPaneProps {
 type TabType = 'logs' | 'terminal'
 type LogFilterType = 'all' | 'platform' | 'server'
 
+/** ttyd/xterm needs a real pixel height; smaller panes render a blank black iframe */
+const TERMINAL_PANE_MIN_HEIGHT = 200
+const PANE_HEIGHT_MIN = 100
+const PANE_HEIGHT_MAX_CAP = 600
+
 export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
   const [copiedLogs, setCopiedLogs] = useState(false)
-  const [copiedTerminal, setCopiedTerminal] = useState(false)
   const [isCollapsed, setIsCollapsedState] = useState(true)
   const [paneHeight, setPaneHeight] = useState(200)
   const [isResizing, setIsResizing] = useState(false)
@@ -34,6 +40,7 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
   const hasInitialScrolled = useRef<boolean>(false)
   const wasAtBottomRef = useRef<boolean>(true)
   const { isSidebarOpen, isSidebarResizing, refreshTasks } = useTasks()
+  const setStreamLogs = useSetAtom(streamLogsAtomFamily(task.id))
 
   // Check if we're on desktop
   useEffect(() => {
@@ -77,36 +84,36 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
     }
   }, [paneHeight, isCollapsed, onHeightChange])
 
-  // Handle resize
+  const paneHeightMax = () => Math.min(PANE_HEIGHT_MAX_CAP, Math.floor(window.innerHeight * 0.75))
+
+  // Drag top edge to resize (pointer capture — do not tie to header click-to-collapse)
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isResizing) return
+    if (!isResizing) return
 
-      // Calculate new height (resize from top, so subtract from window height)
+    const handlePointerMove = (e: PointerEvent) => {
+      const maxHeight = paneHeightMax()
       const newHeight = window.innerHeight - e.clientY
-      const minHeight = 100
-      const maxHeight = 600
-
-      if (newHeight >= minHeight && newHeight <= maxHeight) {
+      if (newHeight >= PANE_HEIGHT_MIN && newHeight <= maxHeight) {
         setPaneHeight(newHeight)
         setLogsPaneHeight(newHeight)
       }
     }
 
-    const handleMouseUp = () => {
+    const endResize = () => {
       setIsResizing(false)
+      window.dispatchEvent(new Event('resize'))
     }
 
-    if (isResizing) {
-      document.addEventListener('mousemove', handleMouseMove)
-      document.addEventListener('mouseup', handleMouseUp)
-      document.body.style.cursor = 'row-resize'
-      document.body.style.userSelect = 'none'
-    }
+    document.addEventListener('pointermove', handlePointerMove)
+    document.addEventListener('pointerup', endResize)
+    document.addEventListener('pointercancel', endResize)
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
+      document.removeEventListener('pointermove', handlePointerMove)
+      document.removeEventListener('pointerup', endResize)
+      document.removeEventListener('pointercancel', endResize)
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
@@ -188,6 +195,7 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
       })
 
       if (response.ok) {
+        setStreamLogs([])
         refreshTasks()
       } else {
         const error = await response.json()
@@ -207,152 +215,154 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
     }
   }
 
-  const copyTerminalToClipboard = async () => {
-    if (terminalRef.current) {
-      try {
-        const terminalText = terminalRef.current.getTerminalText()
-        await navigator.clipboard.writeText(terminalText)
-        setCopiedTerminal(true)
-        setTimeout(() => setCopiedTerminal(false), 2000)
-      } catch {
-        toast.error('Failed to copy terminal to clipboard')
-      }
+  const openTerminalTab = () => {
+    if (isCollapsed) {
+      setIsCollapsed(false)
     }
+    if (paneHeight < TERMINAL_PANE_MIN_HEIGHT) {
+      setPaneHeight(TERMINAL_PANE_MIN_HEIGHT)
+      setLogsPaneHeight(TERMINAL_PANE_MIN_HEIGHT)
+      onHeightChange?.(TERMINAL_PANE_MIN_HEIGHT)
+    }
+    setActiveTab('terminal')
   }
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault()
+    e.stopPropagation()
+    e.currentTarget.setPointerCapture(e.pointerId)
     setIsResizing(true)
   }
 
   return (
     <div
-      className={`fixed bottom-0 right-0 z-10 bg-background ${isResizing || isSidebarResizing || !hasMounted ? '' : 'transition-all duration-300 ease-in-out'}`}
+      className={`fixed bottom-0 right-0 z-10 bg-background ${isResizing || isSidebarResizing || !hasMounted ? '' : 'transition-[left] duration-300 ease-in-out'}`}
       style={{
         left: isDesktop && isSidebarOpen ? 'var(--sidebar-width)' : '0px',
         height: isCollapsed ? 'auto' : `${paneHeight}px`,
       }}
     >
-      {/* Resize Handle */}
-      {!isCollapsed && (
-        <div
-          className={`absolute top-0 left-0 right-0 h-1 cursor-row-resize group hover:bg-primary/20 ${isResizing ? '' : 'transition-colors'}`}
-          onMouseDown={handleMouseDown}
-        >
-          <div className="absolute inset-x-0 top-0 h-2 -mt-0.5" />
-          <div className="absolute inset-x-0 top-0 h-0.5 bg-primary/50 opacity-0 group-hover:opacity-100 transition-opacity" />
-        </div>
-      )}
-
-      <div className="flex flex-col h-full border-t">
-        <div
-          className="border-b flex items-center justify-between flex-shrink-0 hover:bg-accent/50 cursor-pointer"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-        >
-          <div className="flex items-center gap-1.5 py-1.5 px-3 flex-1">
-            <div className="h-5 w-5 flex items-center justify-center">
-              {isCollapsed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (isCollapsed) {
-                    setIsCollapsed(false)
-                  }
-                  setActiveTab('logs')
-                }}
-                className={cn(
-                  'text-xs font-medium uppercase tracking-wide transition-colors px-2 py-1 rounded',
-                  activeTab === 'logs'
-                    ? 'text-foreground bg-accent'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                )}
-              >
-                Logs
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  if (isCollapsed) {
-                    setIsCollapsed(false)
-                  }
-                  setActiveTab('terminal')
-                }}
-                className={cn(
-                  'text-xs font-medium uppercase tracking-wide transition-colors px-2 py-1 rounded',
-                  activeTab === 'terminal'
-                    ? 'text-foreground bg-accent'
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
-                )}
-              >
-                Terminal
-              </button>
-            </div>
+      <div className={cn('flex flex-col border-t', isCollapsed ? '' : 'h-full min-h-0')}>
+        {!isCollapsed && (
+          <div
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize logs pane"
+            className={cn(
+              'flex h-2 shrink-0 cursor-row-resize touch-none items-center justify-center border-b',
+              isResizing ? 'bg-primary/20' : 'bg-muted/40 hover:bg-muted/60',
+            )}
+            onPointerDown={handleResizePointerDown}
+          >
+            <div className="h-1 w-10 rounded-full bg-border" />
           </div>
-          {activeTab === 'logs' && (
-            <div className="flex items-center gap-1.5 mr-3" onClick={(e) => e.stopPropagation()}>
-              <Select value={logFilter} onValueChange={(value) => setLogFilter(value as LogFilterType)}>
-                <SelectTrigger size="sm" className="h-6 text-xs px-2 py-0 min-w-[90px] border-0 shadow-none">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="platform">Platform</SelectItem>
-                  <SelectItem value="server">Server</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearLogs}
-                disabled={isClearingLogs}
-                className="h-5 w-5 p-0 hover:bg-accent"
-                title="Clear logs"
+        )}
+        <div className="relative flex flex-shrink-0 items-center justify-between border-b">
+          <div className="flex min-w-0 flex-1 items-center justify-between">
+            <div className="flex flex-1 items-center gap-1.5 px-3 py-1.5">
+              <button
+                type="button"
+                className="flex h-5 w-5 items-center justify-center rounded hover:bg-accent"
+                aria-label={isCollapsed ? 'Expand logs pane' : 'Collapse logs pane'}
+                onClick={() => setIsCollapsed(!isCollapsed)}
               >
-                <Trash2 className="h-3 w-3" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={copyLogsToClipboard}
-                className="h-5 w-5 p-0 hover:bg-accent"
-                title="Copy logs to clipboard"
-              >
-                {copiedLogs ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
-              </Button>
+                {isCollapsed ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (isCollapsed) {
+                      setIsCollapsed(false)
+                    }
+                    setActiveTab('logs')
+                  }}
+                  className={cn(
+                    'text-xs font-medium uppercase tracking-wide transition-colors px-2 py-1 rounded',
+                    activeTab === 'logs'
+                      ? 'text-foreground bg-accent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                  )}
+                >
+                  Logs
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    openTerminalTab()
+                  }}
+                  className={cn(
+                    'text-xs font-medium uppercase tracking-wide transition-colors px-2 py-1 rounded',
+                    activeTab === 'terminal'
+                      ? 'text-foreground bg-accent'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                  )}
+                >
+                  Terminal
+                </button>
+              </div>
             </div>
-          )}
-          {activeTab === 'terminal' && (
-            <div className="flex items-center gap-1 mr-3" onClick={(e) => e.stopPropagation()}>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearTerminal}
-                className="h-5 w-5 p-0 hover:bg-accent"
-                title="Clear terminal"
-              >
-                <Trash2 className="h-3 w-3" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={copyTerminalToClipboard}
-                className="h-5 w-5 p-0 hover:bg-accent"
-                title="Copy terminal to clipboard"
-              >
-                {copiedTerminal ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
-              </Button>
-            </div>
-          )}
+            {activeTab === 'logs' && (
+              <div className="flex items-center gap-1.5 mr-3" onClick={(e) => e.stopPropagation()}>
+                <Select value={logFilter} onValueChange={(value) => setLogFilter(value as LogFilterType)}>
+                  <SelectTrigger size="sm" className="h-6 text-xs px-2 py-0 min-w-[90px] border-0 shadow-none">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="platform">Platform</SelectItem>
+                    <SelectItem value="server">Server</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearLogs}
+                  disabled={isClearingLogs}
+                  className="h-5 w-5 p-0 hover:bg-accent"
+                  title="Clear logs"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={copyLogsToClipboard}
+                  className="h-5 w-5 p-0 hover:bg-accent"
+                  title="Copy logs to clipboard"
+                >
+                  {copiedLogs ? <Check className="h-3 w-3 text-green-600" /> : <Copy className="h-3 w-3" />}
+                </Button>
+              </div>
+            )}
+            {activeTab === 'terminal' && (
+              <div className="flex items-center gap-1 mr-3" onClick={(e) => e.stopPropagation()}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearTerminal}
+                  className="h-5 w-5 p-0 hover:bg-accent"
+                  title="重新加载终端"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
         <div
           ref={logsContainerRef}
           className={cn(
             'bg-black text-green-400 p-2 font-mono text-xs flex-1 overflow-y-auto leading-relaxed',
             (isCollapsed || activeTab !== 'logs') && 'hidden',
+            isResizing && 'pointer-events-none select-none',
           )}
         >
+          {getFilteredLogs(logFilter).length === 0 ? (
+            <div className="text-muted-foreground/70 italic px-1 py-2">
+              暂无日志。Agent 启动沙箱或执行任务后，平台进度会显示在这里。
+            </div>
+          ) : null}
           {getFilteredLogs(logFilter).map((log, index) => {
             const isServerLog = log.message.startsWith('[SERVER]')
             const messageContent = isServerLog ? log.message.substring(9) : log.message // Remove '[SERVER] '
@@ -393,7 +403,13 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
             )
           })}
         </div>
-        <div className={cn('flex-1 overflow-hidden', (isCollapsed || activeTab !== 'terminal') && 'hidden')}>
+        <div
+          className={cn(
+            'relative flex-1 min-h-[12rem] overflow-hidden bg-black',
+            (isCollapsed || activeTab !== 'terminal') && 'hidden',
+            isResizing && 'pointer-events-none select-none',
+          )}
+        >
           <Terminal
             ref={terminalRef}
             taskId={task.id}

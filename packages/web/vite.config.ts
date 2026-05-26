@@ -29,9 +29,15 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
+        ws: true,
         // SSE 流式响应需要禁用超时，否则 Vite proxy 会缓冲数据
         timeout: 0,
         proxyTimeout: 0,
+        configure: (proxy) => {
+          proxy.on('error', (err) => {
+            console.error('[vite] /api proxy error:', err.message)
+          })
+        },
       },
     },
   },

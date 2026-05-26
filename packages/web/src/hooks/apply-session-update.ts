@@ -13,7 +13,7 @@
  * - clearQuestionState 在 tool_call_update 里调用，hook 内部已 useCallback
  */
 import type { Dispatch, SetStateAction, MutableRefObject } from 'react'
-import type { ExtendedSessionUpdate, AgentPhaseName } from '@coder/shared'
+import type { ExtendedSessionUpdate, AgentPhaseName, LogEntry } from '@coder/shared'
 import type { TaskMessage, ToolConfirmData, DeploymentInfo, ArtifactInfo } from '@/types/task-chat'
 import { extractPlanContent } from '@/components/chat/plan-content'
 import {
@@ -128,6 +128,7 @@ export interface ApplySessionUpdateCtx {
    */
   setIsSending: Dispatch<SetStateAction<boolean>>
   setIsStreamingResponse: Dispatch<SetStateAction<boolean>>
+  appendStreamLog?: (entry: LogEntry) => void
 }
 
 /**
@@ -159,10 +160,22 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
     clearQuestionState,
     setIsSending,
     setIsStreamingResponse,
+    appendStreamLog,
   } = ctx
   const u = update as any
 
   switch (update.sessionUpdate) {
+    case 'log': {
+      const level = u.level === 'error' || u.level === 'success' || u.level === 'command' ? u.level : 'info'
+      const message = typeof u.message === 'string' ? u.message : ''
+      if (!message || !appendStreamLog) break
+      appendStreamLog({
+        type: level,
+        message,
+        timestamp: typeof u.timestamp === 'number' ? u.timestamp : Date.now(),
+      })
+      break
+    }
     case 'agent_message_chunk': {
       setMessages((prev) =>
         prev.map((m) => {

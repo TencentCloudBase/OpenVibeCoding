@@ -4,6 +4,8 @@
 
 import type { Context } from 'hono'
 import type { SandboxInstance } from './provider/types.js'
+import { TTYD_VIRTUAL_PORT } from './ttyd-preview.js'
+import { resolveGatewayPreviewPort } from './ttyd-gateway-port.js'
 
 const HOP_BY_HOP = new Set([
   'connection',
@@ -48,7 +50,9 @@ export function rewritePreviewPaths(body: string, taskId: string, port: string):
   return body.split(from).join(to)
 }
 
-function shouldRewriteBody(contentType: string | null): boolean {
+/** Exported for tests — ttyd HTML must not be string-rewritten (breaks WS client). */
+export function shouldRewritePreviewBody(contentType: string | null, port: string): boolean {
+  if (normalizePort(port) === String(TTYD_VIRTUAL_PORT)) return false
   if (!contentType) return false
   const ct = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
   return (
@@ -83,7 +87,10 @@ export async function proxyTaskPreview(
   subpath: string,
 ): Promise<Response> {
   const authHeaders = await sandbox.getAuthHeaders()
-  const upstreamPath = buildUpstreamPreviewPath(port, subpath)
+  const publicPortNum = Number(normalizePort(port))
+  const gatewayPort =
+    publicPortNum === TTYD_VIRTUAL_PORT ? String(await resolveGatewayPreviewPort(sandbox, TTYD_VIRTUAL_PORT)) : port
+  const upstreamPath = buildUpstreamPreviewPath(gatewayPort, subpath)
   const query = c.req.url.includes('?') ? new URL(c.req.url).search : ''
   const targetUrl = `${sandbox.baseUrl}${upstreamPath}${query}`
 
@@ -119,7 +126,7 @@ export async function proxyTaskPreview(
   })
 
   const contentType = upstream.headers.get('content-type')
-  if (shouldRewriteBody(contentType)) {
+  if (shouldRewritePreviewBody(contentType, port)) {
     const raw = await upstream.text()
     const rewritten = rewritePreviewPaths(raw, taskId, port)
     return new Response(rewritten, {

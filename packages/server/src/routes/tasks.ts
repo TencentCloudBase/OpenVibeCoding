@@ -2505,6 +2505,36 @@ tasksRouter.get('/:taskId/preview-health', requireUserEnv, async (c) => {
 })
 
 // ---------------------------------------------------------------------------
+// GET /:taskId/terminal-health — ttyd via TRW virtual port /preview/7681/
+// ---------------------------------------------------------------------------
+
+tasksRouter.get('/:taskId/terminal-health', requireUserEnv, async (c) => {
+  try {
+    const session = c.get('session')!
+    const { envId } = c.get('userEnv')!
+    const { taskId } = c.req.param()
+    const task = await findActiveTask(taskId, session.user.id)
+    if (!task) return c.json({ status: 'not_found' })
+    if (!task.sandboxId) return c.json({ status: 'no_sandbox' })
+
+    const taskMode = (task as { mode?: string | null }).mode
+    const isCodingMode = taskMode === 'coding'
+    const sandbox = await getTaskSandbox(task, envId, { isCodingMode })
+    if (!sandbox) return c.json({ status: 'no_sandbox' })
+
+    const { resolveTtydPreviewPort } = await import('../sandbox/ttyd-preview.js')
+    const resolved = await resolveTtydPreviewPort(sandbox)
+    return c.json({
+      status: resolved.status,
+      port: resolved.port,
+      retryable: resolved.retryable,
+    })
+  } catch (error) {
+    return c.json({ status: 'error', message: (error as Error).message, retryable: true })
+  }
+})
+
+// ---------------------------------------------------------------------------
 // POST /:taskId/start-sandbox
 // ---------------------------------------------------------------------------
 tasksRouter.post('/:taskId/start-sandbox', requireUserEnv, async (c) => {

@@ -1,8 +1,13 @@
 /**
- * Web terminal via 沙箱业务镜像 ttyd — virtual port 7681, proxied as /api/tasks/:id/preview/7681/.
+ * Web terminal via TRW ttyd — virtual port 7681 only, proxied as /api/tasks/:id/preview/7681/.
  */
 
-import { forwardRef, useImperativeHandle } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { Loader2, RefreshCw } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+
+/** Must match packages/server/src/sandbox/ttyd-preview.ts TTYD_VIRTUAL_PORT */
+const TTYD_PREVIEW_PORT = 7681
 
 interface TerminalProps {
   taskId: string
@@ -17,37 +22,190 @@ export interface TerminalRef {
   getTerminalText: () => string
 }
 
+type TerminalGateStatus = 'idle' | 'no_sandbox' | 'checking' | 'ready' | 'starting' | 'unavailable' | 'error'
+
+type TerminalHealthPayload = {
+  status?: string
+  retryable?: boolean
+}
+
+const POLL_MS = 2000
+const MAX_POLLS = 30
+
+function notifyTtydResize(iframe: HTMLIFrameElement | null) {
+  if (!iframe?.contentWindow) return
+  try {
+    iframe.contentWindow.dispatchEvent(new Event('resize'))
+  } catch {
+    // ignore cross-origin (should be same-origin)
+  }
+}
+
 export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal(
   { taskId, className, isActive, sandboxReady = true },
   ref,
 ) {
+  const [gateStatus, setGateStatus] = useState<TerminalGateStatus>('idle')
+  const [iframeEpoch, setIframeEpoch] = useState(0)
+  const pollRef = useRef(0)
+  const probeGenerationRef = useRef(0)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+
+  const iframeSrc = `/api/tasks/${taskId}/preview/${TTYD_PREVIEW_PORT}/`
+
   useImperativeHandle(ref, () => ({
-    clear: () => {},
+    clear: () => {
+      probeGenerationRef.current += 1
+      setIframeEpoch((n) => n + 1)
+      if (isActive && sandboxReady) void runProbeLoop()
+    },
     getTerminalText: () => '',
   }))
 
-  if (!sandboxReady) {
+  const checkTerminal = useCallback(async (): Promise<TerminalGateStatus> => {
+    if (!sandboxReady) return 'no_sandbox'
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/terminal-health`, { credentials: 'include' })
+      const data = (await res.json()) as TerminalHealthPayload
+      switch (data.status) {
+        case 'ready':
+          return 'ready'
+        case 'starting':
+          return 'starting'
+        case 'no_sandbox':
+          return 'no_sandbox'
+        case 'not_found':
+        case 'unavailable':
+          return data.retryable ? 'starting' : 'unavailable'
+        case 'error':
+          return data.retryable ? 'starting' : 'error'
+        default:
+          return data.retryable ? 'starting' : 'unavailable'
+      }
+    } catch {
+      return 'starting'
+    }
+  }, [sandboxReady, taskId])
+
+  const runProbeLoop = useCallback(async () => {
+    const generation = ++probeGenerationRef.current
+    pollRef.current = 0
+    setGateStatus(sandboxReady ? 'checking' : 'no_sandbox')
+    if (!sandboxReady) return
+
+    while (pollRef.current < MAX_POLLS) {
+      if (generation !== probeGenerationRef.current) return
+
+      const status = await checkTerminal()
+      if (generation !== probeGenerationRef.current) return
+
+      if (status === 'ready') {
+        setGateStatus('ready')
+        return
+      }
+      if (status === 'no_sandbox') {
+        setGateStatus('no_sandbox')
+        return
+      }
+      if (status === 'unavailable' || status === 'error') {
+        setGateStatus(status)
+        return
+      }
+
+      setGateStatus('starting')
+      pollRef.current += 1
+      await new Promise((r) => setTimeout(r, POLL_MS))
+    }
+    if (generation === probeGenerationRef.current) {
+      setGateStatus('unavailable')
+    }
+  }, [checkTerminal, sandboxReady])
+
+  useEffect(() => {
+    if (!isActive) {
+      probeGenerationRef.current += 1
+      setGateStatus('idle')
+      return
+    }
+    void runProbeLoop()
+  }, [isActive, runProbeLoop, taskId, sandboxReady])
+
+  useEffect(() => {
+    probeGenerationRef.current += 1
+    setIframeEpoch((n) => n + 1)
+  }, [taskId])
+
+  useEffect(() => {
+    if (gateStatus !== 'ready' || !isActive) return
+    const onResize = () => notifyTtydResize(iframeRef.current)
+    window.addEventListener('resize', onResize)
+    const t = window.setTimeout(onResize, 100)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      window.clearTimeout(t)
+    }
+  }, [gateStatus, isActive, iframeEpoch])
+
+  const handleRetry = () => {
+    setIframeEpoch((n) => n + 1)
+    probeGenerationRef.current += 1
+    void runProbeLoop()
+  }
+
+  if (!isActive) {
+    return null
+  }
+
+  if (gateStatus === 'no_sandbox') {
     return (
       <div
-        className={`h-full bg-black text-muted-foreground p-2 font-mono text-xs flex items-center justify-center ${className ?? ''}`}
+        className={`h-full min-h-0 bg-black text-muted-foreground p-4 font-mono text-xs flex flex-col items-center justify-center gap-2 text-center ${className ?? ''}`}
       >
-        沙箱未就绪，终端暂不可用
+        <p>沙箱未就绪，终端暂不可用</p>
+        <p className="text-[10px] opacity-70">请先发送一条消息，待沙箱启动后再打开 Terminal</p>
       </div>
     )
   }
 
-  if (!isActive) {
-    return <div className={`h-full min-h-0 bg-black ${className ?? ''}`} />
+  if (gateStatus === 'checking' || gateStatus === 'starting' || gateStatus === 'idle') {
+    return (
+      <div
+        className={`h-full min-h-0 bg-black text-muted-foreground p-4 font-mono text-xs flex flex-col items-center justify-center gap-2 ${className ?? ''}`}
+      >
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <p>{gateStatus === 'checking' ? '正在检查 Web 终端…' : '正在启动 Web 终端（ttyd）…'}</p>
+      </div>
+    )
   }
 
-  const src = `/api/tasks/${taskId}/preview/7681/`
+  if (gateStatus === 'unavailable' || gateStatus === 'error') {
+    return (
+      <div
+        className={`h-full min-h-0 bg-black text-muted-foreground p-4 font-mono text-xs flex flex-col items-center justify-center gap-3 text-center ${className ?? ''}`}
+      >
+        <p>{gateStatus === 'error' ? '无法连接沙箱终端' : 'Web 终端暂不可用'}</p>
+        <p className="text-[10px] opacity-70 max-w-md">
+          终端走沙箱虚拟口 7681。若长时间不可用，点「重试」或先发一条消息等待沙箱就绪。
+        </p>
+        <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={handleRetry}>
+          <RefreshCw className="h-3 w-3 mr-1" />
+          重试
+        </Button>
+      </div>
+    )
+  }
 
   return (
-    <iframe
-      src={src}
-      title="Web Terminal"
-      className={`h-full min-h-0 w-full border-0 bg-black ${className ?? ''}`}
-      allow="clipboard-read; clipboard-write"
-    />
+    <div className={`absolute inset-0 bg-black ${className ?? ''}`}>
+      <iframe
+        ref={iframeRef}
+        key={`${taskId}-${iframeEpoch}`}
+        src={iframeSrc}
+        title="Web Terminal"
+        className="size-full border-0 bg-black"
+        allow="clipboard-read; clipboard-write"
+        onLoad={() => notifyTtydResize(iframeRef.current)}
+      />
+    </div>
   )
 })

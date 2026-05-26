@@ -1,6 +1,9 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { useAtom } from 'jotai'
 import { useSearchParams } from 'react-router'
+import type { LogEntry, Task } from '@coder/shared'
 import { useTask } from '@/hooks/use-task'
+import { streamLogsAtomFamily } from '@/lib/atoms/stream-logs'
 import { TaskDetails } from '@/components/task-details'
 import { SharedHeader } from '@/components/shared-header'
 import { TaskActions } from '@/components/task-actions'
@@ -12,6 +15,14 @@ interface TaskPageClientProps {
   user: Session['user'] | null
   authProvider: Session['authProvider'] | null
   maxSandboxDuration?: number
+}
+
+function mergeTaskLogs(persisted: Task['logs'], live: LogEntry[]): Task['logs'] {
+  const base = persisted ?? []
+  if (!live.length) return base
+  const seen = new Set(base.map((e) => `${e.type}:${e.message}`))
+  const extra = live.filter((e) => !seen.has(`${e.type}:${e.message}`))
+  return extra.length ? [...base, ...extra] : base
 }
 
 function parseRepoFromUrl(repoUrl: string | null): { owner: string; repo: string } | null {
@@ -38,7 +49,15 @@ export function TaskPageClient({
   maxSandboxDuration = 300,
 }: TaskPageClientProps) {
   const { task, isLoading, error, refetch } = useTask(taskId)
+  const [streamLogs] = useAtom(streamLogsAtomFamily(taskId))
   const [logsPaneHeight, setLogsPaneHeight] = useState(40)
+
+  const taskForLogsPane = useMemo(() => {
+    if (!task) return task
+    const logs = mergeTaskLogs(task.logs, streamLogs)
+    if (logs === task.logs) return task
+    return { ...task, logs }
+  }, [task, streamLogs])
 
   // 读取 URL ?prompt= 参数，只读一次然后清除
   const [searchParams, setSearchParams] = useSearchParams()
@@ -127,7 +146,7 @@ export function TaskPageClient({
         />
       </div>
 
-      <LogsPane task={task} onHeightChange={setLogsPaneHeight} />
+      <LogsPane task={taskForLogsPane ?? task} onHeightChange={setLogsPaneHeight} />
     </div>
   )
 }

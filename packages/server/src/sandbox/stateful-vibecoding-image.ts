@@ -18,7 +18,7 @@ export const VIBECODING_PUBLIC_TCR_REPO =
 
 /** Default tag when URI has no `:tag` (一条龙格式 YYMMDD-HHMM-…-vibecoding). */
 export const VIBECODING_PUBLIC_TCR_DEFAULT_TAG =
-  process.env.STATEFUL_SANDBOX_IMAGE_TAG?.trim() || '260521-1705-vibecoding'
+  process.env.STATEFUL_SANDBOX_IMAGE_TAG?.trim() || '260526-1008-vibecoding'
 
 /** GHCR source used by pnpm setup:tcr before pushing to tenant TCR. */
 export const VIBECODING_GHCR_IMAGE = 'ghcr.io/yhsunshining/cloudbase-workspace:260515-01342a05'

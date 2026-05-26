@@ -1,7 +1,7 @@
 /**
- * Merge vite/ttyd ports into an existing stateful SDT (idempotent).
+ * Set AGS tool Ports to TRW + envd only (idempotent).
  *
- *   pnpm exec tsx scripts/update-stateful-tool-ports.ts
+ *   STATEFUL_TOOL_ID=... pnpm exec tsx scripts/update-stateful-tool-ports.ts
  */
 
 import { config } from 'dotenv'
@@ -11,12 +11,10 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(here, '../.env') })
 
-const DESIRED_PORTS = [
-  { Name: 'p9000', Protocol: 'TCP', Port: 9000 },
-  { Name: 'p49983', Protocol: 'TCP', Port: 49983 },
-  { Name: 'p7681', Protocol: 'TCP', Port: 7681 },
-  { Name: 'p5173', Protocol: 'TCP', Port: 5173 },
-  { Name: 'p3000', Protocol: 'TCP', Port: 3000 },
+/** Match ensure-stateful-tool.ts — preview via :9000, envd for e2b SDK. */
+const STANDARD_TOOL_PORTS = [
+  { Name: 'trw', Protocol: 'TCP', Port: 9000 },
+  { Name: 'envd', Protocol: 'TCP', Port: 49983 },
 ]
 
 async function callAgs(action: string, param: Record<string, unknown>) {
@@ -42,28 +40,35 @@ async function callAgs(action: string, param: Record<string, unknown>) {
   return ags.request(action, param)
 }
 
-function mergePorts(
-  existing: Array<{ Name?: string; Port?: number; Protocol?: string }>,
-): Array<{ Name: string; Protocol: string; Port: number }> {
-  const byPort = new Map<number, { Name: string; Protocol: string; Port: number }>()
-  for (const p of existing) {
-    if (typeof p.Port === 'number') {
-      byPort.set(p.Port, {
-        Name: p.Name || `p${p.Port}`,
-        Protocol: p.Protocol || 'TCP',
-        Port: p.Port,
-      })
-    }
+async function resolveToolId(): Promise<string> {
+  const fromEnv = process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID || ''
+  if (fromEnv) return fromEnv
+
+  const envId = process.env.TCB_ENV_ID || ''
+  if (!envId) throw new Error('TCB_ENV_ID required')
+
+  const { getDb } = await import('../src/db/index.js')
+  const { getProvisionMode } = await import('../src/lib/provision-config.js')
+  const { STATEFUL_TOOL_SETTINGS_KEY, statefulToolNameForEnv } = await import('../src/sandbox/ensure-stateful-tool.js')
+
+  if ((await getProvisionMode()) === 'shared') {
+    const row = await getDb().settings.findSystemSetting(STATEFUL_TOOL_SETTINGS_KEY)
+    if (row?.value) return row.value
   }
-  for (const p of DESIRED_PORTS) {
-    byPort.set(p.Port, p)
-  }
-  return [...byPort.values()].sort((a, b) => a.Port - b.Port)
+
+  const toolName = statefulToolNameForEnv(envId)
+  const list = (await callAgs('DescribeSandboxToolList', {
+    Filters: [{ Name: 'ToolName', Values: [toolName] }],
+    Limit: 20,
+  })) as { SandboxToolSet?: Array<{ ToolId?: string; ToolName?: string }> }
+  const hit = list.SandboxToolSet?.find((t) => t.ToolName === toolName && t.ToolId)
+  if (hit?.ToolId) return hit.ToolId
+
+  throw new Error('No tool id in env or DB; set STATEFUL_TOOL_ID or run ensureStatefulTool once')
 }
 
 async function main() {
-  const toolId = process.env.STATEFUL_TOOL_ID || ''
-  if (!toolId) throw new Error('STATEFUL_TOOL_ID required')
+  const toolId = await resolveToolId()
 
   const list = (await callAgs('DescribeSandboxToolList', { ToolIds: [toolId] })) as {
     SandboxToolSet?: Array<{ CustomConfiguration?: { Ports?: Array<{ Port?: number }>; Image?: string } }>
@@ -72,13 +77,13 @@ async function main() {
   if (!tool?.CustomConfiguration) throw new Error('Tool not found')
 
   const cfg = tool.CustomConfiguration
-  const ports = mergePorts(cfg.Ports || [])
+  const before = (cfg.Ports || []).map((p) => p.Port).filter((n): n is number => typeof n === 'number')
   const param = {
     ToolId: toolId,
     CustomConfiguration: {
       Image: cfg.Image,
       ImageRegistryType: process.env.STATEFUL_IMAGE_REGISTRY || 'personal',
-      Ports: ports,
+      Ports: STANDARD_TOOL_PORTS,
     },
   }
 
@@ -86,7 +91,8 @@ async function main() {
     try {
       const resp = await callAgs(action, param)
       console.log(`[update-stateful-tool-ports] ${action} ok`, JSON.stringify(resp).slice(0, 400))
-      console.log('Ports now:', ports.map((p) => p.Port).join(', '))
+      console.log('Ports before:', before.join(', ') || '(none)')
+      console.log('Ports now:', STANDARD_TOOL_PORTS.map((p) => p.Port).join(', '))
       return
     } catch (err) {
       console.warn(`[update-stateful-tool-ports] ${action} failed:`, (err as Error).message)

@@ -1,61 +1,43 @@
-/**
- * Probe TCB gateway routing to a specific container port on an instance.
- *
- *   SANDBOX_ID=l6wbb... PORT=5173 pnpm exec tsx scripts/probe-gateway-port.ts
- *   SANDBOX_ID=l6wbb... PORT=9000 PATH=/preview/5173/ pnpm exec tsx scripts/probe-gateway-port.ts
- */
-
-import { config } from 'dotenv'
-import { dirname, resolve } from 'node:path'
+import { readFileSync, existsSync } from 'node:fs'
+import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import {
-  buildGatewayTarget,
-  buildTrwPreviewGatewayTarget,
-  gatewayFetch,
-  SANDBOX_BUSINESS_IMAGE_PORT,
-} from '../src/sandbox/stateful/gateway.js'
 
-const here = dirname(fileURLToPath(import.meta.url))
-config({ path: resolve(here, '../.env') })
-
-async function main() {
-  const sandboxId = process.env.SANDBOX_ID || process.env.STATEFUL_SANDBOX_ID || ''
-  const envId = process.env.TCB_ENV_ID || ''
-  const tcbApiKey = process.env.TCB_API_KEY || ''
-  const accessToken = process.env.TCB_ACCESS_TOKEN?.trim() || undefined
-  if (!sandboxId) throw new Error('SANDBOX_ID required')
-  if (!tcbApiKey || !envId) throw new Error('TCB_ENV_ID and TCB_API_KEY required')
-
-  const port = Number(process.env.GW_PORT || '5173')
-  const path = process.env.GW_PATH || '/'
-  const mode = process.env.GW_MODE || 'direct'
-
-  const target =
-    mode === 'trw-preview'
-      ? buildTrwPreviewGatewayTarget({
-          envId,
-          sandboxId,
-          tcbApiKey,
-          vitePort: port,
-          subpath: path === '/' ? '/' : path,
-          accessToken,
-        })
-      : buildGatewayTarget({ envId, sandboxId, tcbApiKey, port, path, accessToken })
-
-  console.log('target.url', target.url)
-  console.log('E2b-Sandbox-Port', target.port)
-  const res = await gatewayFetch(target, { signal: AbortSignal.timeout(30_000) })
-  const ct = res.headers.get('content-type') ?? ''
-  const enc = res.headers.get('content-encoding') ?? '(none)'
-  const snippet = (await res.text()).slice(0, 200).replace(/\s+/g, ' ')
-  console.log('status', res.status, 'content-type', ct, 'content-encoding', enc)
-  console.log('body', snippet)
-  if (port !== SANDBOX_BUSINESS_IMAGE_PORT && res.status === 500) {
-    console.log('\nHint: port not declared on AGS tool — run describe-stateful-tool.ts')
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const envPath = resolve(__dirname, '../.env')
+if (existsSync(envPath)) {
+  for (const line of readFileSync(envPath, 'utf8').split('\n')) {
+    const t = line.trim()
+    if (!t || t.startsWith('#')) continue
+    const eq = t.indexOf('=')
+    if (eq <= 0) continue
+    const k = t.slice(0, eq).trim()
+    if (!process.env[k]) process.env[k] = t.slice(eq + 1).trim()
   }
 }
 
+const taskId = process.argv[2] || '1uup1280sermpmd7e6u'
+
+async function main() {
+  const { getDb } = await import('../src/db/index.js')
+  const { getTaskSandbox } = await import('../src/sandbox/task-sandbox.js')
+  const { resolveGatewayPreviewPort } = await import('../src/sandbox/ttyd-gateway-port.js')
+  const { TTYD_VIRTUAL_PORT } = await import('../src/sandbox/ttyd-preview.js')
+  const task = await getDb().tasks.findById(taskId)
+  const sandbox = await getTaskSandbox(task!, process.env.TCB_ENV_ID || '', {
+    isCodingMode: task!.mode === 'coding',
+  })
+  if (!sandbox) throw new Error('no sandbox')
+  const portsRes = await sandbox.request('/preview/ports')
+  const portsJson = await portsRes.json()
+  const gw = await resolveGatewayPreviewPort(sandbox, TTYD_VIRTUAL_PORT)
+  const auth = await sandbox.getAuthHeaders()
+  const url = `${sandbox.baseUrl}/preview/${gw}/`
+  const res = await fetch(url, { headers: auth })
+  const text = await res.text()
+  console.log(JSON.stringify({ gw, portsJson, upstream: { status: res.status, ttyd: text.includes('ttyd') } }, null, 2))
+}
+
 main().catch((e) => {
-  console.error(e)
+  console.error((e as Error).message)
   process.exit(1)
 })
