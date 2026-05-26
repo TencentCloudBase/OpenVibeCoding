@@ -27,7 +27,8 @@ import {
 import { decrypt } from '../lib/crypto.js'
 import { encryptJWE } from '../lib/session.js'
 import type { AgentCallbackMessage, AgentOptions, CodeBuddyMessage, ExtendedSessionUpdate } from '@coder/shared'
-import { isSandboxToolName, sandboxLogMessageForTool } from '@coder/shared'
+import { isSandboxToolName, sandboxLogMessageForTool, TASK_LOG } from '@coder/shared'
+import { appendAllowedTaskLog } from '../lib/append-task-log.js'
 import { createTaskLogger } from '../lib/task-logger.js'
 import { registerAgent, getAgentRun, completeAgent, isAgentRunning, type StopReason } from './agent-registry.js'
 import { EventBuffer } from './event-buffer.js'
@@ -1916,7 +1917,12 @@ export class CloudbaseAgentService {
         }
 
         try {
-          await archiveToGit(sandboxInstance, conversationId, prompt)
+          const archiveResult = await archiveToGit(sandboxInstance, conversationId, prompt)
+          if (archiveResult === 'ok') {
+            void appendAllowedTaskLog(conversationId, 'info', TASK_LOG.PLATFORM_ARCHIVE_PUSH_OK)
+          } else if (archiveResult === 'fail') {
+            void appendAllowedTaskLog(conversationId, 'error', TASK_LOG.PLATFORM_ARCHIVE_PUSH_FAILED)
+          }
         } catch (err) {
           console.error('[Agent] Archive to git failed:', (err as Error).message)
         }

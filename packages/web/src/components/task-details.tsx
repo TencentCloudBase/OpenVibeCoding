@@ -54,6 +54,8 @@ import { sessionAtom } from '@/lib/atoms/session'
 import { toast } from 'sonner'
 import { Claude, CodeBuddy, Codex, Copilot, Cursor, Gemini, OpenCode } from '@/components/logos'
 import { useTasks } from '@/components/app-layout'
+import { TASK_LOG } from '@coder/shared'
+import { pushLiveTaskLog } from '@/lib/push-live-task-log'
 import {
   getShowFilesPane,
   setShowFilesPane as saveShowFilesPane,
@@ -376,6 +378,9 @@ export function TaskDetails({
   const [previewCurrentPath, setPreviewCurrentPath] = useState<string | undefined>(undefined)
   const previewIframeRef = useRef<HTMLIFrameElement | null>(null)
   const previewAbortRef = useRef<AbortController | null>(null)
+  const previewReadyLoggedRef = useRef(false)
+  const previewRestartLoggedRef = useRef(false)
+  const { refreshTasks } = useTasks()
 
   // ── 预览错误自动修复 ────────────────────────────────────────────
   // 两个触发源：
@@ -583,6 +588,11 @@ export function TaskDetails({
         const data = (await res.json()) as { status: string; vitePort?: number | null }
         if (data.status === 'stopped' && !cancelled) {
           console.log('[preview] Dev server stopped, restarting...')
+          if (!previewRestartLoggedRef.current) {
+            previewRestartLoggedRef.current = true
+            previewReadyLoggedRef.current = false
+            pushLiveTaskLog(task.id, { type: 'info', message: TASK_LOG.PLATFORM_PREVIEW_RESTARTING })
+          }
           if (interval) clearInterval(interval)
           setPreviewLoadingMessage('Dev server 已停止，正在重启...')
           void loadPreviewGatewayUrl()
@@ -598,6 +608,11 @@ export function TaskDetails({
           if (!res.ok) return
           const data = (await res.json()) as { status: string }
           if (data.status === 'stopped' && !cancelled) {
+            if (!previewRestartLoggedRef.current) {
+              previewRestartLoggedRef.current = true
+              previewReadyLoggedRef.current = false
+              pushLiveTaskLog(task.id, { type: 'info', message: TASK_LOG.PLATFORM_PREVIEW_RESTARTING })
+            }
             if (interval) clearInterval(interval)
             setPreviewLoadingMessage('Dev server 已停止，正在重启...')
             void loadPreviewGatewayUrl()
@@ -697,8 +712,18 @@ export function TaskDetails({
   const fileSearchRef = useRef<HTMLDivElement>(null)
   const tabsContainerRef = useRef<HTMLDivElement>(null)
   const tabButtonRefs = useRef<{ [key: string]: HTMLButtonElement | null }>({})
-  const { refreshTasks } = useTasks()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!previewGatewayUrl) {
+      previewReadyLoggedRef.current = false
+      return
+    }
+    if (previewReadyLoggedRef.current) return
+    previewReadyLoggedRef.current = true
+    previewRestartLoggedRef.current = false
+    pushLiveTaskLog(task.id, { type: 'success', message: TASK_LOG.PLATFORM_PREVIEW_READY })
+  }, [previewGatewayUrl, task.id])
 
   // Tabs state for Code pane - each mode has its own tabs and selection
   const [openTabsByMode, setOpenTabsByMode] = useState<{
@@ -1870,8 +1895,7 @@ export function TaskDetails({
 
       if (response.ok) {
         toast.success('沙箱停止成功！')
-        // 刷新任务以更新 UI
-        await refreshTasks()
+        onTaskRefetch?.()
       } else {
         const error = await response.json()
         toast.error(error.error || '停止沙箱失败')
@@ -1893,8 +1917,8 @@ export function TaskDetails({
 
       if (response.ok) {
         toast.success('沙箱启动成功！')
-        // 刷新任务以更新 UI
-        await refreshTasks()
+        pushLiveTaskLog(task.id, { type: 'success', message: TASK_LOG.PLATFORM_SANDBOX_STARTED }, { persist: false })
+        onTaskRefetch?.()
       } else {
         const error = await response.json()
         toast.error(error.error || '启动沙箱失败')

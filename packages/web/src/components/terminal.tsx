@@ -5,6 +5,8 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { TASK_LOG } from '@coder/shared'
+import { pushLiveTaskLog } from '@/lib/push-live-task-log'
 
 /** Must match packages/server/src/sandbox/ttyd-preview.ts TTYD_VIRTUAL_PORT */
 const TTYD_PREVIEW_PORT = 7681
@@ -50,6 +52,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const pollRef = useRef(0)
   const probeGenerationRef = useRef(0)
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  const platformLogRef = useRef<'none' | 'ready' | 'unavailable'>('none')
+  const gateStatusRef = useRef<TerminalGateStatus>('idle')
+  gateStatusRef.current = gateStatus
 
   const iframeSrc = `/api/tasks/${taskId}/preview/${TTYD_PREVIEW_PORT}/`
 
@@ -87,39 +92,58 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
     }
   }, [sandboxReady, taskId])
 
-  const runProbeLoop = useCallback(async () => {
-    const generation = ++probeGenerationRef.current
-    pollRef.current = 0
-    setGateStatus(sandboxReady ? 'checking' : 'no_sandbox')
-    if (!sandboxReady) return
+  const runProbeLoop = useCallback(
+    async (options?: { force?: boolean }) => {
+      // Parent re-renders (e.g. refreshTasks) must not tear down a working iframe.
+      if (!options?.force && gateStatusRef.current === 'ready') return
 
-    while (pollRef.current < MAX_POLLS) {
-      if (generation !== probeGenerationRef.current) return
+      const generation = ++probeGenerationRef.current
+      pollRef.current = 0
+      setGateStatus(sandboxReady ? 'checking' : 'no_sandbox')
+      if (!sandboxReady) return
 
-      const status = await checkTerminal()
-      if (generation !== probeGenerationRef.current) return
+      while (pollRef.current < MAX_POLLS) {
+        if (generation !== probeGenerationRef.current) return
 
-      if (status === 'ready') {
-        setGateStatus('ready')
-        return
+        const status = await checkTerminal()
+        if (generation !== probeGenerationRef.current) return
+
+        if (status === 'ready') {
+          setGateStatus('ready')
+          if (platformLogRef.current !== 'ready') {
+            platformLogRef.current = 'ready'
+            pushLiveTaskLog(taskId, { type: 'success', message: TASK_LOG.PLATFORM_TERMINAL_READY })
+          }
+          return
+        }
+        if (status === 'no_sandbox') {
+          setGateStatus('no_sandbox')
+          platformLogRef.current = 'none'
+          return
+        }
+        if (status === 'unavailable' || status === 'error') {
+          setGateStatus(status)
+          if (platformLogRef.current !== 'unavailable') {
+            platformLogRef.current = 'unavailable'
+            pushLiveTaskLog(taskId, { type: 'error', message: TASK_LOG.PLATFORM_TERMINAL_UNAVAILABLE })
+          }
+          return
+        }
+
+        setGateStatus('starting')
+        pollRef.current += 1
+        await new Promise((r) => setTimeout(r, POLL_MS))
       }
-      if (status === 'no_sandbox') {
-        setGateStatus('no_sandbox')
-        return
+      if (generation === probeGenerationRef.current) {
+        setGateStatus('unavailable')
+        if (platformLogRef.current !== 'unavailable') {
+          platformLogRef.current = 'unavailable'
+          pushLiveTaskLog(taskId, { type: 'error', message: TASK_LOG.PLATFORM_TERMINAL_UNAVAILABLE })
+        }
       }
-      if (status === 'unavailable' || status === 'error') {
-        setGateStatus(status)
-        return
-      }
-
-      setGateStatus('starting')
-      pollRef.current += 1
-      await new Promise((r) => setTimeout(r, POLL_MS))
-    }
-    if (generation === probeGenerationRef.current) {
-      setGateStatus('unavailable')
-    }
-  }, [checkTerminal, sandboxReady])
+    },
+    [checkTerminal, sandboxReady, taskId],
+  )
 
   useEffect(() => {
     if (!isActive) {
@@ -132,6 +156,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
 
   useEffect(() => {
     probeGenerationRef.current += 1
+    platformLogRef.current = 'none'
     setIframeEpoch((n) => n + 1)
   }, [taskId])
 
@@ -149,7 +174,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
   const handleRetry = () => {
     setIframeEpoch((n) => n + 1)
     probeGenerationRef.current += 1
-    void runProbeLoop()
+    platformLogRef.current = 'none'
+    void runProbeLoop({ force: true })
   }
 
   if (!isActive) {

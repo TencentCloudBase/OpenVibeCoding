@@ -5,6 +5,9 @@ import { nanoid } from 'nanoid'
 import { requireAuth, requireUserEnv, type AppEnv } from '../middleware/auth'
 import { readFileSync } from 'node:fs'
 import { createTaskLogger } from '../lib/task-logger'
+import { appendAllowedTaskLog } from '../lib/append-task-log.js'
+import { isAllowedTaskLogMessage, TASK_LOG } from '@coder/shared'
+import type { LogEntry } from '@coder/shared'
 import {
   STATEFUL_WORKSPACE_ROOT,
   resolveSandboxConfig,
@@ -210,7 +213,7 @@ tasksRouter.get('/', async (c) => {
   const authErr = requireAuth(c)
   if (authErr) return authErr
   const session = c.get('session')!
-  const userTasks = await getDb().tasks.findByUserId(session.user.id)
+  const userTasks = await getDb().tasks.findAll(500, 0, { userId: session.user.id })
   const parsedTasks = userTasks.map((t) => ({
     ...t,
     logs: t.logs ? JSON.parse(t.logs) : [],
@@ -466,7 +469,7 @@ tasksRouter.patch('/:taskId', async (c) => {
   if (body.action === 'stop') {
     if (existing.status !== 'processing') return c.json({ error: 'Can only stop processing tasks' }, 400)
     const logger = createTaskLogger(taskId)
-    await logger.info('Task stopped by user')
+    await logger.info(TASK_LOG.PLATFORM_TASK_STOPPED)
     await logger.updateStatus('stopped', 'Task was stopped by user')
     const updated = await getDb().tasks.findById(taskId)
     return c.json({ message: 'Task stopped', task: updated })
@@ -670,6 +673,9 @@ tasksRouter.delete('/', requireUserEnv, async (c) => {
     if (instanceMode === 'shared' && deleted > 0) {
       try {
         sharedSandboxStopped = await statefulProvider.stopSharedEnvSandbox(envId)
+        if (sharedSandboxStopped && deletedTasks[0]) {
+          void appendAllowedTaskLog(deletedTasks[0].id, 'info', TASK_LOG.PLATFORM_SHARED_SANDBOX_STOPPED)
+        }
       } catch (err) {
         failures.push({
           taskId: '*',
@@ -1417,29 +1423,41 @@ tasksRouter.get('/:taskId/file-content', requireUserEnv, async (c) => {
 // POST /:taskId/save-file
 // ---------------------------------------------------------------------------
 tasksRouter.post('/:taskId/save-file', requireUserEnv, async (c) => {
+  const { taskId } = c.req.param()
   try {
     const session = c.get('session')!
     const { envId } = c.get('userEnv')!
-    const { taskId } = c.req.param()
     const body = await c.req.json()
     const { filename, content } = body
     if (!filename || content === undefined) return c.json({ error: 'Missing filename or content' }, 400)
     const task = await findActiveTask(taskId, session.user.id)
     if (!task) return c.json({ error: 'Task not found' }, 404)
-    if (!task.sandboxId) return c.json({ error: 'Task does not have an active sandbox' }, 400)
+    if (!task.sandboxId) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_NO_SANDBOX)
+      return c.json({ error: 'Task does not have an active sandbox' }, 400)
+    }
     const sandbox = await getTaskSandbox(task, envId)
-    if (!sandbox) return c.json({ error: 'Sandbox not available' }, 400)
+    if (!sandbox) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_NO_SANDBOX)
+      return c.json({ error: 'Sandbox not available' }, 400)
+    }
     const success = await writeFileToSandbox(sandbox, filename, content)
-    if (!success) return c.json({ error: 'Failed to write file to sandbox' }, 500)
+    if (!success) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FILE_SAVE_FAILED)
+      return c.json({ error: 'Failed to write file to sandbox' }, 500)
+    }
 
-    // Persist changes to git archive in background (don't block response)
-    archiveToGit(sandbox, taskId, `Edit ${filename}`).catch(() => {
-      // Non-critical: file is saved in sandbox, git push is best-effort
+    await appendAllowedTaskLog(taskId, 'success', TASK_LOG.WORKSPACE_FILE_SAVED)
+
+    void archiveToGit(sandbox, taskId, 'workspace file save').then((result) => {
+      if (result === 'ok') void appendAllowedTaskLog(taskId, 'info', TASK_LOG.PLATFORM_ARCHIVE_PUSH_OK)
+      else if (result === 'fail') void appendAllowedTaskLog(taskId, 'error', TASK_LOG.PLATFORM_ARCHIVE_PUSH_FAILED)
     })
 
     return c.json({ success: true, message: 'File saved successfully' })
   } catch (error) {
     console.error('Error in save-file API:', error)
+    await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FILE_SAVE_FAILED)
     return c.json({ error: 'Internal server error' }, 500)
   }
 })
@@ -1448,28 +1466,42 @@ tasksRouter.post('/:taskId/save-file', requireUserEnv, async (c) => {
 // POST /:taskId/create-file
 // ---------------------------------------------------------------------------
 tasksRouter.post('/:taskId/create-file', requireUserEnv, async (c) => {
+  const { taskId } = c.req.param()
   try {
     const session = c.get('session')!
     const { envId } = c.get('userEnv')!
-    const { taskId } = c.req.param()
     const body = await c.req.json()
     const { filename } = body
     if (!filename || typeof filename !== 'string') return c.json({ success: false, error: 'Filename is required' }, 400)
     const task = await findActiveTask(taskId, session.user.id)
     if (!task) return c.json({ success: false, error: 'Task not found' }, 404)
-    if (!task.sandboxId) return c.json({ success: false, error: 'Sandbox not available' }, 400)
+    if (!task.sandboxId) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_NO_SANDBOX)
+      return c.json({ success: false, error: 'Sandbox not available' }, 400)
+    }
     const sandbox = await getTaskSandbox(task, envId)
-    if (!sandbox) return c.json({ success: false, error: 'Sandbox not found or inactive' }, 400)
+    if (!sandbox) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_NO_SANDBOX)
+      return c.json({ success: false, error: 'Sandbox not found or inactive' }, 400)
+    }
     const pathParts = filename.split('/')
     if (pathParts.length > 1) {
       const dirPath = pathParts.slice(0, -1).join('/')
       const mkdirResult = await runCommandInSandbox(sandbox, `mkdir -p '${dirPath.replace(/'/g, "'\\''")}'`)
-      if (!mkdirResult.success) return c.json({ success: false, error: 'Failed to create parent directories' }, 500)
+      if (!mkdirResult.success) {
+        await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FILE_CREATE_FAILED)
+        return c.json({ success: false, error: 'Failed to create parent directories' }, 500)
+      }
     }
     const touchResult = await runCommandInSandbox(sandbox, `touch '${filename.replace(/'/g, "'\\''")}'`)
-    if (!touchResult.success) return c.json({ success: false, error: 'Failed to create file' }, 500)
+    if (!touchResult.success) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FILE_CREATE_FAILED)
+      return c.json({ success: false, error: 'Failed to create file' }, 500)
+    }
+    await appendAllowedTaskLog(taskId, 'success', TASK_LOG.WORKSPACE_FILE_CREATED)
     return c.json({ success: true, message: 'File created successfully', filename })
   } catch {
+    await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FILE_CREATE_FAILED)
     return c.json({ success: false, error: 'An error occurred while creating the file' }, 500)
   }
 })
@@ -1478,23 +1510,34 @@ tasksRouter.post('/:taskId/create-file', requireUserEnv, async (c) => {
 // POST /:taskId/create-folder
 // ---------------------------------------------------------------------------
 tasksRouter.post('/:taskId/create-folder', requireUserEnv, async (c) => {
+  const { taskId } = c.req.param()
   try {
     const session = c.get('session')!
     const { envId } = c.get('userEnv')!
-    const { taskId } = c.req.param()
     const body = await c.req.json()
     const { foldername } = body
     if (!foldername || typeof foldername !== 'string')
       return c.json({ success: false, error: 'Foldername is required' }, 400)
     const task = await findActiveTask(taskId, session.user.id)
     if (!task) return c.json({ success: false, error: 'Task not found' }, 404)
-    if (!task.sandboxId) return c.json({ success: false, error: 'Sandbox not available' }, 400)
+    if (!task.sandboxId) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_NO_SANDBOX)
+      return c.json({ success: false, error: 'Sandbox not available' }, 400)
+    }
     const sandbox = await getTaskSandbox(task, envId)
-    if (!sandbox) return c.json({ success: false, error: 'Sandbox not found or inactive' }, 400)
+    if (!sandbox) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_NO_SANDBOX)
+      return c.json({ success: false, error: 'Sandbox not found or inactive' }, 400)
+    }
     const mkdirResult = await runCommandInSandbox(sandbox, `mkdir -p '${foldername.replace(/'/g, "'\\''")}'`)
-    if (!mkdirResult.success) return c.json({ success: false, error: 'Failed to create folder' }, 500)
+    if (!mkdirResult.success) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FOLDER_CREATE_FAILED)
+      return c.json({ success: false, error: 'Failed to create folder' }, 500)
+    }
+    await appendAllowedTaskLog(taskId, 'success', TASK_LOG.WORKSPACE_FOLDER_CREATED)
     return c.json({ success: true, message: 'Folder created successfully', foldername })
   } catch {
+    await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FOLDER_CREATE_FAILED)
     return c.json({ success: false, error: 'An error occurred while creating the folder' }, 500)
   }
 })
@@ -1503,22 +1546,33 @@ tasksRouter.post('/:taskId/create-folder', requireUserEnv, async (c) => {
 // DELETE /:taskId/delete-file
 // ---------------------------------------------------------------------------
 tasksRouter.delete('/:taskId/delete-file', requireUserEnv, async (c) => {
+  const { taskId } = c.req.param()
   try {
     const session = c.get('session')!
     const { envId } = c.get('userEnv')!
-    const { taskId } = c.req.param()
     const body = await c.req.json()
     const { filename } = body
     if (!filename || typeof filename !== 'string') return c.json({ success: false, error: 'Filename is required' }, 400)
     const task = await findActiveTask(taskId, session.user.id)
     if (!task) return c.json({ success: false, error: 'Task not found' }, 404)
-    if (!task.sandboxId) return c.json({ success: false, error: 'Sandbox not available' }, 400)
+    if (!task.sandboxId) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_NO_SANDBOX)
+      return c.json({ success: false, error: 'Sandbox not available' }, 400)
+    }
     const sandbox = await getTaskSandbox(task, envId)
-    if (!sandbox) return c.json({ success: false, error: 'Sandbox not found or inactive' }, 400)
+    if (!sandbox) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_NO_SANDBOX)
+      return c.json({ success: false, error: 'Sandbox not found or inactive' }, 400)
+    }
     const rmResult = await runCommandInSandbox(sandbox, `rm '${filename.replace(/'/g, "'\\''")}'`)
-    if (!rmResult.success) return c.json({ success: false, error: 'Failed to delete file' }, 500)
+    if (!rmResult.success) {
+      await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FILE_DELETE_FAILED)
+      return c.json({ success: false, error: 'Failed to delete file' }, 500)
+    }
+    await appendAllowedTaskLog(taskId, 'success', TASK_LOG.WORKSPACE_FILE_DELETED)
     return c.json({ success: true, message: 'File deleted successfully', filename })
   } catch {
+    await appendAllowedTaskLog(taskId, 'error', TASK_LOG.WORKSPACE_FILE_DELETE_FAILED)
     return c.json({ success: false, error: 'An error occurred while deleting the file' }, 500)
   }
 })
@@ -2415,6 +2469,7 @@ tasksRouter.post('/:taskId/deployments', async (c) => {
           metadata: metadata ? JSON.stringify(metadata) : existing.metadata,
           updatedAt: now,
         })
+        await appendAllowedTaskLog(taskId, 'success', TASK_LOG.PLATFORM_DEPLOYMENT_RECORDED)
         return c.json({ deployment: { ...updated, metadata } })
       }
     } else if (type === 'web' && path) {
@@ -2426,6 +2481,7 @@ tasksRouter.post('/:taskId/deployments', async (c) => {
           metadata: metadata ? JSON.stringify(metadata) : existing.metadata,
           updatedAt: now,
         })
+        await appendAllowedTaskLog(taskId, 'success', TASK_LOG.PLATFORM_DEPLOYMENT_RECORDED)
         return c.json({ deployment: { ...updated, metadata } })
       }
     }
@@ -2444,6 +2500,7 @@ tasksRouter.post('/:taskId/deployments', async (c) => {
       createdAt: now,
       updatedAt: now,
     })
+    await appendAllowedTaskLog(taskId, 'success', TASK_LOG.PLATFORM_DEPLOYMENT_RECORDED)
     return c.json({ deployment: { ...newDeployment, metadata } })
   } catch (error) {
     console.error('Error creating deployment:', error)
@@ -2594,7 +2651,7 @@ tasksRouter.post('/:taskId/start-sandbox', requireUserEnv, async (c) => {
       }),
     )
     await getDb().tasks.update(taskId, { sandboxId: sandbox.id, updatedAt: Date.now() })
-    await logger.info('Sandbox started successfully')
+    await logger.success(TASK_LOG.PLATFORM_SANDBOX_STARTED)
     return c.json({ success: true, message: 'Sandbox started successfully', sandboxId: sandbox.id })
   } catch (error) {
     console.error('Error starting sandbox:', error)
@@ -2668,6 +2725,31 @@ tasksRouter.post('/:taskId/restart-dev', requireUserEnv, async (c) => {
   } catch (error) {
     console.error('Error restarting dev server:', error)
     return c.json({ error: 'Failed to restart dev server' }, 500)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// POST /:taskId/append-log — whitelisted static messages only (Logs pane)
+// ---------------------------------------------------------------------------
+tasksRouter.post('/:taskId/append-log', requireUserEnv, async (c) => {
+  try {
+    const session = c.get('session')!
+    const { taskId } = c.req.param()
+    const body = (await c.req.json()) as { type?: LogEntry['type']; message?: string }
+    const message = typeof body.message === 'string' ? body.message.trim() : ''
+    if (!message) return c.json({ success: false, error: 'Message required' }, 400)
+    if (!isAllowedTaskLogMessage(message)) {
+      return c.json({ success: false, error: 'Message not allowed' }, 400)
+    }
+    const task = await findActiveTask(taskId, session.user.id)
+    if (!task) return c.json({ success: false, error: 'Task not found' }, 404)
+
+    const level = body.type === 'error' || body.type === 'success' || body.type === 'command' ? body.type : 'info'
+    await appendAllowedTaskLog(taskId, level, message)
+    return c.json({ success: true })
+  } catch (error) {
+    console.error('Error appending task log:', error)
+    return c.json({ success: false, error: 'Failed to append log' }, 500)
   }
 })
 

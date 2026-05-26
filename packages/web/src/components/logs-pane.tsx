@@ -1,8 +1,15 @@
-import type { Task, LogEntry } from '@coder/shared'
+import type { Task } from '@coder/shared'
+import {
+  isServerTaskLogMessage,
+  isWorkspaceTaskLogMessage,
+  LOG_PREFIX_SERVER,
+  LOG_PREFIX_WORKSPACE,
+  type LogEntry,
+} from '@coder/shared'
 import { Button } from '@/components/ui/button'
 import { Copy, Check, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import { useTasks } from '@/components/app-layout'
@@ -14,17 +21,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 interface LogsPaneProps {
   task: Task
   onHeightChange?: (height: number) => void
+  /** Sync persisted task.logs after clear (e.g. useTask refetch) — avoids full sidebar refresh. */
+  onTaskLogsSync?: () => void | Promise<void>
 }
 
 type TabType = 'logs' | 'terminal'
-type LogFilterType = 'all' | 'platform' | 'server'
+type LogFilterType = 'all' | 'platform' | 'workspace' | 'server'
 
 /** ttyd/xterm needs a real pixel height; smaller panes render a blank black iframe */
 const TERMINAL_PANE_MIN_HEIGHT = 200
 const PANE_HEIGHT_MIN = 100
 const PANE_HEIGHT_MAX_CAP = 600
 
-export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
+export function LogsPane({ task, onHeightChange, onTaskLogsSync }: LogsPaneProps) {
   const [copiedLogs, setCopiedLogs] = useState(false)
   const [isCollapsed, setIsCollapsedState] = useState(true)
   const [paneHeight, setPaneHeight] = useState(200)
@@ -39,7 +48,7 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
   const prevLogsLengthRef = useRef<number>(0)
   const hasInitialScrolled = useRef<boolean>(false)
   const wasAtBottomRef = useRef<boolean>(true)
-  const { isSidebarOpen, isSidebarResizing, refreshTasks } = useTasks()
+  const { isSidebarOpen, isSidebarResizing } = useTasks()
   const setStreamLogs = useSetAtom(streamLogsAtomFamily(task.id))
 
   // Check if we're on desktop
@@ -165,9 +174,11 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
   // Helper function to filter logs based on current filter
   const getFilteredLogs = (filter: LogFilterType) => {
     return (task.logs || []).filter((log) => {
-      const isServerLog = log.message.startsWith('[SERVER]')
-      if (filter === 'server') return isServerLog
-      if (filter === 'platform') return !isServerLog
+      const server = isServerTaskLogMessage(log.message)
+      const workspace = isWorkspaceTaskLogMessage(log.message)
+      if (filter === 'server') return server
+      if (filter === 'workspace') return workspace
+      if (filter === 'platform') return !server && !workspace
       return true
     })
   }
@@ -196,7 +207,7 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
 
       if (response.ok) {
         setStreamLogs([])
-        refreshTasks()
+        await onTaskLogsSync?.()
       } else {
         const error = await response.json()
         toast.error(error.error || 'Failed to clear logs')
@@ -311,6 +322,7 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
                   <SelectContent>
                     <SelectItem value="all">All</SelectItem>
                     <SelectItem value="platform">Platform</SelectItem>
+                    <SelectItem value="workspace">Workspace</SelectItem>
                     <SelectItem value="server">Server</SelectItem>
                   </SelectContent>
                 </Select>
@@ -364,8 +376,13 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
             </div>
           ) : null}
           {getFilteredLogs(logFilter).map((log, index) => {
-            const isServerLog = log.message.startsWith('[SERVER]')
-            const messageContent = isServerLog ? log.message.substring(9) : log.message // Remove '[SERVER] '
+            const isServerLog = isServerTaskLogMessage(log.message)
+            const isWorkspaceLog = isWorkspaceTaskLogMessage(log.message)
+            const messageContent = isServerLog
+              ? log.message.slice(LOG_PREFIX_SERVER.length).trimStart()
+              : isWorkspaceLog
+                ? log.message.slice(LOG_PREFIX_WORKSPACE.length).trimStart()
+                : log.message
 
             const getLogColor = (logType: LogEntry['type']) => {
               switch (logType) {
@@ -395,6 +412,7 @@ export function LogsPane({ task, onHeightChange }: LogsPaneProps) {
               <div key={index} className={cn('flex gap-1.5 leading-tight')}>
                 <span className="text-white/40 text-[10px] shrink-0">[{formatTime(log.timestamp || Date.now())}]</span>
                 <span className={cn('flex-1', getLogColor(log.type))}>
+                  {isWorkspaceLog && <span className="text-amber-400">[工作区]</span>}
                   {isServerLog && <span className="text-purple-400">[SERVER]</span>}
                   {isServerLog && ' '}
                   {messageContent}

@@ -18,6 +18,7 @@ import type { TaskMessage, AskUserQuestionData, ToolConfirmData, DeploymentInfo,
 import { planModeAtomFamily } from '@/lib/atoms/plan-mode'
 import { streamLogsAtomFamily } from '@/lib/atoms/stream-logs'
 import type { LogEntry } from '@coder/shared'
+import { pushLiveTaskLog } from '@/lib/push-live-task-log'
 import { AcpClient } from '@/lib/acp'
 import { applySessionUpdate, IDLE_AGENT_PHASE, type AgentPhaseInfo } from './apply-session-update'
 
@@ -173,13 +174,9 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
 
   const appendStreamLog = useCallback(
     (entry: LogEntry) => {
-      setStreamLogs((prev) => {
-        const last = prev[prev.length - 1]
-        if (last && last.message === entry.message && last.type === entry.type) return prev
-        return [...prev, entry]
-      })
+      pushLiveTaskLog(taskId, entry, { persist: false })
     },
-    [setStreamLogs],
+    [taskId],
   )
 
   /** Dispatch a single SSE sessionUpdate event to the appropriate state setter. */

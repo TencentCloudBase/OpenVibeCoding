@@ -47,6 +47,8 @@ import { OpencodeMessageBuilder, findLastRecordIds, buildHistoryContextPrompt } 
 import { BaseAgentRuntime } from './base-runtime.js'
 import type { SandboxInstance } from '../../sandbox/provider/types.js'
 import { archiveToGit } from '../../sandbox/git-archive.js'
+import { appendAllowedTaskLog } from '../../lib/append-task-log.js'
+import { TASK_LOG } from '@coder/shared'
 import { resolveAgentHostCwd } from '../../lib/sandbox-config.js'
 import os from 'node:os'
 import path from 'node:path'
@@ -589,8 +591,10 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
       }
       // Archive to git（含 error/cancel 场景，保留最终工作状态）
       if (sandbox) {
-        archiveToGit(sandbox, conversationId, prompt).catch((err) => {
-          console.error('[OpencodeAcpRuntime] archiveToGit failed:', err)
+        void archiveToGit(sandbox, conversationId, prompt).then((result) => {
+          if (result === 'ok') void appendAllowedTaskLog(conversationId, 'info', TASK_LOG.PLATFORM_ARCHIVE_PUSH_OK)
+          else if (result === 'fail')
+            void appendAllowedTaskLog(conversationId, 'error', TASK_LOG.PLATFORM_ARCHIVE_PUSH_FAILED)
         })
       }
       // Close sandbox MCP client（同 CodeBuddy runtime 对齐）

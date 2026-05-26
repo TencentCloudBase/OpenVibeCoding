@@ -117,17 +117,19 @@ export async function injectGitArchiveWorkspaceEnv(sandbox: SandboxInstance): Pr
  * @param conversationId 会话 ID（用作分支名）
  * @param prompt 用户提示（用于生成 commit message）
  */
+export type ArchiveToGitResult = 'skipped' | 'ok' | 'fail'
+
 export async function archiveToGit(
   sandbox: SandboxInstance,
   conversationId: string | undefined,
   prompt: string,
-): Promise<void> {
-  if (!conversationId) return
+): Promise<ArchiveToGitResult> {
+  if (!conversationId) return 'skipped'
 
   const config = getConfig()
   if (!config) {
     console.log('[GitArchive] Not configured, skipping archive')
-    return
+    return 'skipped'
   }
 
   try {
@@ -144,11 +146,13 @@ export async function archiveToGit(
     const body = (await gitPushRes.json().catch(() => null)) as { success?: boolean; error?: string } | null
     if (gitPushRes.ok && body?.success !== false) {
       console.log('[GitArchive] Push completed')
-    } else {
-      console.warn('[GitArchive] Push failed')
+      return 'ok'
     }
+    console.warn('[GitArchive] Push failed')
+    return 'fail'
   } catch (err) {
     console.error('[GitArchive] Error:', (err as Error)?.message)
+    return 'fail'
   }
 }
 

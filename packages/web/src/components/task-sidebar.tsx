@@ -27,6 +27,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
 import { useTasks } from '@/components/app-layout'
+import { taskListAtom, taskListLoadingAtom } from '@/lib/atoms/task-list'
+import { clearTaskListNow, finishDeleteAll } from '@/lib/task-list-store'
 import { useAtomValue } from 'jotai'
 import { sessionAtom } from '@/lib/atoms/session'
 import { PRStatusIcon } from '@/components/pr-status-icon'
@@ -80,7 +82,6 @@ const AGENT_MODELS = {
 } as const
 
 interface TaskSidebarProps {
-  tasks: Task[]
   width?: number
 }
 
@@ -97,10 +98,12 @@ interface GitHubRepoInfo {
   language?: string
 }
 
-export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
+export function TaskSidebar({ width = 288 }: TaskSidebarProps) {
   const { pathname } = useLocation()
   const navigate = useNavigate()
-  const { refreshTasks, clearAllTasksOptimistically, revertTasksOptimistically, toggleSidebar } = useTasks()
+  const { refreshTasks, toggleSidebar } = useTasks()
+  const tasks = useAtomValue(taskListAtom)
+  const isInitialLoading = useAtomValue(taskListLoadingAtom)
   const session = useAtomValue(sessionAtom)
   const githubConnection = useAtomValue(githubConnectionAtom)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -122,7 +125,8 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
   const [searchHasMore, setSearchHasMore] = useState(false)
   const loadMoreRef = useRef<HTMLDivElement>(null)
 
-  const activeTaskCount = useMemo(() => tasks.filter((t) => !t.deletedAt).length, [tasks])
+  const visibleTasks = useMemo(() => tasks.filter((t) => !t.deletedAt), [tasks])
+  const activeTaskCount = visibleTasks.length
 
   useEffect(() => {
     if (!session.user) return
@@ -145,7 +149,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
   const taskCountByRepo = useMemo(() => {
     const counts = new Map<string, number>()
 
-    tasks.forEach((task) => {
+    visibleTasks.forEach((task) => {
       if (task.repoUrl) {
         try {
           const url = new URL(task.repoUrl)
@@ -163,7 +167,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
     })
 
     return counts
-  }, [tasks])
+  }, [visibleTasks])
 
   // Debounce search query
   useEffect(() => {
@@ -343,10 +347,11 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
 
     const onTaskPage = pathname.startsWith('/tasks/')
     setShowDeleteDialog(false)
+    clearTaskListNow()
     setIsDeleting(true)
-    clearAllTasksOptimistically()
     if (onTaskPage) navigate('/')
 
+    let deleteSucceeded = false
     try {
       const response = await fetch('/api/tasks?action=all', {
         method: 'DELETE',
@@ -356,26 +361,22 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
       if (response.ok) {
         const result = await response.json()
         const failed = Array.isArray(result.failed) ? result.failed.length : 0
-        const deleted = typeof result.deleted === 'number' ? result.deleted : 0
+        const deleted = Number(result.deleted) || 0
+        deleteSucceeded = deleted > 0
         if (failed > 0) {
           toast.warning(`${result.message ?? '已删除'}（${failed} 项警告/失败）`)
         } else {
           toast.success(result.message ?? '已删除全部任务')
         }
-        if (deleted === 0) {
-          revertTasksOptimistically()
-        }
-        await refreshTasks()
       } else {
-        revertTasksOptimistically()
         const error = await response.json().catch(() => ({}))
         toast.error(error.error || '删除全部任务失败')
       }
     } catch (error) {
-      revertTasksOptimistically()
       console.error('Error deleting all tasks:', error)
       toast.error('删除全部任务失败')
     } finally {
+      await finishDeleteAll(deleteSucceeded)
       setIsDeleting(false)
     }
   }
@@ -548,7 +549,15 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
       {/* Tasks Tab Content */}
       {activeTab === 'tasks' && (
         <div className="space-y-1">
-          {tasks.length === 0 ? (
+          {isInitialLoading && visibleTasks.length === 0 ? (
+            <>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Card key={i} className="animate-pulse h-[70px] rounded-lg">
+                  <CardContent className="px-3 py-2" />
+                </Card>
+              ))}
+            </>
+          ) : visibleTasks.length === 0 ? (
             <Card>
               <CardContent className="p-3 text-center text-xs text-muted-foreground">
                 No tasks yet. Create your first task!
@@ -556,7 +565,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
             </Card>
           ) : (
             <>
-              {tasks.slice(0, 10).map((task) => {
+              {visibleTasks.slice(0, 10).map((task) => {
                 const isActive = pathname === `/tasks/${task.id}`
 
                 return (
@@ -665,7 +674,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
                   </Link>
                 )
               })}
-              {tasks.length >= 1 && (
+              {visibleTasks.length >= 1 && (
                 <div className="pt-1">
                   <Link to="/tasks" onClick={handleLinkClick}>
                     <Button variant="ghost" size="sm" className="w-full justify-start h-7 px-2 text-xs">
@@ -801,7 +810,10 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteAllTasks}
+              onClick={(e) => {
+                e.preventDefault()
+                void handleDeleteAllTasks()
+              }}
               disabled={isDeleting || activeTaskCount === 0}
               className="bg-red-600 hover:bg-red-700"
             >

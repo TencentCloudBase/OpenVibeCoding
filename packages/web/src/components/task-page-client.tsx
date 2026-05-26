@@ -146,7 +146,7 @@ export function TaskPageClient({
         />
       </div>
 
-      <LogsPane task={taskForLogsPane ?? task} onHeightChange={setLogsPaneHeight} />
+      <LogsPane task={taskForLogsPane ?? task} onHeightChange={setLogsPaneHeight} onTaskLogsSync={refetch} />
     </div>
   )
 }
