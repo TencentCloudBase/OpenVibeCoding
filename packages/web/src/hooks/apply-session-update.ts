@@ -16,6 +16,12 @@ import type { Dispatch, SetStateAction, MutableRefObject } from 'react'
 import type { ExtendedSessionUpdate, AgentPhaseName } from '@coder/shared'
 import type { TaskMessage, ToolConfirmData, DeploymentInfo, ArtifactInfo } from '@/types/task-chat'
 import { extractPlanContent } from '@/components/chat/plan-content'
+import {
+  IDLE_SANDBOX_LANE,
+  isSandboxToolName,
+  resolveSandboxOutcomeKey,
+  type SandboxLaneState,
+} from '@/lib/sandbox-status'
 
 type StreamPhase = 'idle' | 'streaming' | 'waiting_for_interaction'
 
@@ -42,6 +48,64 @@ export interface AgentPhaseInfo {
   phase: AgentPhaseName | null
   toolName?: string
   timestamp: number
+  sandbox: SandboxLaneState
+}
+
+export const IDLE_AGENT_PHASE: AgentPhaseInfo = {
+  phase: null,
+  timestamp: 0,
+  sandbox: IDLE_SANDBOX_LANE,
+}
+
+function applyAgentPhaseEvent(
+  prev: AgentPhaseInfo,
+  nextPhase: AgentPhaseName | null,
+  nextToolName?: string,
+  nextTs = Date.now(),
+): AgentPhaseInfo {
+  if (prev.timestamp > nextTs) return prev
+
+  if (isSandboxToolName(nextToolName)) {
+    const tool = nextToolName!
+    let sandbox: SandboxLaneState = { ...prev.sandbox }
+
+    if (tool === 'sandbox:error') {
+      sandbox = {
+        status: 'failed',
+        toolName: tool,
+        outcomeKey: 'failed',
+        lastPrepareToolName: prev.sandbox.lastPrepareToolName,
+      }
+    } else if (tool === 'sandbox:ready') {
+      const last = prev.sandbox.lastPrepareToolName
+      const outcomeKey = last === 'sandbox:init_mcp' ? 'workspace_ready' : resolveSandboxOutcomeKey(last)
+      sandbox = {
+        status: 'success',
+        outcomeKey,
+        lastPrepareToolName: last,
+      }
+    } else {
+      sandbox = {
+        status: 'preparing',
+        toolName: tool,
+        lastPrepareToolName: tool,
+      }
+    }
+
+    return {
+      phase: prev.phase,
+      toolName: prev.toolName,
+      timestamp: nextTs,
+      sandbox,
+    }
+  }
+
+  return {
+    phase: nextPhase,
+    toolName: nextToolName,
+    timestamp: nextTs,
+    sandbox: prev.sandbox,
+  }
 }
 
 export interface ApplySessionUpdateCtx {
@@ -342,18 +406,10 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
       break
 
     case 'agent_phase': {
-      // P4: 代理执行阶段上报。服务端在关键边界(preparing/model_responding/tool_executing/
-      // compacting/idle)推送,前端只负责把 phase + toolName 映射到状态指示器。
-      //
-      // 同一 turn 内服务端已做过去重(lastEmittedPhase),这里直接覆盖即可;
-      // reconnect 场景若有乱序事件,用 timestamp 保证后到的旧事件不覆盖新 phase。
       const nextPhase = (u.phase ?? null) as AgentPhaseName | null
       const nextToolName = typeof u.toolName === 'string' ? u.toolName : undefined
       const nextTs = typeof u.timestamp === 'number' ? u.timestamp : Date.now()
-      setAgentPhase((prev) => {
-        if (prev.timestamp > nextTs) return prev
-        return { phase: nextPhase, toolName: nextToolName, timestamp: nextTs }
-      })
+      setAgentPhase((prev) => applyAgentPhaseEvent(prev, nextPhase, nextToolName, nextTs))
       break
     }
   }

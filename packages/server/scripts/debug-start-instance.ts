@@ -6,6 +6,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { buildGitArchiveInstanceEnv } from '../src/sandbox/git-archive.js'
 import { isStatefulAuthModeEnabled } from '../src/sandbox/stateful-sandbox-auth.js'
+import { resolveAgsSandboxTimeout } from '../src/sandbox/stateful-sandbox-ttl.js'
 import { describeStatefulToolCustomConfiguration } from '../src/sandbox/ensure-stateful-tool.js'
 import {
   mergeInstanceEnvIntoToolConfiguration,
@@ -61,7 +62,7 @@ async function main() {
     }
     const startParam: Record<string, unknown> = {
       ToolId: toolId,
-      Timeout: '30m',
+      Timeout: resolveAgsSandboxTimeout(),
       ...(customConfiguration ? { CustomConfiguration: customConfiguration } : {}),
     }
     if (!isStatefulAuthModeEnabled()) startParam.AuthMode = 'NONE'

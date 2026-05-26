@@ -49,6 +49,7 @@ import {
 } from '../stateful-sandbox-auth.js'
 import { buildDataPlaneHeaders, SANDBOX_BUSINESS_IMAGE_PORT } from '../stateful/gateway.js'
 import { createStatefulMcpClient } from '../stateful/stateful-mcp-client.js'
+import { resolveAgsSandboxTimeout } from '../stateful-sandbox-ttl.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -238,7 +239,7 @@ async function callAgsManagerApi(
 }
 
 async function startStatefulInstance(cfg: StatefulRuntimeConfig, toolId: string): Promise<string> {
-  const startParam: Record<string, unknown> = { ToolId: toolId, Timeout: '30m' }
+  const startParam: Record<string, unknown> = { ToolId: toolId, Timeout: resolveAgsSandboxTimeout() }
   if (!cfg.enableAuthMode) startParam.AuthMode = 'NONE'
   const result = (await callAgsManagerApi('StartSandboxInstance', startParam, cfg)) as Record<string, unknown>
   const data = result?.data as Record<string, unknown> | undefined
@@ -594,6 +595,23 @@ class StatefulProvider implements SandboxProvider {
       return
     }
     // shared: one /home/user per env instance — no per-task workspace teardown in 沙箱业务镜像.
+  }
+
+  /** Stop the single shared AGS instance for envId (after all tasks removed). */
+  async stopSharedEnvSandbox(envId: string): Promise<boolean> {
+    const toolId = await ensureStatefulTool(envId)
+    const cfg = readStatefulRuntimeConfig(envId, toolId)
+    const discover = await describeAgsInstances(cfg, { toolId })
+    const active = discover.filter((it) => ['RUNNING', 'PAUSED', 'RESUME_FAILED'].includes(it.status))
+    const primary = pickPrimaryInstance(active)
+    if (!primary) return false
+    await stopStatefulInstance(cfg, primary.instanceId)
+    for (const key of [...this.instanceCache.keys()]) {
+      if (key === `env:${envId}` || key.startsWith(`env:${envId}:`)) {
+        this.instanceCache.delete(key)
+      }
+    }
+    return true
   }
 
   // ── Optional admin helpers (not on SandboxProvider interface, but useful) ──

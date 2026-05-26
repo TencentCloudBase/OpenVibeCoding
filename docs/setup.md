@@ -131,8 +131,10 @@ flowchart TD
 | `TCB_ACCESS_TOKEN` | 条件 | `ENABLE_AUTH_MODE=true` 时**必填**（`sit_*`）；server 请求加 `X-Access-Token`，起实例不传 `NONE` |
 | `STATEFUL_SANDBOX_IMAGE` | 否 | 首次 `CreateSandboxTool` 或镜像漂移 reconcile；不配则用公开 TCR 默认或 `TCR_IMAGE` |
 | `TCR_IMAGE` | 否 | `pnpm setup:tcr` 写入你的命名空间 |
+| `SANDBOX_TTL_SECONDS` | 否 | AGS 实例超时（**秒**），默认 `1800`（30m）；写入 `StartSandboxInstance.Timeout` 与 `CreateSandboxTool.DefaultTimeout` |
 | `WORKSPACE_ISOLATION` | 否 | `shared` / `isolated` — 沙箱**实例**是否跨任务复用（与 main 同名；`SANDBOX_INSTANCE_MODE` 仍可读作兼容别名） |
-| `GIT_ARCHIVE_*` / `GIT_PERSONAL_AUTH` | 否 | 归档与 Link；实例就绪后 `PUT /api/workspace/env` 注入（非 Start 时传 boot env） |
+| `MAX_SANDBOX_DURATION` | 否 | 任务字段默认上限（**秒**，默认 300）；**不**控制 AGS Stop，与 `SANDBOX_TTL_SECONDS` 无关 |
+| `GIT_ARCHIVE_*` | 否 | 工作区归档；实例就绪后 `PUT /api/workspace/env` 注入（非 Start 时传 boot env） |
 | `STATEFUL_PUBLIC_TCR_REPOSITORY` | 否 | 公开 TCR 仓库名，默认 `tcb-sandbox-public-cbe88d` |
 
 **网关**：固定 `https://{TCB_ENV_ID}.api.tcloudbasegateway.com/v1/sandbox/-`，无 env 覆盖。
@@ -140,8 +142,6 @@ flowchart TD
 **数据面鉴权（两层）**：`X-Cloudbase-Authorization`（`TCB_API_KEY`）始终需要；开启 `ENABLE_AUTH_MODE` 后还需 `X-Access-Token`（`TCB_ACCESS_TOKEN`，来自 AGS `AcquireSandboxInstanceToken`）。`ENABLE_AUTH_MODE` 会通过 `PUT /api/workspace/env` 注入沙箱业务镜像（不含 token）。
 
 **小程序**：沙箱业务镜像 `/api/jobs/miniprogram-deploy` **默认开启**，无需 env 开关。
-
-**仅调试脚本**：`STATEFUL_TOOL_ID`、`STATEFUL_SANDBOX_ID`。
 
 **镜像**：须为 `ccr.ccs.tencentyun.com/...`（沙箱 infra 使用 TCR 个人版，`ImageRegistryType: personal`）。团队公开默认见 `packages/server/src/sandbox/stateful-vibecoding-image.ts`；自部署用自有命名空间推送后设 `STATEFUL_SANDBOX_IMAGE` 或跑 `pnpm setup:tcr`。勿在文档或 git 中提交 API Key / TCR 密码。
 

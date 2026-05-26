@@ -8,10 +8,11 @@ import { createTaskLogger } from '../lib/task-logger'
 import {
   STATEFUL_WORKSPACE_ROOT,
   resolveSandboxConfig,
+  resolveSandboxInstanceMode,
   resolveSandboxModeForNewTask,
   backfillSandboxConfig,
   isValidSandboxInstanceMode,
-} from '../lib/sandbox-config'
+} from '../lib/sandbox-config.js'
 import { buildStatefulAcquireContext } from '../sandbox/acquire-context.js'
 import { proxyTaskPreview } from '../sandbox/preview-proxy.js'
 import { decrypt } from '../lib/crypto'
@@ -22,6 +23,7 @@ import {
   deleteConversationViaSandbox,
   archiveToGit,
   getSandboxProvider,
+  statefulProvider,
   getTaskSandbox,
   runCommandInSandbox,
   downloadFileFromSandbox,
@@ -424,6 +426,16 @@ tasksRouter.post('/', async (c) => {
   return c.json({ task: { ...newTask, logs: [], mcpServerIds: null } })
 })
 
+// Sandbox instance mode for UI copy (DB > env > default)
+tasksRouter.get('/sandbox-policy', requireUserEnv, async (c) => {
+  const mode = await resolveSandboxInstanceMode()
+  return c.json({
+    sandboxInstanceMode: mode.value,
+    source: mode.source,
+    envDefault: mode.envDefault,
+  })
+})
+
 // Get single task
 tasksRouter.get('/:taskId', async (c) => {
   const authErr = requireAuth(c)
@@ -496,9 +508,21 @@ type DeleteTaskSuccess = {
   provisionFailed?: Awaited<ReturnType<typeof destroyProvisionedResources>>['failed']
 }
 
+async function cleanupSandboxAfterTaskDelete(existing: Task, envId: string): Promise<void> {
+  const sandbox = await getTaskSandbox(existing, envId).catch(() => null)
+  if (!sandbox) return
+  if (existing.sandboxMode === 'isolated') {
+    const provider = getSandboxProvider()
+    if (provider.destroy) await provider.destroy(sandbox)
+  } else {
+    await deleteConversationViaSandbox(sandbox, envId, existing.id, existing.sandboxCwd || undefined)
+  }
+}
+
 async function deleteTaskForUser(
   existing: Task,
   envId: string,
+  opts?: { awaitSandbox?: boolean },
 ): Promise<DeleteTaskSuccess | { ok: false; failure: DeleteTaskFailure }> {
   const taskId = existing.id
   let provisionFailed: DeleteTaskSuccess['provisionFailed']
@@ -543,23 +567,17 @@ async function deleteTaskForUser(
 
   await getDb().tasks.softDelete(taskId)
 
-  void (async () => {
+  if (opts?.awaitSandbox) {
     try {
-      const sandbox = await getTaskSandbox(existing, envId).catch(() => null)
-      if (sandbox) {
-        if (existing.sandboxMode === 'isolated') {
-          const provider = getSandboxProvider()
-          if (provider.destroy) {
-            await provider.destroy(sandbox)
-          }
-        } else {
-          await deleteConversationViaSandbox(sandbox, envId, taskId, existing.sandboxCwd || undefined)
-        }
-      }
+      await cleanupSandboxAfterTaskDelete(existing, envId)
     } catch {
       console.log('clean conversation workspace error')
     }
-  })()
+  } else {
+    void cleanupSandboxAfterTaskDelete(existing, envId).catch(() => {
+      console.log('clean conversation workspace error')
+    })
+  }
 
   if (provisionFailed?.length) {
     return {
@@ -571,15 +589,72 @@ async function deleteTaskForUser(
   return { ok: true }
 }
 
-// Bulk delete by status (sidebar: completed / failed / stopped)
 tasksRouter.delete('/', requireUserEnv, async (c) => {
   const session = c.get('session')!
   const { envId } = c.get('userEnv')!
   const action = c.req.query('action') ?? ''
+
+  if (action === 'all') {
+    const candidates = await getDb().tasks.findAll(500, 0, { userId: session.user.id })
+    const toDelete = candidates.filter((t) => !t.deletedAt)
+    if (toDelete.length === 0) {
+      return c.json({ message: '没有可删除的任务', deleted: 0, sharedSandboxStopped: false, failed: [] })
+    }
+
+    const instanceMode = (await resolveSandboxInstanceMode()).value
+    let deleted = 0
+    const failures: Array<{ taskId: string; error: string; detail?: string }> = []
+
+    for (const task of toDelete) {
+      const result = await deleteTaskForUser(task, envId, { awaitSandbox: true })
+      if (result.ok) {
+        deleted += 1
+        if (result.warning) {
+          failures.push({ taskId: task.id, error: result.warning })
+        }
+      } else {
+        const body = result.failure.body
+        failures.push({
+          taskId: task.id,
+          error: String(body.error ?? 'delete failed'),
+          detail: typeof body.detail === 'string' ? body.detail : undefined,
+        })
+      }
+    }
+
+    let sharedSandboxStopped = false
+    if (instanceMode === 'shared' && deleted > 0) {
+      try {
+        sharedSandboxStopped = await statefulProvider.stopSharedEnvSandbox(envId)
+      } catch (err) {
+        failures.push({
+          taskId: '*',
+          error: '停止共享沙箱实例失败',
+          detail: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
+    if (deleted === 0 && failures.length > 0) {
+      return c.json({ error: '未能删除任何任务', deleted, failed: failures, sharedSandboxStopped }, 409)
+    }
+
+    return c.json({
+      message: `已删除 ${deleted} 个任务`,
+      deleted,
+      failed: failures,
+      sharedSandboxStopped,
+      sandboxInstanceMode: instanceMode,
+    })
+  }
+
   const statusSet = resolveBulkDeleteStatuses(action)
 
   if (statusSet.size === 0) {
-    return c.json({ error: 'Invalid or empty action query (e.g. ?action=completed,failed,stopped)' }, 400)
+    return c.json(
+      { error: 'Invalid or empty action query (e.g. ?action=all or ?action=completed,failed,stopped)' },
+      400,
+    )
   }
   const candidates = await getDb().tasks.findAll(500, 0, { userId: session.user.id })
   const toDelete = candidates.filter((t) => statusSet.has(t.status))

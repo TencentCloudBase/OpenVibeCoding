@@ -215,7 +215,7 @@ function withTaskDefaults(task: Record<string, unknown>): Task {
     status: doc.status || 'pending',
     selectedAgent: doc.selectedAgent ?? 'codebuddy',
     selectedRuntime: doc.selectedRuntime ?? null,
-    sandboxMode: doc.sandboxMode || 'isolated',
+    sandboxMode: doc.sandboxMode || 'shared',
     installDependencies: doc.installDependencies ?? false,
     maxDuration: doc.maxDuration ?? 300,
     keepAlive: doc.keepAlive ?? false,

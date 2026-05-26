@@ -14,7 +14,7 @@ import { ToolCallCard } from '@/components/chat/tool-call-card'
 import { SubagentCard } from '@/components/chat/subagent-card'
 import { AskUserForm } from '@/components/chat/ask-user-form'
 import { InterruptionCard } from '@/components/chat/interruption-card'
-import { AgentStatusIndicator } from '@/components/chat/agent-status-indicator'
+import { TurnStatusLines } from '@/components/chat/turn-status-lines'
 import { extractPlanContent } from '@/components/chat/plan-content'
 import { mdComponents } from '@/components/chat/markdown-block'
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -1049,10 +1049,25 @@ export function TaskChat({
                           isLatestGroup &&
                           isLatestMessage &&
                           (isStreamingResponse || isSending) &&
-                          agentPhase?.phase &&
-                          agentPhase.phase !== 'idle' && (
+                          (agentPhase.sandbox.status !== 'idle' ||
+                            (agentPhase.phase && agentPhase.phase !== 'idle')) && (
                             <div className="px-2 pb-1">
-                              <AgentStatusIndicator phase={agentPhase.phase} toolName={agentPhase.toolName} />
+                              <TurnStatusLines
+                                agentPhase={agentPhase}
+                                sandboxMode={
+                                  task.sandboxMode === 'isolated' || task.sandboxMode === 'shared'
+                                    ? task.sandboxMode
+                                    : 'shared'
+                                }
+                                isActive={isStreamingResponse || isSending}
+                                hasAgentContent={
+                                  !!agentMessage.content.trim() ||
+                                  !!agentMessage.parts?.some(
+                                    (p) =>
+                                      p.type === 'tool_call' || p.type === 'thinking' || (p.type === 'text' && p.text),
+                                  )
+                                }
+                              />
                             </div>
                           )}
                         <div className="text-xs text-muted-foreground px-2">
@@ -1320,25 +1335,43 @@ export function TaskChat({
               const userMessages = displayMessages.filter((m) => m.role === 'user')
               const isFirstMessage = userMessages.length === 1
               const setupLogs = (task.logs || []).filter((log) => !log.message.startsWith('[SERVER]')).slice(-8)
-              if (isFirstMessage && setupLogs.length > 0) {
+              const sandboxLaneActive = (agentPhase?.sandbox.status ?? 'idle') !== 'idle'
+              if (isFirstMessage && (setupLogs.length > 0 || sandboxLaneActive)) {
                 return (
                   <div className="mt-4">
                     <div className="text-xs px-2">
                       <div className="space-y-1">
-                        <div className="text-muted-foreground font-medium mb-2 flex items-center gap-2">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          正在设置沙箱...
-                        </div>
-                        <div className="space-y-0.5 pl-5">
-                          {setupLogs.map((log, idx) => (
-                            <div
-                              key={idx}
-                              className={`truncate ${idx === setupLogs.length - 1 ? 'text-foreground' : log.type === 'error' ? 'text-red-500/60' : log.type === 'success' ? 'text-green-500/60' : 'text-muted-foreground/60'}`}
-                            >
-                              {log.message}
-                            </div>
-                          ))}
-                        </div>
+                        {!readOnly && sandboxLaneActive && agentPhase ? (
+                          <div className="mb-2">
+                            <TurnStatusLines
+                              agentPhase={agentPhase}
+                              sandboxMode={
+                                task.sandboxMode === 'isolated' || task.sandboxMode === 'shared'
+                                  ? task.sandboxMode
+                                  : 'shared'
+                              }
+                              isActive={isStreamingResponse || isSending}
+                              hasAgentContent={false}
+                            />
+                          </div>
+                        ) : (
+                          <div className="text-muted-foreground font-medium mb-2 flex items-center gap-2">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            环境准备中...
+                          </div>
+                        )}
+                        {setupLogs.length > 0 && (
+                          <div className="space-y-0.5 pl-5">
+                            {setupLogs.map((log, idx) => (
+                              <div
+                                key={idx}
+                                className={`truncate ${idx === setupLogs.length - 1 ? 'text-foreground' : log.type === 'error' ? 'text-red-500/60' : log.type === 'success' ? 'text-green-500/60' : 'text-muted-foreground/60'}`}
+                              >
+                                {log.message}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                         <div className="text-right font-mono text-muted-foreground/50 mt-2">
                           {formatDuration(lastMessage.createdAt)}
                         </div>

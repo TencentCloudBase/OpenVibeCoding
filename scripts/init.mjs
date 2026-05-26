@@ -883,7 +883,7 @@ ENCRYPTION_KEY=${crypto.randomBytes(32).toString('hex')}
 NEXT_PUBLIC_AUTH_PROVIDERS=local
 
 # Sandbox instance mode: shared (one instance per env) | isolated (per task). Same env name as upstream main.
-WORKSPACE_ISOLATION=isolated
+WORKSPACE_ISOLATION=shared
 
 # Rate Limiting
 MAX_MESSAGES_PER_DAY=50
@@ -1012,8 +1012,7 @@ ENABLE_AUTH_MODE=${get('ENABLE_AUTH_MODE', 'false')}
 # TCB_ACCESS_TOKEN=            # sit_* when ENABLE_AUTH_MODE=true
 STATEFUL_SANDBOX_IMAGE=${get('STATEFUL_SANDBOX_IMAGE', get('TCR_IMAGE'))}
 WORKSPACE_ISOLATION=${get('WORKSPACE_ISOLATION', get('SANDBOX_INSTANCE_MODE', 'shared'))}
-# STATEFUL_TOOL_ID=              # debug only
-# STATEFUL_SANDBOX_ID=           # debug: pin instance
+SANDBOX_TTL_SECONDS=${get('SANDBOX_TTL_SECONDS', '1800')}
 
 # ==================== GitHub OAuth (Optional) ====================
 

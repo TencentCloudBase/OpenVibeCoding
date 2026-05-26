@@ -17,10 +17,10 @@ import type { ExtendedSessionUpdate, PermissionAction, AgentPermissionMode } fro
 import type { TaskMessage, AskUserQuestionData, ToolConfirmData, DeploymentInfo, ArtifactInfo } from '@/types/task-chat'
 import { planModeAtomFamily } from '@/lib/atoms/plan-mode'
 import { AcpClient } from '@/lib/acp'
-import { applySessionUpdate, type AgentPhaseInfo } from './apply-session-update'
+import { applySessionUpdate, IDLE_AGENT_PHASE, type AgentPhaseInfo } from './apply-session-update'
 
 /** Agent 执行阶段的空闲态;Hook 初始化与 turn 结束时复位用 */
-const IDLE_PHASE: AgentPhaseInfo = { phase: null, timestamp: 0 }
+const IDLE_PHASE: AgentPhaseInfo = IDLE_AGENT_PHASE
 
 // ─── Stream Phase ─────────────────────────────────────────────────────
 
@@ -140,6 +140,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
     phaseRef.current = 'streaming'
     setIsSending(true)
     setIsStreamingResponse(true)
+    setAgentPhase(IDLE_PHASE)
   }, [])
 
   const exitStreaming = useCallback(async () => {

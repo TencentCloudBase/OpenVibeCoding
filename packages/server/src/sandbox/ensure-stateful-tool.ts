@@ -12,6 +12,7 @@ import {
   resolveStatefulImageRegistryType,
   resolveStatefulSandboxImage,
 } from './stateful-vibecoding-image.js'
+import { resolveAgsSandboxTimeout } from './stateful-sandbox-ttl.js'
 
 export const STATEFUL_TOOL_SETTINGS_KEY = 'stateful_tool_id'
 
@@ -130,7 +131,7 @@ async function createSandboxTool(envId: string): Promise<string> {
       },
     },
     NetworkConfiguration: { NetworkMode: 'PUBLIC' },
-    DefaultTimeout: '30m',
+    DefaultTimeout: resolveAgsSandboxTimeout(),
     Description: `OpenVibeCoding stateful sandbox for env ${envId}`,
   }
 

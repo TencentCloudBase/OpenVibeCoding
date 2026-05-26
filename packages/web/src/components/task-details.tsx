@@ -11,6 +11,11 @@ interface Connector {
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
+  deleteSingleTaskDialogBody,
+  deleteSingleTaskMenuHint,
+  type SandboxInstanceMode,
+} from '@/lib/sandbox-instance-mode-copy'
+import {
   GitBranch,
   CheckCircle,
   AlertCircle,
@@ -265,12 +270,12 @@ export function TaskDetails({
   const lastSandboxReadyRefetchRef = useRef(0)
   useEffect(() => {
     if (!isCodingModeForAutoFix || !onTaskRefetch) return
-    if (chatStream.agentPhase.toolName !== 'sandbox:ready') return
+    if (chatStream.agentPhase.sandbox.status !== 'success') return
     const ts = chatStream.agentPhase.timestamp
     if (ts <= lastSandboxReadyRefetchRef.current) return
     lastSandboxReadyRefetchRef.current = ts
     onTaskRefetch()
-  }, [chatStream.agentPhase.toolName, chatStream.agentPhase.timestamp, isCodingModeForAutoFix, onTaskRefetch])
+  }, [chatStream.agentPhase.sandbox.status, chatStream.agentPhase.timestamp, isCodingModeForAutoFix, onTaskRefetch])
 
   // Handle initial prompt (once) at this level
   const initialTriggered = useRef(false)
@@ -289,6 +294,7 @@ export function TaskDetails({
   const [refreshKey, setRefreshKey] = useState(0)
   const previousStatusRef = useRef<Task['status']>(task.status)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [envSandboxInstanceMode, setEnvSandboxInstanceMode] = useState<SandboxInstanceMode>('shared')
   const [showTryAgainDialog, setShowTryAgainDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isTryingAgain, setIsTryingAgain] = useState(false)
@@ -307,6 +313,15 @@ export function TaskDetails({
   const [tryAgainMaxDuration, setTryAgainMaxDuration] = useState(task.maxDuration || maxSandboxDuration)
   const [tryAgainKeepAlive, setTryAgainKeepAlive] = useState(task.keepAlive || false)
   const [tryAgainEnableBrowser, setTryAgainEnableBrowser] = useState(task.enableBrowser || false)
+
+  useEffect(() => {
+    void fetch('/api/tasks/sandbox-policy', { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { sandboxInstanceMode?: string } | null) => {
+        setEnvSandboxInstanceMode(data?.sandboxInstanceMode === 'isolated' ? 'isolated' : 'shared')
+      })
+      .catch(() => setEnvSandboxInstanceMode('shared'))
+  }, [])
   const [tryAgainAgentModels, setTryAgainAgentModels] = useState<Record<string, Array<{ id: string; name: string }>>>(
     {},
   )
@@ -2110,7 +2125,11 @@ export function TaskDetails({
                 <GitBranch className="h-4 w-4 mr-2" />
                 关联 Git 仓库
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowDeleteDialog(true)} className="text-red-600">
+              <DropdownMenuItem
+                onClick={() => setShowDeleteDialog(true)}
+                className="text-red-600"
+                title={deleteSingleTaskMenuHint(task.sandboxMode, envSandboxInstanceMode)}
+              >
                 <Trash2 className="h-4 w-4 mr-2" />
                 删除任务
               </DropdownMenuItem>
@@ -3608,9 +3627,9 @@ export function TaskDetails({
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Task</AlertDialogTitle>
+            <AlertDialogTitle>删除任务</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this task? This action cannot be undone.
+              {deleteSingleTaskDialogBody(task.sandboxMode, envSandboxInstanceMode)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

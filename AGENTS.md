@@ -111,7 +111,7 @@ SSE poll 检测 isDone → 发 [DONE] → removeAgent()
 - 沙箱 = SCF 容器（基于自定义 Docker 镜像）
 - 工具重定向：CLI 的文件/命令工具通过 HTTP API 路由到沙箱
 - MCP Proxy：CloudBase 工具通过 sandbox 内的 mcporter 发现和执行
-- 隔离模式：`WORKSPACE_ISOLATION=isolated`（每 task 独立）/ `shared`（共享 session）
+- 沙箱实例模式：`WORKSPACE_ISOLATION=shared`（默认，每 env 一实例）/ `isolated`（每 task 一实例）
 
 ### 数据库
 
