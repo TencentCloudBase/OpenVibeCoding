@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, useCallback } from 'react'
+import { useState, useEffect, createContext, useContext, useCallback, useRef } from 'react'
 import { TaskSidebar } from '@/components/task-sidebar'
 import type { Task } from '@coder/shared'
 import { Button } from '@/components/ui/button'
@@ -17,6 +17,8 @@ interface AppLayoutProps {
 
 interface TasksContextType {
   refreshTasks: () => Promise<void>
+  clearAllTasksOptimistically: () => void
+  revertTasksOptimistically: () => void
   toggleSidebar: () => void
   isSidebarOpen: boolean
   isSidebarResizing: boolean
@@ -94,6 +96,7 @@ function SidebarLoader({ width }: { width: number }) {
 
 export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, initialIsMobile }: AppLayoutProps) {
   const [tasks, setTasks] = useState<Task[]>([])
+  const tasksSnapshotForRevertRef = useRef<Task[]>([])
   const [isLoading, setIsLoading] = useState(true)
   // Initialize sidebar state based on user agent and preferences
   // On mobile (from user agent): always closed
@@ -260,6 +263,20 @@ export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, i
     return { id, optimisticTask }
   }
 
+  const clearAllTasksOptimistically = useCallback(() => {
+    setTasks((prev) => {
+      tasksSnapshotForRevertRef.current = prev
+      return []
+    })
+  }, [])
+
+  const revertTasksOptimistically = useCallback(() => {
+    const snapshot = tasksSnapshotForRevertRef.current
+    if (snapshot.length === 0) return
+    setTasks(snapshot)
+    tasksSnapshotForRevertRef.current = []
+  }, [])
+
   const closeSidebar = () => {
     updateSidebarOpen(false, false) // Don't save to cookie for mobile backdrop clicks
   }
@@ -305,6 +322,8 @@ export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, i
     <TasksContext.Provider
       value={{
         refreshTasks: fetchTasks,
+        clearAllTasksOptimistically,
+        revertTasksOptimistically,
         toggleSidebar,
         isSidebarOpen,
         isSidebarResizing: isResizing,

@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { AlertCircle, Plus, Trash2, GitBranch, Loader2, Search, X, MoreVertical, Smartphone, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Link, useLocation } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { Claude, CodeBuddy, Codex, Copilot, Cursor, Gemini, OpenCode } from '@/components/logos'
 import {
   AlertDialog,
@@ -99,7 +99,8 @@ interface GitHubRepoInfo {
 
 export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
   const { pathname } = useLocation()
-  const { refreshTasks, toggleSidebar } = useTasks()
+  const navigate = useNavigate()
+  const { refreshTasks, clearAllTasksOptimistically, revertTasksOptimistically, toggleSidebar } = useTasks()
   const session = useAtomValue(sessionAtom)
   const githubConnection = useAtomValue(githubConnectionAtom)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -340,7 +341,12 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
   const handleDeleteAllTasks = async () => {
     if (activeTaskCount === 0) return
 
+    const onTaskPage = pathname.startsWith('/tasks/')
+    setShowDeleteDialog(false)
     setIsDeleting(true)
+    clearAllTasksOptimistically()
+    if (onTaskPage) navigate('/')
+
     try {
       const response = await fetch('/api/tasks?action=all', {
         method: 'DELETE',
@@ -350,18 +356,23 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
       if (response.ok) {
         const result = await response.json()
         const failed = Array.isArray(result.failed) ? result.failed.length : 0
+        const deleted = typeof result.deleted === 'number' ? result.deleted : 0
         if (failed > 0) {
           toast.warning(`${result.message ?? '已删除'}（${failed} 项警告/失败）`)
         } else {
           toast.success(result.message ?? '已删除全部任务')
         }
+        if (deleted === 0) {
+          revertTasksOptimistically()
+        }
         await refreshTasks()
-        setShowDeleteDialog(false)
       } else {
-        const error = await response.json()
+        revertTasksOptimistically()
+        const error = await response.json().catch(() => ({}))
         toast.error(error.error || '删除全部任务失败')
       }
     } catch (error) {
+      revertTasksOptimistically()
       console.error('Error deleting all tasks:', error)
       toast.error('删除全部任务失败')
     } finally {
@@ -794,7 +805,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
               disabled={isDeleting || activeTaskCount === 0}
               className="bg-red-600 hover:bg-red-700"
             >
-              {isDeleting ? (sandboxInstanceMode === 'isolated' ? '正在逐个删除…' : '正在删除…') : '删除全部'}
+              {isDeleting ? '正在删除…' : '删除全部'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

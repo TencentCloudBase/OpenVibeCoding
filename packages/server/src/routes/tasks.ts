@@ -522,7 +522,7 @@ async function cleanupSandboxAfterTaskDelete(existing: Task, envId: string): Pro
 async function deleteTaskForUser(
   existing: Task,
   envId: string,
-  opts?: { awaitSandbox?: boolean },
+  opts?: { awaitSandbox?: boolean; skipSandboxCleanup?: boolean },
 ): Promise<DeleteTaskSuccess | { ok: false; failure: DeleteTaskFailure }> {
   const taskId = existing.id
   let provisionFailed: DeleteTaskSuccess['provisionFailed']
@@ -567,16 +567,18 @@ async function deleteTaskForUser(
 
   await getDb().tasks.softDelete(taskId)
 
-  if (opts?.awaitSandbox) {
-    try {
-      await cleanupSandboxAfterTaskDelete(existing, envId)
-    } catch {
-      console.log('clean conversation workspace error')
+  if (!opts?.skipSandboxCleanup) {
+    if (opts?.awaitSandbox) {
+      try {
+        await cleanupSandboxAfterTaskDelete(existing, envId)
+      } catch {
+        console.log('clean conversation workspace error')
+      }
+    } else {
+      void cleanupSandboxAfterTaskDelete(existing, envId).catch(() => {
+        console.log('clean conversation workspace error')
+      })
     }
-  } else {
-    void cleanupSandboxAfterTaskDelete(existing, envId).catch(() => {
-      console.log('clean conversation workspace error')
-    })
   }
 
   if (provisionFailed?.length) {
@@ -587,6 +589,60 @@ async function deleteTaskForUser(
     }
   }
   return { ok: true }
+}
+
+/** Parallel DB/provision deletes; isolated sandbox stops use SANDBOX_DESTROY_CONCURRENCY (lower for AGS). */
+const DELETE_ALL_CONCURRENCY = Math.min(16, Math.max(1, Number(process.env.DELETE_ALL_CONCURRENCY) || 8))
+const SANDBOX_DESTROY_CONCURRENCY = Math.min(8, Math.max(1, Number(process.env.SANDBOX_DESTROY_CONCURRENCY) || 4))
+
+async function deleteTasksInBatch(
+  toDelete: Task[],
+  envId: string,
+  opts: { awaitSandbox?: boolean; skipSandboxCleanup?: boolean },
+): Promise<{
+  deleted: number
+  deletedTasks: Task[]
+  failures: Array<{ taskId: string; error: string; detail?: string }>
+}> {
+  let deleted = 0
+  const deletedTasks: Task[] = []
+  const failures: Array<{ taskId: string; error: string; detail?: string }> = []
+
+  for (let i = 0; i < toDelete.length; i += DELETE_ALL_CONCURRENCY) {
+    const batch = toDelete.slice(i, i + DELETE_ALL_CONCURRENCY)
+    const results = await Promise.all(batch.map((task) => deleteTaskForUser(task, envId, opts)))
+    for (let j = 0; j < batch.length; j++) {
+      const task = batch[j]!
+      const result = results[j]!
+      if (result.ok) {
+        deleted += 1
+        deletedTasks.push(task)
+        if (result.warning) {
+          failures.push({ taskId: task.id, error: result.warning })
+        }
+      } else {
+        const body = result.failure.body
+        failures.push({
+          taskId: task.id,
+          error: String(body.error ?? 'delete failed'),
+          detail: typeof body.detail === 'string' ? body.detail : undefined,
+        })
+      }
+    }
+  }
+
+  return { deleted, deletedTasks, failures }
+}
+
+/** Isolated-only: stop per-task AGS instances after bulk soft-delete (shared uses stopSharedEnvSandbox). */
+function scheduleSandboxCleanupAfterDeleteAll(deletedTasks: Task[], envId: string, instanceMode: string): void {
+  if (deletedTasks.length === 0 || instanceMode === 'shared') return
+  void (async () => {
+    for (let i = 0; i < deletedTasks.length; i += SANDBOX_DESTROY_CONCURRENCY) {
+      const batch = deletedTasks.slice(i, i + SANDBOX_DESTROY_CONCURRENCY)
+      await Promise.allSettled(batch.map((task) => cleanupSandboxAfterTaskDelete(task, envId)))
+    }
+  })()
 }
 
 tasksRouter.delete('/', requireUserEnv, async (c) => {
@@ -602,25 +658,13 @@ tasksRouter.delete('/', requireUserEnv, async (c) => {
     }
 
     const instanceMode = (await resolveSandboxInstanceMode()).value
-    let deleted = 0
-    const failures: Array<{ taskId: string; error: string; detail?: string }> = []
+    // Bulk: never per-task sandbox work in deleteTaskForUser — shared stops once below; isolated in background.
+    const { deleted, deletedTasks, failures } = await deleteTasksInBatch(toDelete, envId, {
+      awaitSandbox: false,
+      skipSandboxCleanup: true,
+    })
 
-    for (const task of toDelete) {
-      const result = await deleteTaskForUser(task, envId, { awaitSandbox: true })
-      if (result.ok) {
-        deleted += 1
-        if (result.warning) {
-          failures.push({ taskId: task.id, error: result.warning })
-        }
-      } else {
-        const body = result.failure.body
-        failures.push({
-          taskId: task.id,
-          error: String(body.error ?? 'delete failed'),
-          detail: typeof body.detail === 'string' ? body.detail : undefined,
-        })
-      }
-    }
+    scheduleSandboxCleanupAfterDeleteAll(deletedTasks, envId, instanceMode)
 
     let sharedSandboxStopped = false
     if (instanceMode === 'shared' && deleted > 0) {
@@ -659,28 +703,7 @@ tasksRouter.delete('/', requireUserEnv, async (c) => {
   const candidates = await getDb().tasks.findAll(500, 0, { userId: session.user.id })
   const toDelete = candidates.filter((t) => statusSet.has(t.status))
 
-  let deleted = 0
-  const failures: Array<{ taskId: string; error: string; detail?: string }> = []
-
-  for (const task of toDelete) {
-    const result = await deleteTaskForUser(task, envId)
-    if (result.ok) {
-      deleted += 1
-      if (result.warning) {
-        failures.push({
-          taskId: task.id,
-          error: result.warning,
-        })
-      }
-    } else {
-      const body = result.failure.body
-      failures.push({
-        taskId: task.id,
-        error: String(body.error ?? 'delete failed'),
-        detail: typeof body.detail === 'string' ? body.detail : undefined,
-      })
-    }
-  }
+  const { deleted, failures } = await deleteTasksInBatch(toDelete, envId, { awaitSandbox: false })
 
   if (deleted === 0 && failures.length > 0) {
     return c.json(
