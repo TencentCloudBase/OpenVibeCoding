@@ -12,29 +12,13 @@ import {
   mergeInstanceEnvIntoToolConfiguration,
   pickStartCustomConfigurationFromTool,
 } from '../src/sandbox/stateful-custom-configuration.js'
+import { agsCredentialsFromProcessEnv, callAgsManagerApi } from '../src/lib/cloudbase-ags-api.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 config({ path: resolve(here, '../../../.env.local') })
 
 async function callAgs(action: string, param: Record<string, unknown>) {
-  const managerModule = await import('@cloudbase/manager-node')
-  const managerUtilsModule = await import('@cloudbase/manager-node/lib/utils')
-  const CloudBase = ((managerModule as { default?: unknown }).default || managerModule) as new (cfg: object) => {
-    context: object
-  }
-  const CloudService = ((managerUtilsModule as { CloudService?: unknown; default?: { CloudService?: unknown } })
-    .CloudService || (managerUtilsModule as { default?: { CloudService?: unknown } }).default?.CloudService) as new (
-    ctx: object,
-    svc: string,
-    ver: string,
-  ) => { request: (a: string, p: object) => Promise<unknown> }
-
-  const secretId = process.env.TCB_SECRET_ID || ''
-  const secretKey = process.env.TCB_SECRET_KEY || ''
-  const envId = process.env.TCB_ENV_ID || ''
-  const app = new CloudBase({ secretId, secretKey, envId })
-  const ags = new CloudService(app.context, 'ags', '2025-09-20')
-  return ags.request(action, param)
+  return callAgsManagerApi(action, param, agsCredentialsFromProcessEnv())
 }
 
 async function main() {

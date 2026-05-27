@@ -13,6 +13,7 @@ import {
   resolveStatefulSandboxImage,
 } from './stateful-vibecoding-image.js'
 import { resolveAgsSandboxTimeout } from './stateful-sandbox-ttl.js'
+import { agsCredentialsFromProcessEnv, callAgsManagerApi as requestAgsManagerApi } from '../lib/cloudbase-ags-api.js'
 
 export const STATEFUL_TOOL_SETTINGS_KEY = 'stateful_tool_id'
 
@@ -71,25 +72,7 @@ function resolveSandboxGatewayUrl(envId: string): string {
 }
 
 async function callAgsManagerApi(action: string, param: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const managerModule = await import('@cloudbase/manager-node')
-  // @ts-expect-error manager-node ships utils without types
-  const managerUtilsModule = await import('@cloudbase/manager-node/lib/utils')
-  const CloudBase = ((managerModule as any).default || managerModule) as any
-  const CloudService = ((managerUtilsModule as any).CloudService ||
-    (managerUtilsModule as any).default?.CloudService) as any
-
-  const secretId = process.env.TCB_SECRET_ID || ''
-  const secretKey = process.env.TCB_SECRET_KEY || ''
-  const token = process.env.TCB_TOKEN || process.env.TENCENTCLOUD_SESSIONTOKEN || ''
-  const managerEnvId = process.env.TCB_ENV_ID || ''
-
-  if (!secretId || !secretKey || !managerEnvId) {
-    throw new Error('TCB_ENV_ID and TCB_SECRET_ID/KEY are required to manage sandbox tools')
-  }
-
-  const app = new CloudBase({ secretId, secretKey, token, envId: managerEnvId })
-  const agsService = new CloudService(app.context, 'ags', '2025-09-20')
-  return (await agsService.request(action, param)) as Record<string, unknown>
+  return requestAgsManagerApi(action, param, agsCredentialsFromProcessEnv())
 }
 
 async function createSandboxTool(envId: string): Promise<string> {

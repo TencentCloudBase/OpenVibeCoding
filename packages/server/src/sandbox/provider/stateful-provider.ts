@@ -40,6 +40,7 @@ import type {
 } from './types.js'
 import { STATEFUL_WORKSPACE_ROOT } from '../../lib/sandbox-config.js'
 import { buildGitArchiveWorkspaceEnv, injectGitArchiveWorkspaceEnv } from '../git-archive.js'
+import { callAgsManagerApi as requestAgsManagerApi } from '../../lib/cloudbase-ags-api.js'
 import { ensureStatefulTool, resolveStatefulGatewayUrl } from '../ensure-stateful-tool.js'
 import { startStatefulInstanceWithWarmup } from '../stateful-tool-warmup.js'
 import {
@@ -220,20 +221,12 @@ async function callAgsManagerApi(
   param: Record<string, unknown>,
   cfg: StatefulRuntimeConfig,
 ): Promise<Record<string, unknown>> {
-  const managerModule = await import('@cloudbase/manager-node')
-  // @ts-expect-error manager-node ships utils without types
-  const managerUtilsModule = await import('@cloudbase/manager-node/lib/utils')
-  const CloudBase = ((managerModule as any).default || managerModule) as any
-  const CloudService = ((managerUtilsModule as any).CloudService ||
-    (managerUtilsModule as any).default?.CloudService) as any
-  const app = new CloudBase({
+  return requestAgsManagerApi(action, param, {
     secretId: cfg.managerSecretId,
     secretKey: cfg.managerSecretKey,
     token: cfg.managerToken,
     envId: cfg.managerEnvId,
   })
-  const agsService = new CloudService(app.context, 'ags', '2025-09-20')
-  return agsService.request(action, param)
 }
 
 async function startStatefulInstance(cfg: StatefulRuntimeConfig, toolId: string): Promise<string> {

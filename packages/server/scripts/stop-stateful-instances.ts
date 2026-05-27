@@ -7,6 +7,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { agsCredentialsFromProcessEnv, callAgsManagerApi } from '../src/lib/cloudbase-ags-api.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const envPath = resolve(__dirname, '../../../.env.local')
@@ -24,26 +25,8 @@ if (existsSync(envPath)) {
 
 const ACTIVE = new Set(['RUNNING', 'PAUSED', 'RESUME_FAILED'])
 
-async function callAgsManagerApi(action: string, param: Record<string, unknown>) {
-  const managerModule = await import('@cloudbase/manager-node')
-  // @ts-expect-error manager-node ships utils without types
-  const managerUtilsModule = await import('@cloudbase/manager-node/lib/utils')
-  const CloudBase = ((managerModule as any).default || managerModule) as any
-  const CloudService = ((managerUtilsModule as any).CloudService ||
-    (managerUtilsModule as any).default?.CloudService) as any
-
-  const secretId = process.env.TCB_SECRET_ID || ''
-  const secretKey = process.env.TCB_SECRET_KEY || ''
-  const token = process.env.TCB_TOKEN || process.env.TENCENTCLOUD_SESSIONTOKEN || ''
-  const managerEnvId = process.env.TCB_ENV_ID || ''
-
-  if (!secretId || !secretKey || !managerEnvId) {
-    throw new Error('TCB_ENV_ID and TCB_SECRET_ID/KEY are required')
-  }
-
-  const app = new CloudBase({ secretId, secretKey, token, envId: managerEnvId })
-  const agsService = new CloudService(app.context, 'ags', '2025-09-20')
-  return (await agsService.request(action, param)) as Record<string, unknown>
+async function ags(action: string, param: Record<string, unknown>) {
+  return callAgsManagerApi(action, param, agsCredentialsFromProcessEnv())
 }
 
 async function resolveToolId(): Promise<string> {
@@ -57,7 +40,7 @@ async function resolveToolId(): Promise<string> {
 
   const { statefulToolNameForEnv } = await import('../src/sandbox/ensure-stateful-tool.js')
   const toolName = statefulToolNameForEnv(envId)
-  const resp = await callAgsManagerApi('DescribeSandboxToolList', {
+  const resp = await ags('DescribeSandboxToolList', {
     Filters: [{ Name: 'ToolName', Values: [toolName] }],
     Limit: 20,
   })
@@ -73,7 +56,7 @@ async function resolveToolId(): Promise<string> {
 async function main() {
   const toolId = await resolveToolId()
 
-  const list = await callAgsManagerApi('DescribeSandboxInstanceList', { ToolId: toolId, Limit: 100 })
+  const list = await ags('DescribeSandboxInstanceList', { ToolId: toolId, Limit: 100 })
   const data = list?.data as Record<string, unknown> | undefined
   const rows = (list?.InstanceSet || data?.InstanceSet || []) as Array<Record<string, unknown>>
   const active = rows
@@ -92,7 +75,7 @@ async function main() {
   const errors: Array<{ instanceId: string; error: string }> = []
   for (const { instanceId, status } of active) {
     try {
-      await callAgsManagerApi('StopSandboxInstance', { InstanceId: instanceId })
+      await ags('StopSandboxInstance', { InstanceId: instanceId })
       stopped.push(`${instanceId}(${status})`)
     } catch (e) {
       errors.push({ instanceId, error: (e as Error).message })
