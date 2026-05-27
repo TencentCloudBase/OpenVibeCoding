@@ -44,6 +44,7 @@
     "drizzle-orm": "^0.36.4",
     "eslint": "^9.39.2",
     "husky": "^9.1.7",
+    "opencode-ai": "1.15.11",
     "patch-package": "^8.0.1",
     "prettier": "^3.8.1",
     "tailwindcss": "^4.1.18",
@@ -60,7 +61,10 @@
   "pnpm": {
     "patchedDependencies": {
       "@tencent-ai/agent-sdk@0.3.68": "patches/@tencent-ai__agent-sdk@0.3.68.patch"
-    }
+    },
+    "onlyBuiltDependencies": [
+      "opencode-ai"
+    ]
   },
   "packageManager": "pnpm@10.20.0+sha512.cf9998222162dd85864d0a8102e7892e7ba4ceadebbf5a31f9c2fce48dfce317a9c53b9f6464d1ef9042cba2e02ae02a9f7c143a2b438cd93c91840f0192b9dd"
 }

@@ -89,6 +89,23 @@ pnpm dlx shadcn@latest add button
 - **OpenCode ACP Runtime**（`opencode-acp-runtime.ts`）— 基于 opencode CLI 的 ACP 协议实现
 - **Agent Registry**（`agent-registry.ts`）— 内存中追踪运行中的 agent 状态
 
+#### OpenCode 二进制依赖
+
+OpenCode runtime 依赖外部 `opencode` CLI（npm 包 `opencode-ai`），不是普通 import 依赖。
+`acp-transport.ts:getResolvedBin()` 通过 `OPENCODE_BIN` env 或扫 PATH 解析，找不到时
+`/api/agent/runtimes` 会把 OpenCode 上报为 `available: false`，前端选择器显示「不可用」。
+
+安装位置：
+
+- **本地开发**：在 root `package.json` 的 `devDependencies` 里。`pnpm install` 会装到
+  `node_modules/.bin/opencode`，跑 `pnpm dev:server` 时 PATH 自动带上，无需额外配置。
+  注意 `pnpm.onlyBuiltDependencies` 必须包含 `opencode-ai`，否则 postinstall
+  （下载平台二进制）会被跳过，bin 不可用。
+- **Docker 镜像**：Stage 2 用 `npm install -g opencode-ai@<version>` 全局安装（避开
+  `pnpm install --prod --ignore-scripts` 跳过 postinstall 的问题）。**版本必须和 root
+  devDep 一致**，升级时两处同步。
+- **覆盖路径**：`OPENCODE_BIN=/abs/path/to/opencode` 优先级高于 PATH 扫描。
+
 ### SSE 生命周期
 
 ```

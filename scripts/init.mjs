@@ -185,49 +185,59 @@ async function checkPnpm() {
 }
 
 function checkDocker() {
-  logSection('检查 Docker')
+  logSection('检查 Docker / Podman')
+
+  // Try docker first
   try {
     execSync('docker info', { stdio: 'pipe' })
     log('Docker 守护进程正在运行', 'success')
     return true
   } catch {
-    log('Docker 未安装或未运行', 'error')
-    log('请先安装并启动 Docker，然后重新运行 ./init.sh：', 'info')
-    log('  brew install colima docker && colima start', 'info')
-    log('  # 或从 https://www.docker.com/products/docker-desktop 下载 Docker Desktop', 'info')
-    return false
+    // docker not available, try podman
   }
-}
 
-// ===================== TCR Setup (optional; disabled in Stateful default init) =====================
-
-async function setupTcr() {
-  logSection('配置 TCR（容器镜像服务）')
-
-  const env = loadEnvFile()
-
-  log('正在运行 TCR 配置脚本...')
-  try {
-    execSync('node scripts/setup-tcr.mjs', {
-      stdio: 'inherit',
-      env: {
-        ...process.env,
-        TCB_SECRET_ID: tcbConfig.secretId || process.env.TCB_SECRET_ID || '',
-        TCB_SECRET_KEY: tcbConfig.secretKey || process.env.TCB_SECRET_KEY || '',
-        TCB_TOKEN: tcbConfig.token || process.env.TCB_TOKEN || '',
-        TCB_ENV_ID: tcbConfig.envId || process.env.TCB_ENV_ID || '',
-        TCB_REGION: process.env.TCB_REGION || 'ap-shanghai',
-        TENCENTCLOUD_ACCOUNT_ID: process.env.TENCENTCLOUD_ACCOUNT_ID || '',
-        TCR_PASSWORD: env['TCR_PASSWORD'] || '',
-      },
-    })
-    log('TCR 配置完成', 'success')
-    return true
-  } catch (error) {
-    log('TCR 配置失败，可稍后手动执行。', 'warn')
-    log('运行：node scripts/setup-tcr.mjs', 'info')
-    return false
+  // Fallback to podman — if machine is stopped/disconnected, attempt to start it
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      execSync('podman info', { stdio: 'pipe' })
+      log('Podman 正在运行（将作为 Docker 兜底使用）', 'success')
+      try {
+        const podmanSocket = execSync('podman machine inspect --format "{{.ConnectionInfo.PodmanSocket.Path}}"', { stdio: 'pipe' }).toString().trim()
+        if (podmanSocket) {
+          process.env.DOCKER_HOST = `unix://${podmanSocket}`
+        }
+      } catch {
+        // native Linux podman, no machine needed
+      }
+      return true
+    } catch {
+      if (attempt === 0) {
+        // podman info failed — machine may be stopped or SSH disconnected
+        log('Podman 已安装但未响应，尝试自动启动...', 'info')
+        try {
+          execSync('podman machine start', { stdio: 'pipe' })
+        } catch {
+          // may already be "running" but SSH broken — stop and restart
+          try {
+            execSync('podman machine stop', { stdio: 'pipe' })
+            execSync('podman machine start', { stdio: 'pipe' })
+          } catch {
+            break
+          }
+        }
+      }
+    }
   }
+
+  log('Docker / Podman 未安装或未运行', 'error')
+  log('请安装以下任一工具后重新运行 ./init.sh：', 'info')
+  log('  # Docker Desktop（推荐）', 'info')
+  log('  https://www.docker.com/products/docker-desktop', 'info')
+  log('  # 或 Colima + Docker CLI', 'info')
+  log('  brew install colima docker && colima start', 'info')
+  log('  # 或 Podman（Apple Silicon 原生，无需 Rosetta）', 'info')
+  log('  brew install podman && podman machine init && podman machine start', 'info')
+  return false
 }
 
 /** Set in main() before CloudBase setup: ENV_LOCAL or ENV_CLOUD */
@@ -799,6 +809,149 @@ async function setupStatefulSandbox() {
   }
 
   return true
+}
+
+function resolveDockerCmd() {
+  try {
+    execSync('docker info', { stdio: 'pipe' })
+    return 'docker'
+  } catch {
+    // docker not available
+  }
+  try {
+    execSync('podman info', { stdio: 'pipe' })
+    return 'podman'
+  } catch {
+    // podman not available
+  }
+  return null
+}
+
+async function setupTcrEnterprise(env) {
+  const image = env['TCR_IMAGE']
+  const username = env['TCR_USERNAME']
+  const password = env['TCR_PASSWORD']
+  const sourceImage = env['TCR_LOCAL_IMAGE'] || 'ghcr.io/yhsunshining/cloudbase-workspace:260513-0354ed6b'
+
+  if (!image) {
+    log('企业版模式需要配置 TCR_IMAGE', 'error')
+    return false
+  }
+  if (!username || !password) {
+    log('企业版模式需要配置 TCR_USERNAME 和 TCR_PASSWORD（服务级账号）', 'error')
+    return false
+  }
+
+  const dockerCmd = resolveDockerCmd()
+  if (!dockerCmd) {
+    log('未找到 Docker 或 Podman，请先安装', 'error')
+    return false
+  }
+
+  // 从镜像 URL 中提取 registry 域名
+  const registry = image.split('/')[0]
+
+  // Step 1: docker login
+  log(`登录企业版 TCR：${registry}`)
+  try {
+    execSync(`echo '${password}' | ${dockerCmd} login ${registry} --username ${username} --password-stdin`, {
+      stdio: 'pipe',
+    })
+    log('TCR 登录成功', 'success')
+  } catch {
+    log('TCR 登录失败，请检查 TCR_USERNAME / TCR_PASSWORD', 'error')
+    return false
+  }
+
+  // Step 2: 检查本地是否已有目标镜像，有则跳过 pull
+  let localImageExists = false
+  try {
+    execSync(`${dockerCmd} image inspect ${image}`, { stdio: 'pipe' })
+    localImageExists = true
+    log(`目标镜像已存在，跳过拉取：${image}`, 'success')
+  } catch {
+    // not found locally
+  }
+
+  if (!localImageExists) {
+    // Step 3: pull 源镜像
+    log(`拉取源镜像：${sourceImage}`)
+    try {
+      execSync(`${dockerCmd} pull ${sourceImage}`, { stdio: 'inherit' })
+      log('源镜像拉取成功', 'success')
+    } catch {
+      log('源镜像拉取失败，请检查网络或手动拉取', 'error')
+      return false
+    }
+
+    // Step 4: tag
+    log(`标记镜像：${sourceImage} → ${image}`)
+    try {
+      execSync(`${dockerCmd} tag ${sourceImage} ${image}`, { stdio: 'pipe' })
+      log('镜像标记成功', 'success')
+    } catch {
+      log('镜像标记失败', 'error')
+      return false
+    }
+
+    // Step 5: push
+    log(`推送镜像：${image}`)
+    try {
+      execSync(`${dockerCmd} push ${image}`, { stdio: 'inherit' })
+      log('镜像推送成功', 'success')
+    } catch {
+      log('镜像推送失败，请检查权限或网络', 'error')
+      return false
+    }
+  }
+
+  return true
+}
+
+async function setupTcr() {
+  logSection('配置 TCR（容器镜像服务）')
+
+  const env = loadEnvFile(envWriteTarget)
+  const imageType =
+    env['SANDBOX_IMAGE_TYPE'] || env['SCF_SANDBOX_IMAGE_TYPE'] || 'personal'
+
+  // 企业版模式：执行 docker login + pull + tag + push
+  if (imageType === 'enterprise') {
+    log('检测到企业版 TCR 模式')
+    return await setupTcrEnterprise(env)
+  }
+
+  // 个人版模式：已有 TCR_IMAGE 则跳过
+  const existingImage = env['TCR_IMAGE'] || env['SCF_SANDBOX_IMAGE_URI']
+  if (existingImage) {
+    log(`TCR 镜像已配置，跳过 setup-tcr.mjs：${existingImage}`, 'success')
+    return true
+  }
+
+  // Run the full TCR setup script, passing credentials via env
+  log('正在运行 TCR 配置脚本...')
+  try {
+    execSync('node scripts/setup-tcr.mjs', {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        TCB_SECRET_ID: tcbConfig.secretId || process.env.TCB_SECRET_ID || '',
+        TCB_SECRET_KEY: tcbConfig.secretKey || process.env.TCB_SECRET_KEY || '',
+        TCB_TOKEN: tcbConfig.token || process.env.TCB_TOKEN || '',
+        TCB_ENV_ID: tcbConfig.envId || process.env.TCB_ENV_ID || '',
+        TCB_REGION: process.env.TCB_REGION || 'ap-shanghai',
+        TENCENTCLOUD_ACCOUNT_ID: process.env.TENCENTCLOUD_ACCOUNT_ID || '',
+        TCR_PASSWORD: env['TCR_PASSWORD'] || '',
+        TCR_USERNAME: env['TCR_USERNAME'] || '',
+      },
+    })
+    log('TCR 配置完成', 'success')
+    return true
+  } catch (error) {
+    log('TCR 配置失败，可稍后手动执行。', 'warn')
+    log('运行：node scripts/setup-tcr.mjs', 'info')
+    return false
+  }
 }
 
 function createEnvResolvers(existingServerEnv, env) {

@@ -18,6 +18,7 @@
   <a href="#快速开始">快速开始</a> ◆
   <a href="./docs/architecture.md">架构</a> ◆
   <a href="./docs/setup.md">部署</a> ◆
+  <a href="#加入交流群">交流群</a> ◆
   <a href="./README.md">English</a>
 </p>
 
@@ -470,6 +471,12 @@ CODEBUDDY_USE_CUSTOM_MODELS=true
 - [CloudBase](https://cloudbase.net/) — 云开发基础设施
 - [CodeBuddy](https://copilot.tencent.com/) — AI Agent
 - [Hono](https://hono.dev/) — 轻量级 Web 框架
+
+## 交流社区
+
+<p align="center">
+  <img src="./docs/assets/qrcode.png" alt="加入交流群" width="240" />
+</p>
 
 ## License
 

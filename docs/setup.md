@@ -294,6 +294,118 @@ pnpm start
 pnpm setup:tcr
 ```
 
+---
+
+## 企业版 TCR 配置指南
+
+默认情况下，初始化脚本使用 **TCR 个人版**（`ccr.ccs.tencentyun.com`）。如果你的组织使用了**腾讯云容器镜像服务企业版**（TCR Enterprise），需要按本节进行手动配置。
+
+### 适用场景
+
+- 公司统一管理镜像仓库，使用了 TCR 企业版实例
+- 需要使用私有域名 `<实例名>.tencentcloudcr.com` 访问镜像
+- 已创建服务级账号作为访问凭证
+
+### 前置准备
+
+在 TCR 控制台完成以下操作：
+
+1. **确认企业版实例域名**
+   - 登录 [TCR 控制台](https://console.cloud.tencent.com/tcr)
+   - 记录实例域名，格式为 `<实例名>.tencentcloudcr.com`
+
+2. **创建命名空间和镜像仓库**
+   - 在实例下创建命名空间（如 `cloudbase-vibecoding`）
+   - 在命名空间下创建仓库（名称固定为 `sandbox`）
+
+3. **获取服务级账号凭证**
+   - 进入实例 → **访问控制** → **服务级账号**
+   - 创建或选择已有账号，确保具备目标命名空间的**读写权限**
+   - 记录用户名和访问凭证（Token）
+
+4. **授权 SCF_QcsRole 拉取企业版镜像**
+
+   云函数运行时拉取镜像使用的是 `SCF_QcsRole` 角色，需要为其绑定企业版 TCR 的拉取权限。
+
+   依次访问以下两个链接完成授权（使用主账号登录）：
+
+   ```
+   # 1. SCF 基础操作权限
+   https://console.cloud.tencent.com/cam/role/grant?roleName=SCF_QcsRole&policyName=QcloudAccessForScfRole&principal=eyJzZXJ2aWNlIjoic2NmLnFjbG91ZC5jb20ifQ==&serviceType=scf&s_url=https://console.cloud.tencent.com/scf
+
+   # 2. SCF 拉取企业版 TCR 镜像权限
+   https://console.cloud.tencent.com/cam/role/grant?roleName=SCF_QcsRole&policyName=QcloudAccessForSCFRoleInPullImage&principal=eyJzZXJ2aWNlIjoic2NmLnFjbG91ZC5jb20ifQ==&serviceType=scf&s_url=https://console.cloud.tencent.com/scf
+   ```
+
+   > 如果链接已授权过，页面会提示"已绑定"，无需重复操作。
+
+   如需更精细的权限控制，也可以在 [CAM 控制台](https://console.cloud.tencent.com/cam/role) 找到 `SCF_QcsRole`，手动绑定以下策略：
+   - `QcloudAccessForScfRole`
+   - `QcloudAccessForSCFRoleInPullImage`
+
+### 推送镜像到企业版 TCR
+
+在运行初始化脚本之前，需要先将 sandbox 镜像推送到你的企业版实例。
+
+```bash
+# 1. 登录企业版 TCR
+docker login <实例名>.tencentcloudcr.com \
+  -u <服务级账号用户名> \
+  -p <服务级账号Token>
+
+# 2. 拉取源镜像（如本地已有可跳过）
+docker pull ghcr.io/yhsunshining/cloudbase-workspace:260513-0354ed6b
+
+# 3. 打 tag
+docker tag ghcr.io/yhsunshining/cloudbase-workspace:260513-0354ed6b \
+  <实例名>.tencentcloudcr.com/<命名空间>/sandbox:latest
+
+# 4. 推送
+docker push <实例名>.tencentcloudcr.com/<命名空间>/sandbox:latest
+```
+
+### 配置环境变量
+
+在项目根目录的 `.env.local` 中写入以下配置（**在运行 `./init.sh` 之前**完成）：
+
+```bash
+# 企业版 TCR 配置
+SCF_SANDBOX_IMAGE_TYPE=enterprise
+TCR_IMAGE=<实例名>.tencentcloudcr.com/<命名空间>/sandbox:latest
+SCF_SANDBOX_IMAGE_URI=<实例名>.tencentcloudcr.com/<命名空间>/sandbox:latest
+TCR_USERNAME=<服务级账号用户名>
+TCR_PASSWORD=<服务级账号Token>
+```
+
+配置完成后，初始化脚本会检测到 `SCF_SANDBOX_IMAGE_TYPE=enterprise`，**自动跳过个人版 TCR 流程**，直接使用企业版配置。
+
+### 环境变量说明
+
+| 变量 | 必需 | 说明 |
+|------|------|------|
+| `SCF_SANDBOX_IMAGE_TYPE` | 是 | 设为 `enterprise` 启用企业版模式 |
+| `TCR_IMAGE` | 是 | 完整镜像地址，含实例域名、命名空间、仓库名和 tag |
+| `SCF_SANDBOX_IMAGE_URI` | 是 | 与 `TCR_IMAGE` 保持一致，供 SCF 运行时使用 |
+| `TCR_USERNAME` | 是 | 服务级账号用户名 |
+| `TCR_PASSWORD` | 是 | 服务级账号 Token |
+| `TCR_LOCAL_IMAGE` | 否 | 本地源镜像地址，默认使用官方镜像 |
+
+### 常见问题
+
+**Q：docker push 失败，提示 unauthorized**
+
+检查服务级账号是否具备该命名空间的**写权限**，以及 Token 是否已过期。在 TCR 控制台重新生成 Token 后重试。
+
+**Q：SCF 创建云函数时提示无法拉取镜像**
+
+确认 `SCF_QcsRole` 已绑定 `QcloudAccessForSCFRoleInPullImage` 策略，且 SCF 所在地域与 TCR 实例地域一致（企业版仅支持同地域拉取）。
+
+**Q：初始化脚本仍然跑了个人版 TCR 流程**
+
+确认 `.env.local` 中 `SCF_SANDBOX_IMAGE_TYPE=enterprise` 已正确写入，且在运行 `./init.sh` 之前完成配置。
+
+---
+
 ### better-sqlite3 构建失败
 
 **现象**

@@ -18,6 +18,7 @@
   <a href="#quick-start">Quick Start</a> ◆
   <a href="./docs/architecture.md">Architecture</a> ◆
   <a href="./docs/setup.md">Deployment</a> ◆
+  <a href="#join-the-community">Community</a> ◆
   <a href="./README-zh.md">中文</a>
 </p>
 
@@ -63,6 +64,7 @@ An open-source alternative to [Lovable](https://lovable.dev) / [v0](https://v0.d
 | **Environment pool**        | Pre-created CloudBase env + CAM + Policy; acquisition latency drops from minutes to milliseconds; fallback on miss   |
 | **Coding sandbox**          | AGS tool/instance per env; 沙箱业务镜像 at `/home/user`; preview `/preview/5173`, terminal ttyd `/preview/7681` via OpenVibeCoding proxy |
 | **Live preview**            | Embedded browser toolbar (address bar / nav / refresh); HMR; auto-feedback loop on preview errors                    |
+| **Sub-workspaces**          | Multiple isolated scopes per session, independent dev servers, ports 5173–5199 dynamically allocated                 |
 | **CloudBase MCP**           | 50+ tools covering DB, Storage, Functions, domains, security rules — Agent operates cloud resources directly         |
 | **Human-in-Loop**           | Four-value tool confirmation (allow / always / deny / exit); inline AskUser form without breaking chat context        |
 | **Plan mode**               | Auto-intercepts write operations; three-button decision (execute / refine / reject); cross-component state sharing    |
@@ -103,9 +105,9 @@ An open-source alternative to [Lovable](https://lovable.dev) / [v0](https://v0.d
 
 **Deployment complete, view artifact**
 
-| Artifact in chat                       | Deployments tab                    |
-| -------------------------------------- | ---------------------------------- |
-| ![deploy-0](docs/assets/deploy-0.png)  | ![deploy](docs/assets/deploy.png)  |
+| Artifact in chat                      | Deployments tab                   |
+| ------------------------------------- | --------------------------------- |
+| ![deploy-0](docs/assets/deploy-0.png) | ![deploy](docs/assets/deploy.png) |
 
 **Admin: environment pool management**
 
@@ -453,6 +455,14 @@ CODEBUDDY_USE_CUSTOM_MODELS=true
 - [CloudBase](https://cloudbase.net/) — cloud development infrastructure
 - [CodeBuddy](https://copilot.tencent.com/) — AI Agent
 - [Hono](https://hono.dev/) — lightweight web framework
+
+## Join the community
+
+Scan the QR code to join the community group.
+
+<p align="center">
+  <img src="./docs/assets/qrcode.png" alt="Join the community group" width="240" />
+</p>
 
 ## License
 

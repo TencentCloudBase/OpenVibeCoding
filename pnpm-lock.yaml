@@ -58,6 +58,9 @@ importers:
       husky:
         specifier: ^9.1.7
         version: 9.1.7
+      opencode-ai:
+        specifier: 1.15.11
+        version: 1.15.11
       patch-package:
         specifier: ^8.0.1
         version: 8.0.1
@@ -229,7 +232,7 @@ importers:
         version: 0.36.4(@opentelemetry/api@1.9.0)(@types/better-sqlite3@7.6.13)(@types/react@19.2.14)(better-sqlite3@12.8.0)(react@19.2.1)
       e2b:
         specifier: ^2.19.5
-        version: 2.21.0
+        version: 2.26.0
       fflate:
         specifier: ^0.8.2
         version: 0.8.2
@@ -2647,7 +2650,6 @@ packages:
 
   '@ungap/structured-clone@1.3.0':
     resolution: {integrity: sha512-WmoN8qaIAo7WTYWbAZuG8PYEhn5fkz7dZrqTBZ7dtt//lL2Gwms1IcnQ5yHqjDfX8Ft5j4YzDM23f87zBfDe9g==}
-    deprecated: Potential CWE-502 - Update to 1.3.1 or higher
 
   '@upsetjs/venn.js@2.0.0':
     resolution: {integrity: sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw==}
@@ -3615,8 +3617,8 @@ packages:
   duplexer2@0.1.4:
     resolution: {integrity: sha512-asLFVfWWtJ90ZyOUHMqk7/S2w2guQKxUI2itj3d92ADHhxUSbCMGi1f1cBcJ7xM1To+pE/Khbwo1yuNbMEPKeA==}
 
-  e2b@2.21.0:
-    resolution: {integrity: sha512-rXZX5KpGGjOe21ZDlL29hZfkHUb74ociUwrgf6jD3K+xrAeTFpoIU0ItlLDtu8ihWRIp9ld473RgtSbZLqJpig==}
+  e2b@2.26.0:
+    resolution: {integrity: sha512-yMAWaIFMW8jNCWOPU+Kix+tbyZQ2yd4zYumOcJcEkMwkCjtLCJmDLto4zRa2GtLyL+61v+NF3ykT72X3UEdFpw==}
     engines: {node: '>=20.18.1'}
 
   ecc-jsbn@0.1.2:
@@ -5146,6 +5148,72 @@ packages:
   openapi-typescript-helpers@0.0.15:
     resolution: {integrity: sha512-opyTPaunsklCBpTK8JGef6mfPhLSnyy5a0IN9vKtx3+4aExf+KxEqYwIy3hqkedXIB97u357uLMJsOnm3GVjsw==}
 
+  opencode-ai@1.15.11:
+    resolution: {integrity: sha512-i3DYIATyWT3ukP+5OCyEuXvbCEq7PgBAlVA4yp01+W5BaYeoj/f0bpXdDPP5q9B/Yl8drtyEhWh0YC9UAHF06A==}
+    cpu: [arm64, x64]
+    os: [darwin, linux, win32]
+    hasBin: true
+
+  opencode-darwin-arm64@1.15.11:
+    resolution: {integrity: sha512-XuiTIkBj0YKpfT8KHNan4JaX686vROCwXQHDzsZ55g/I7rdyQXG2wdt2CsUhRDaPyQTOkhrM+VqC3uYsT+kZzw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  opencode-darwin-x64-baseline@1.15.11:
+    resolution: {integrity: sha512-itb1FRgGyve89/W+sQBqmTVWUoldb0TdH1Qm805c52UbY+nkEW6oE40vveHJEDDPxFHypyzSymYFcJ7wqYBisw==}
+    cpu: [x64]
+    os: [darwin]
+
+  opencode-darwin-x64@1.15.11:
+    resolution: {integrity: sha512-PimsC+uaSmVxszQ3sbrIEjDoba9jUyAwAbydEukY3EoQ7cgLFd8tn9H/8yeA0aY7bh3uiCttDCctoQfMpV+S9Q==}
+    cpu: [x64]
+    os: [darwin]
+
+  opencode-linux-arm64-musl@1.15.11:
+    resolution: {integrity: sha512-wLaAM12H0mH93XpdXuFz4+oeNA9+CDj8WEvdL8NNrz/Sfgi/zWIo8g3UMH+lp+pfO0s7PTM84RzxGQTOvcejXg==}
+    cpu: [arm64]
+    os: [linux]
+
+  opencode-linux-arm64@1.15.11:
+    resolution: {integrity: sha512-SM+xMU8pUd5p6KD2wdIR2d0q3IRw6axKSGUqlcVrit7ZhFlTjdr3Ca0KqVv3JsUny8Bu8N8Z5b3MHvqRf4nTSQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  opencode-linux-x64-baseline-musl@1.15.11:
+    resolution: {integrity: sha512-N+geBY9Zv2kfoMKYMnPxJZQ1R9xOrgA55BMa7aMtMHr2x9tkjI5mCT7ese6Igna/cnoicxo216YhkSzyY1+p9A==}
+    cpu: [x64]
+    os: [linux]
+
+  opencode-linux-x64-baseline@1.15.11:
+    resolution: {integrity: sha512-MX+eaLOkFVO5IA8jA0QLUJma3KBwRzUrzZrCFuv6+vq9U/SsD+F9Jz2Bnfw9iE9v3QwnJ+8Yf/vKCsb5LrrWvQ==}
+    cpu: [x64]
+    os: [linux]
+
+  opencode-linux-x64-musl@1.15.11:
+    resolution: {integrity: sha512-/xbhh8aDFR5E8Ggc00ZG3qXXAwWxosEfWaPXiP04/Y7kDbz8T28a1cSIWniNmY426rYdnYLXgwJzOgpD/ZhDDg==}
+    cpu: [x64]
+    os: [linux]
+
+  opencode-linux-x64@1.15.11:
+    resolution: {integrity: sha512-RuXo1XFiAqW6ypnP4V+rPDmTrdDKh8FuO+3whMpw2qIYs8eVil72QwX1Rv6W96FDCFQkyUZW9R6MK/MGbGWCUQ==}
+    cpu: [x64]
+    os: [linux]
+
+  opencode-windows-arm64@1.15.11:
+    resolution: {integrity: sha512-sdWtLGq1aoaCzbTQY8NR7+g56lzYREBBcT7Na81FKg4H/ZybLQHXV+lwbaw+cK/d0aPpM8EAB+TV6Wbe5nEzGw==}
+    cpu: [arm64]
+    os: [win32]
+
+  opencode-windows-x64-baseline@1.15.11:
+    resolution: {integrity: sha512-Lj9TkJIeUD++idJWIKK5z+k5hvNubAEXItdxzBLM8LlWArSd2tXCGbxbBktsM5URlhFBdAN05ghyiUtAVOcMPg==}
+    cpu: [x64]
+    os: [win32]
+
+  opencode-windows-x64@1.15.11:
+    resolution: {integrity: sha512-d5jJqLA+d2DmbEzVrriePxoOjLfqjKZar0OYkNgvmUcWHCHeyn1NcL5JH6T7L19s/X3qY1tEDvZZ3uWFqNMdGQ==}
+    cpu: [x64]
+    os: [win32]
+
   optionator@0.9.4:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
     engines: {node: '>= 0.8.0'}
@@ -6078,8 +6146,8 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
-  undici@7.25.0:
-    resolution: {integrity: sha512-xXnp4kTyor2Zq+J1FfPI6Eq3ew5h6Vl0F/8d9XU5zZQf1tX9s2Su1/3PiMmUANFULpmksxkClamIZcaUqryHsQ==}
+  undici@7.26.0:
+    resolution: {integrity: sha512-3O9Tf67pGhgOv9jM35AbhkXAKi13f3oy3aE4CSgr+TckGeY+/iu97ZXN+J7DpHPzLbVApFd1IFhcnBjREYXYcg==}
     engines: {node: '>=20.18.1'}
 
   unified@11.0.5:
@@ -9549,7 +9617,7 @@ snapshots:
     dependencies:
       readable-stream: 2.3.8
 
-  e2b@2.21.0:
+  e2b@2.26.0:
     dependencies:
       '@bufbuild/protobuf': 2.12.0
       '@connectrpc/connect': 2.0.0-rc.3(@bufbuild/protobuf@2.12.0)
@@ -9561,7 +9629,7 @@ snapshots:
       openapi-fetch: 0.14.1
       platform: 1.3.6
       tar: 7.5.15
-      undici: 7.25.0
+      undici: 7.26.0
 
   ecc-jsbn@0.1.2:
     dependencies:
@@ -11397,6 +11465,57 @@ snapshots:
 
   openapi-typescript-helpers@0.0.15: {}
 
+  opencode-ai@1.15.11:
+    optionalDependencies:
+      opencode-darwin-arm64: 1.15.11
+      opencode-darwin-x64: 1.15.11
+      opencode-darwin-x64-baseline: 1.15.11
+      opencode-linux-arm64: 1.15.11
+      opencode-linux-arm64-musl: 1.15.11
+      opencode-linux-x64: 1.15.11
+      opencode-linux-x64-baseline: 1.15.11
+      opencode-linux-x64-baseline-musl: 1.15.11
+      opencode-linux-x64-musl: 1.15.11
+      opencode-windows-arm64: 1.15.11
+      opencode-windows-x64: 1.15.11
+      opencode-windows-x64-baseline: 1.15.11
+
+  opencode-darwin-arm64@1.15.11:
+    optional: true
+
+  opencode-darwin-x64-baseline@1.15.11:
+    optional: true
+
+  opencode-darwin-x64@1.15.11:
+    optional: true
+
+  opencode-linux-arm64-musl@1.15.11:
+    optional: true
+
+  opencode-linux-arm64@1.15.11:
+    optional: true
+
+  opencode-linux-x64-baseline-musl@1.15.11:
+    optional: true
+
+  opencode-linux-x64-baseline@1.15.11:
+    optional: true
+
+  opencode-linux-x64-musl@1.15.11:
+    optional: true
+
+  opencode-linux-x64@1.15.11:
+    optional: true
+
+  opencode-windows-arm64@1.15.11:
+    optional: true
+
+  opencode-windows-x64-baseline@1.15.11:
+    optional: true
+
+  opencode-windows-x64@1.15.11:
+    optional: true
+
   optionator@0.9.4:
     dependencies:
       deep-is: 0.1.4
@@ -12456,7 +12575,7 @@ snapshots:
 
   undici-types@6.21.0: {}
 
-  undici@7.25.0: {}
+  undici@7.26.0: {}
 
   unified@11.0.5:
     dependencies:

@@ -39,6 +39,14 @@ WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
+# Install opencode CLI globally so OpenCode runtime is available at runtime.
+# acp-transport.ts:getResolvedBin() scans PATH for `opencode` / `opencode-ai`;
+# without this the /api/agent/runtimes endpoint reports OpenCode as unavailable
+# and the frontend agent picker greys it out as「不可用」.
+# Version pinned to match root package.json devDependencies; bump both together.
+RUN npm install -g opencode-ai@1.15.11 \
+    && opencode --version
+
 # Copy workspace config and server + shared manifests only
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches/ patches/
