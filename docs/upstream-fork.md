@@ -66,7 +66,7 @@
 | `24f9bba` | Merge PR #27 podman-fallback |
 | `dc70b08` | feat(init): TCR enterprise registry |
 
-**当前对齐状态**（2026-05-21，分支 `merge-trial/main-into-stateful`）：
+**当前对齐状态**（2026-05-27，分支 `merge-trial/main-into-stateful`）：
 
 - `git merge-base HEAD origin/main` → `dc70b08`（与上游 `main` 最新对齐）
 - 试跑合并提交：`0d4e65b`；功能分支 `feature/stateful-infra` 仍为 `8af240f`（未 fast-forward，待回归通过后合并试跑分支）
