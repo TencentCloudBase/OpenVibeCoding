@@ -113,73 +113,102 @@
 
 ---
 
-## 初始化
+## 快速开始
+
+环境文件 **刻意分开**，避免把本地密钥打进云镜像、或把云配置误用于 `pnpm dev`：
+
+| | 本地开发 | 部署到云托管 |
+| --- | --- | --- |
+| **初始化** | `./init.sh` → 选 **1** → `.env.local` | `./init.sh` → 选 **2** → `.env.cloud` |
+| **命令** | `pnpm dev` | `pnpm deploy:cloud` |
+| **访问** | Web `http://localhost:5174`，API `:3001` | 默认域名 `https://*.sh.run.tcloudbase.com` |
+| **端口** | `PORT=3001` | 容器 **80**（勿改成 9000；9000 是沙箱 TRW 内部口） |
+| **详解** | 下文 [本地开发](#本地开发) | [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md) |
+
+两条线都要：先 `./init.sh` 选 1，再 `./init.sh` 选 2。字段模板见 [.env.example](.env.example)。
 
 ```bash
 git clone https://github.com/TencentCloudBase/OpenVibeCoding.git
 cd OpenVibeCoding
-./init.sh
+./init.sh          # 按上表选 1 或 2
+pnpm dev           # 本地
+# 或
+pnpm deploy:cloud  # 云托管（需 cloudbase CLI）
 ```
 
-`init.sh` 开头会让你 **二选一**（没有「两个都生成」）：
+---
 
-| 选项 | 生成 | 用途 |
+## 初始化
+
+`./init.sh` 检查 Node / pnpm 后执行 `scripts/init.mjs`。每次 **二选一**（不会一次生成两份 env）：
+
+| 选项 | 生成文件 | 用途 |
 | --- | --- | --- |
-| **1** | `.env.local` | 本地 `pnpm dev` |
-| **2** | `.env.cloud` | `pnpm deploy:cloud`（CLI 凭证 + 同步到云托管运行时） |
+| **1** | `.env.local` | `pnpm dev` / `pnpm dev:server`（`--env-file=../../.env.local`） |
+| **2** | `.env.cloud` | `pnpm deploy:cloud`（CLI 凭证 + 尝试同步到云托管运行时） |
 
-本地 + 云端都要用时：**跑两次** `./init.sh`，各选一次。字段说明见 [.env.example](.env.example)；流程见 [docs/setup.md](docs/setup.md#配置文件职责)。
+完整流程与排障：[docs/setup.md](docs/setup.md#配置文件职责)。
 
 ---
 
 ## 本地开发
 
-**前置**：Node **22.x**（`.nvmrc`）、pnpm 10+、CloudBase 支撑环境 + API 密钥、CodeBuddy 或 OpenCode API Key（`npm i -g opencode-ai`）。本机只跑 OpenVibeCoding 前后端；编码沙箱在云端 Stateful + 沙箱业务镜像。
+**前置**：Node **22.x**（`.nvmrc`）、pnpm 10+、CloudBase 支撑环境 + API 密钥、CodeBuddy 或 OpenCode（`npm i -g opencode-ai`）。本机只跑 OpenVibeCoding 前后端；**编码沙箱在云端**（Stateful + 沙箱业务镜像），不在本机 Docker 里跑任务。
 
-**环境**：只读根目录 **`.env.local`**（`pnpm dev:server` → `--env-file=../../.env.local`）。Vite 把 `/api` 代理到 `:3001`，前端不需要单独 env 文件。
+**环境**：只读根目录 **`.env.local`**。Vite 将 `/api` 代理到 `:3001`，前端无需单独 env。
 
-**Agent**：任务可选 **CodeBuddy** 或 **OpenCode**（`opencode-acp`），共用同一套沙箱。
+**Agent**：任务可选 **CodeBuddy** 或 **OpenCode**（`opencode-acp`），共用同一套云沙箱。
 
 ```bash
-pnpm dev    # Web http://localhost:5174  API http://localhost:3001/api
+pnpm dev              # Web :5174 + API :3001
+pnpm dev:web          # 仅前端
+pnpm dev:server       # 仅后端
+pnpm build && pnpm start   # 本机一体启动（仍读本机环境，≠ 云托管）
 ```
 
-| 变量（在 `.env.local`） | 作用 |
+| 变量（`.env.local`） | 作用 |
 | --- | --- |
-| `JWE_SECRET` / `ENCRYPTION_KEY` | 会话与 MCP 密文加密 |
+| `JWE_SECRET` / `ENCRYPTION_KEY` | 会话与 MCP 密文 |
 | `TCB_ENV_ID` / `TCB_SECRET_*` | CloudBase 管理面 |
 | `TCB_API_KEY` | 沙箱数据面 gateway |
 | `CODEBUDDY_API_KEY` | CodeBuddy Agent |
 
-Tool 名 `openvibecoding-{TCB_ENV_ID}` 自动创建/复用，勿配 `STATEFUL_TOOL_ID`。排障：[docs/setup.md](docs/setup.md)。
-
-```bash
-pnpm dev:web      # 仅前端
-pnpm dev:server   # 仅后端
-pnpm build && pnpm start   # 本机生产形态（仍读进程环境，非云托管）
-```
+Tool 名 `openvibecoding-{TCB_ENV_ID}` 自动创建/复用，**勿**配置 `STATEFUL_TOOL_ID`。排障见 [docs/setup.md](docs/setup.md)。
 
 ---
 
 ## 部署到云托管
 
-与本地开发 **分开**：不跑 `pnpm dev`，用 CloudBase CLI 提交镜像，运行时 env 来自 **`.env.cloud`**（`pnpm deploy:cloud` 在部署后 API 同步，不必手抄控制台）。
+与本地 **完全分开**：不要在本机 `pnpm dev` 的同时指望 `.env.cloud` 生效；部署读 **`.env.cloud`**，用 CloudBase CLI 上传源码，在云端按 `Dockerfile` 构建镜像。
 
 **前置**
 
-- 已 `./init.sh` 并选择 **2** 生成 `.env.cloud`（含 `TCB_SECRET_*`、`TCB_ENV_ID`）
-- `npm i -g @cloudbase/cli` 且已 `cloudbase login`
-- 核对 `.env.cloud` 中 `ASK_USER_BASE_URL` 为公网根 URL（可先占位，首次部署后按控制台域名改再部署）
+- `./init.sh` 选 **2**，生成 `.env.cloud`（含 `TCB_SECRET_*`、`TCB_ENV_ID`）
+- `npm i -g @cloudbase/cli` 且 `cloudbase login`
+- `ASK_USER_BASE_URL` 可先占位；部署脚本会从默认域名（如 `https://vibecoding-platform-xxx.sh.run.tcloudbase.com`）**写回** `.env.cloud`
+
+**一键部署**（推荐在**本机终端**执行，避免 IDE 会话超时中断上传）：
 
 ```bash
 pnpm deploy:cloud
 ```
 
-1. 用 `.env.cloud` 的凭证提交源码 + `Dockerfile` 云端构建  
-2. 部署服务 `vibecoding-platform`（端口 80）  
-3. 将 `.env.cloud` 同步到云托管 EnvParams（`--skip-env-sync` 可跳过）  
+脚本会：
 
-详情：[docs/cloudrun-deploy.md](docs/cloudrun-deploy.md)。构建进度：控制台 → 云托管 → 部署记录。
+1. **立即**打印云托管控制台链接（部署记录 / 构建日志）
+2. 提交源码（上传阶段无百分比，约每 15s 一行心跳提示）
+3. **轮询**服务/部署记录状态，直到本次发布生效或失败
+4. 若 `ASK_USER_BASE_URL` 仍为占位，用 `*.sh.run.tcloudbase.com` 写回 `.env.cloud`
+5. 尝试把 `.env.cloud` 同步到云托管环境变量（失败则提示控制台手贴）
+
+| 标志 | 含义 |
+| --- | --- |
+| `--no-wait` | 只提交构建，不轮询（CI / 自行看控制台） |
+| `--skip-env-sync` | 不同步环境变量到云托管 |
+
+服务名 **`vibecoding-platform`**，对外端口 **80**。沙箱 gateway 的 **9000** 与云托管监听端口无关。
+
+详情：[docs/cloudrun-deploy.md](docs/cloudrun-deploy.md)。
 
 ## 常用命令
 
@@ -420,9 +449,10 @@ CODEBUDDY_USE_CUSTOM_MODELS=true
 
 ## 延伸阅读
 
-- [Setup 指南](docs/setup.md) — 初始化流程、环境变量、验证清单与排障
-- [系统架构](docs/architecture.md) — 系统分层、模块设计与关键数据流
-- [SCF Session 共享设计](docs/scf-session-sharing.md) — 沙箱 session 复用机制
+- [Setup 指南](docs/setup.md) — 初始化、本地开发、环境变量与排障
+- [云托管部署](docs/cloudrun-deploy.md) — `pnpm deploy:cloud` 行为与控制台对照
+- [系统架构](docs/architecture.md) — 分层、模块与数据流
+- [SCF Session 共享设计](docs/scf-session-sharing.md) — （历史）沙箱 session 复用
 
 ---
 

@@ -113,11 +113,12 @@ flowchart TD
 
 ## 部署到云托管
 
-与本地开发分开，见 [cloudrun-deploy.md](./cloudrun-deploy.md)：
+与本地开发 **完全分开**（不共用 `.env.local`）。详见 [cloudrun-deploy.md](./cloudrun-deploy.md)。
 
-1. 确认 `.env.cloud` 含 `TCB_SECRET_*`、`TCB_ENV_ID`（init 选 2 生成）
-2. 编辑 `.env.cloud`（尤其 `ASK_USER_BASE_URL`）
-3. `pnpm deploy:cloud` → 构建 + 同步 `.env.cloud` 到服务
+1. `./init.sh` 选 **2** → `.env.cloud`（含 `TCB_SECRET_*`、`TCB_ENV_ID`）
+2. `npm i -g @cloudbase/cli` 且 `cloudbase login`
+3. 在本机终端执行 `pnpm deploy:cloud`（会先打控制台链接，再上传、轮询；`ASK_USER_BASE_URL` 可从 `*.sh.run.tcloudbase.com` 自动写回）
+4. 若 env API 同步失败，到控制台粘贴 `.env.cloud` 中的运行时变量
 
 ## 关键环境变量
 

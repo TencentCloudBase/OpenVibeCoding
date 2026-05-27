@@ -115,72 +115,66 @@ An open-source alternative to [Lovable](https://lovable.dev) / [v0](https://v0.d
 
 ## Quick Start
 
-**Prerequisites**
+Env files are **split on purpose** — do not use `.env.cloud` for `pnpm dev` or bake `.env.local` into the cloud image.
 
-- Node.js >= 18
-- Docker
-- A Tencent Cloud account (CloudBase environment + API credentials)
-- A CodeBuddy API Key or OAuth config
+| | Local development | Deploy to CloudRun |
+| --- | --- | --- |
+| **Init** | `./init.sh` → **1** → `.env.local` | `./init.sh` → **2** → `.env.cloud` |
+| **Command** | `pnpm dev` | `pnpm deploy:cloud` |
+| **URL** | Web `http://localhost:5174`, API `:3001` | Default domain `https://*.sh.run.tcloudbase.com` |
+| **Port** | `PORT=3001` | Container listens on **80** (not 9000; 9000 is sandbox TRW only) |
+| **Docs** | [docs/setup.md](docs/setup.md) | [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md) |
 
-**One-shot init**
+Need both paths: run `./init.sh` twice (option 1, then option 2). Template: [.env.example](.env.example).
 
 ```bash
 git clone https://github.com/TencentCloudBase/OpenVibeCoding.git
 cd OpenVibeCoding
-
-# macOS / Linux / Git Bash / WSL
 ./init.sh
 
-# Windows (make sure Node.js >= 18 and pnpm are installed first)
-node scripts/init.mjs
+# macOS / Linux / Git Bash / WSL — or: node scripts/init.mjs (Windows)
+
+pnpm dev            # local
+pnpm deploy:cloud   # cloud (requires @cloudbase/cli)
 ```
-
-The init script runs: Node.js check → pnpm install → `.env.local` generation → Docker check → CloudBase setup → dependency install → CodeBuddy auth → TCR setup → database init.
-
-For detailed steps and troubleshooting, see [docs/setup.md](docs/setup.md).
 
 ---
 
 ## Development
 
+**Uses `.env.local` only.** Coding sandboxes run in CloudBase Stateful + 沙箱业务镜像, not in local Docker for normal tasks.
+
 ```bash
-pnpm dev          # Start web (localhost:5174) and server (localhost:3001) together
+pnpm dev          # Web :5174 + API :3001
 pnpm dev:web      # Frontend only
 pnpm dev:server   # Backend only
-```
-
-## Production
-
-```bash
-pnpm build        # Build all packages
-pnpm start        # Start prod server (port 3001, serves API and static files)
+pnpm build && pnpm start   # Local prod-shaped run (not CloudRun)
 ```
 
 ## Deploy to CloudRun
 
-This project supports one-click deployment to CloudBase CloudRun (container service). No local Docker required — the script uploads source code and Dockerfile to the cloud for building.
+**Separate from local dev.** Reads **`.env.cloud`**, uploads source via CloudBase CLI, builds `Dockerfile` in the cloud.
 
 **Prerequisites**
 
-- Completed `./init.sh` initialization (`TCB_ENV_ID`, `TCB_SECRET_ID`, `TCB_SECRET_KEY` configured)
-- CloudBase CLI installed: `npm i -g @cloudbase/cli`
+- `./init.sh` option **2** → `.env.cloud` with `TCB_SECRET_*`, `TCB_ENV_ID`
+- `npm i -g @cloudbase/cli` and `cloudbase login`
+- `ASK_USER_BASE_URL` may be a placeholder first; deploy writes back `https://…sh.run.tcloudbase.com` when available
 
-**One-click deploy**
+**Run in a real terminal** (upload can take minutes; IDE agents may time out).
 
 ```bash
 pnpm deploy:cloud
 ```
 
-The script will:
-1. Upload source + Dockerfile to CloudBase for cloud-side image building
-2. Deploy as a CloudRun container service (service name: `vibecoding-platform`, port: 80)
-3. Query and display the service access URL
+The script: prints the console link immediately → uploads source (15s heartbeat) → polls until the release settles → may write back `ASK_USER_BASE_URL` → tries to sync env to the service (`--skip-env-sync` to skip).
 
-**After deployment**
+| Flag | Meaning |
+| --- | --- |
+| `--no-wait` | Submit only, no status polling |
+| `--skip-env-sync` | Do not push `.env.cloud` to CloudRun env |
 
-- Access URL format: `https://{serviceName}-{id}.{region}.run.tcloudbase.com`
-- Build progress can be viewed in [CloudBase Console](https://tcb.cloud.tencent.com) → CloudRun → Service Details → Deploy Records
-- Environment variables should be configured in the console's service settings
+Service **`vibecoding-platform`**, public port **80**. Details: [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md).
 
 ## Common commands
 
