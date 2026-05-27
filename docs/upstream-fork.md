@@ -38,8 +38,9 @@
 | --- | --- | --- | --- | --- |
 | 2026-05-21 | `git merge origin/main` | `a878ddbbee2f6320395dc7f84a7e6a068c524e75` | `20dedbdbb00997d8f23c289317836de14df44d60` | 无冲突；含下方 5 个上游 commit |
 | 2026-05-25 | `git merge origin/main` | `4592517`（fix readme 等） | （merge commit） | 约 10 文件冲突；保留 AGS/沙箱业务镜像 路径 |
+| 2026-05-27 | `git merge origin/main`（试跑分支 `merge-trial/main-into-stateful`） | `dc70b08d8e3019884b51a9b4ae219b7a1af8d439` | `0d4e65b56348d90e61d0a794b70ce4d5369b91b9` | 冲突：`.env.example`、`README.md`、`pnpm-lock.yaml`、`scripts/init.mjs`、`scripts/setup-tcr.mjs`；`scf-sandbox-manager.ts` 删除保留；`type-check` / `lint` / `build` 通过 |
 
-**本次并入的上游 commit**（`43c3e60..a878ddb`）：
+**历史：2026-05-21 并入**（`43c3e60..a878ddb`）：
 
 | SHA | 说明 |
 | --- | --- |
@@ -49,17 +50,36 @@
 | `4669043` | Merge pull request #23（CodeBuddy TokenHub） |
 | `a878ddb` | feat: 更新 agent 选项 |
 
-**当前对齐状态**（2026-05-25）：
+**本次并入的上游 commit**（`4592517..dc70b08`，2026-05-27 试跑合并）：
 
-- `git merge-base HEAD origin/main` → `4592517`（已与上游 `main` 最新对齐）
-- 本线仍在 merge-base 之上保留 stateful 提交（AGS/沙箱业务镜像、文档、`0699323` 等）
+| SHA | 说明 |
+| --- | --- |
+| `6dc789f` | docs: add community qrcode to readmes |
+| `8fcb9f8` | docs: add community |
+| `90fe835` | docs: update readme community |
+| `f5be7cb` | feat: Coding 模式自动放行写工具 |
+| `a392f46` | fix(opencode): OpenCode runtime 云托管可用 |
+| `1236a37` | feat: podman fallback for docker |
+| `e042616` | fix: TCR login + podman |
+| `f801dd3` | feat: enterprise TCR in init.mjs |
+| `645b1f2` | docs: enterprise TCR setup guide |
+| `24f9bba` | Merge PR #27 podman-fallback |
+| `dc70b08` | feat(init): TCR enterprise registry |
+
+**当前对齐状态**（2026-05-21，分支 `merge-trial/main-into-stateful`）：
+
+- `git merge-base HEAD origin/main` → `dc70b08`（与上游 `main` 最新对齐）
+- 试跑合并提交：`0d4e65b`；功能分支 `feature/stateful-infra` 仍为 `8af240f`（未 fast-forward，待回归通过后合并试跑分支）
+- 本线保留：Stateful 沙箱、`TCB_API_KEY`、`.env.local` / `.env.cloud`、preview WebSocket 代理（不转发浏览器 `Origin`）
+- 从上游并入：`opencode-ai`、TCR 企业版 + podman、`coding-mode` 写工具自动放行、社区文档
+- 回归：本地 `pnpm dev`；云端 `pnpm deploy:cloud`（服务 `vibecoding-platform`）
 - 中文与 stateful 说明：[README-zh.md](../README-zh.md)、[setup.md](./setup.md)
 
 下次看上游新提交：
 
 ```bash
 git fetch origin
-git log 4592517..origin/main --oneline
+git log dc70b08..origin/main --oneline
 ```
 
 ## 偶尔从上游同步（推荐流程）
@@ -68,7 +88,7 @@ git log 4592517..origin/main --oneline
 git fetch origin
 
 # 自上次对齐的顶往下看
-git log a878ddbbee2f6320395dc7f84a7e6a068c524e75..origin/main --oneline
+git log dc70b08d8e3019884b51a9b4ae219b7a1af8d439..origin/main --oneline
 
 # 整分支合并（可能冲突，需人工解）
 git merge origin/main
