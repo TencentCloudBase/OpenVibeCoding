@@ -186,6 +186,7 @@ export function attachPreviewWebSocketProxy(server: Server): void {
 
         upstreamWs.on('unexpected-response', (_proxyReq, res) => {
           console.warn('[preview-ws-proxy] upstream rejected WebSocket upgrade')
+          console.error('[preview-ws-proxy] upstream upgrade HTTP status:', res.statusCode)
           if (socket.writable && !socket.destroyed) {
             socket.write(`HTTP/1.1 ${res.statusCode ?? 502} ${res.statusMessage ?? 'Bad Gateway'}\r\n\r\n`)
           }

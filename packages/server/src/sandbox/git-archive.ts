@@ -66,11 +66,12 @@ export function isGitArchiveConfigured(): boolean {
 }
 
 /**
- * 沙箱业务镜像 git archive vars for PUT /api/workspace/env or workspace/init `env`.
+ * Git archive vars for POST /api/workspace/init `env` only.
+ * PUT /api/workspace/env accepts CloudBase credential keys only (not GIT_ARCHIVE_*).
  * Do not pass via StartSandboxInstance CustomConfiguration.Env — boot-time
  * ENABLE_GIT_ARCHIVE blocks /health and fails AGS port binding.
  */
-export function buildGitArchiveWorkspaceEnv(): Record<string, string> {
+export function buildGitArchiveInitEnv(): Record<string, string> {
   const env: Record<string, string> = {}
   const repo = process.env.GIT_ARCHIVE_REPO?.trim()
   const token = process.env.GIT_ARCHIVE_TOKEN?.trim()
@@ -84,28 +85,14 @@ export function buildGitArchiveWorkspaceEnv(): Record<string, string> {
   return { ...env, ...buildStatefulWorkspaceAuthEnv() }
 }
 
-/** Debug-only: AGS CustomConfiguration.Env array shape. */
-export function buildGitArchiveInstanceEnv(): Array<{ Name: string; Value: string }> {
-  return Object.entries(buildGitArchiveWorkspaceEnv()).map(([Name, Value]) => ({ Name, Value }))
+/** @deprecated Use {@link buildGitArchiveInitEnv} — name kept for callers. */
+export function buildGitArchiveWorkspaceEnv(): Record<string, string> {
+  return buildGitArchiveInitEnv()
 }
 
-export async function injectGitArchiveWorkspaceEnv(sandbox: SandboxInstance): Promise<void> {
-  const env = buildGitArchiveWorkspaceEnv()
-  if (!Object.keys(env).length) return
-
-  const res = await sandbox.request('/api/workspace/env', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(env),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`Git archive workspace env injection failed: ${res.status} ${text.slice(0, 200)}`)
-  }
-  const data = (await res.json().catch(() => null)) as { success?: boolean; error?: string } | null
-  if (data && data.success === false) {
-    throw new Error(data.error || 'Git archive workspace env injection failed')
-  }
+/** Debug-only: AGS CustomConfiguration.Env array shape. */
+export function buildGitArchiveInstanceEnv(): Array<{ Name: string; Value: string }> {
+  return Object.entries(buildGitArchiveInitEnv()).map(([Name, Value]) => ({ Name, Value }))
 }
 
 /**

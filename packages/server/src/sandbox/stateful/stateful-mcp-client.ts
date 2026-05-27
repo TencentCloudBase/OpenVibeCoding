@@ -20,7 +20,6 @@ import { nanoid } from 'nanoid'
 import cron from 'node-cron'
 
 import type { McpClientBundle, McpDeps } from '../provider/types.js'
-import { buildGitArchiveWorkspaceEnv } from '../git-archive.js'
 import {
   miniprogramStartToJson,
   pollTrwMiniprogramJob,
@@ -37,6 +36,17 @@ class AuthRequiredError extends Error {
     super(`MCP_AUTH_REQUIRED: gateway returned ${status}`)
     this.name = 'AuthRequiredError'
   }
+}
+
+/** mcporter may write stderr into the file when invoked with `2>&1`; strip to first JSON token. */
+export function parseMcporterSchemaContent(raw: string): { tools: unknown[] } {
+  const trimmed = raw.trim()
+  const start = trimmed.search(/[\[{]/)
+  if (start < 0) throw new Error('No JSON in schema output')
+  const parsed = JSON.parse(trimmed.slice(start)) as { tools?: unknown[] } | unknown[]
+  if (Array.isArray(parsed)) return { tools: parsed }
+  if (Array.isArray(parsed.tools)) return { tools: parsed.tools }
+  throw new Error('No tools array in schema response')
 }
 
 // ─── JSON Schema → Zod ───────────────────────────────────────────
@@ -249,7 +259,6 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
         TENCENTCLOUD_SESSIONTOKEN: creds.sessionToken ?? '',
         INTEGRATION_IDE: 'codebuddy',
         WORKSPACE_FOLDER_PATHS: workspaceFolderPaths,
-        ...buildGitArchiveWorkspaceEnv(),
       }),
     })
     if (res.status === 401 || res.status === 403) throw new AuthRequiredError(res.status)
@@ -259,7 +268,7 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
 
   async function fetchCloudbaseSchema(): Promise<any[]> {
     const tmpPath = `.mcporter-schema.json`
-    await bashCall(`mcporter list cloudbase --schema --output json > ${tmpPath} 2>&1`, 20_000)
+    await bashCall(`mcporter list cloudbase --schema --output json > ${tmpPath}`, 20_000)
     const res = await sandbox.request('/api/tools/read', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -268,9 +277,8 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
     if (!res.ok) throw new Error(`Failed to read schema file: ${res.status}`)
     const data = (await res.json()) as { success?: boolean; result?: { content?: string } }
     if (!data.success || !data.result?.content) throw new Error('Empty schema file')
-    const parsed = JSON.parse(data.result.content) as any
-    if (!Array.isArray(parsed.tools)) throw new Error('No tools array in schema response')
-    return parsed.tools
+    const { tools } = parseMcporterSchemaContent(data.result.content)
+    return tools as any[]
   }
 
   async function mcporterCall(toolName: string, args: Record<string, unknown>): Promise<any> {
