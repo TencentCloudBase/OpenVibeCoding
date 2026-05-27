@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildGatewayWebSocketUrl, parseClientWsProtocols } from '../preview-ws-proxy.js'
+import { buildGatewayWebSocketUrl, buildUpstreamGatewayWsHeaders, parseClientWsProtocols } from '../preview-ws-proxy.js'
 
 describe('buildGatewayWebSocketUrl', () => {
   it('includes gateway path prefix before /preview/{port}/ws', () => {
@@ -14,6 +14,22 @@ describe('buildGatewayWebSocketUrl', () => {
       '?token=abc',
     )
     expect(url).toBe('wss://env.api.tcloudbasegateway.com/v1/sandbox/-/preview/5173/ws?token=abc')
+  })
+})
+
+describe('buildUpstreamGatewayWsHeaders', () => {
+  it('passes only sandbox auth headers (no browser Origin)', () => {
+    const headers = buildUpstreamGatewayWsHeaders({
+      'X-Cloudbase-Authorization': 'Bearer key',
+      'E2b-Sandbox-Id': 'sbx',
+      'E2b-Sandbox-Port': '9000',
+    })
+    expect(headers).toEqual({
+      'X-Cloudbase-Authorization': 'Bearer key',
+      'E2b-Sandbox-Id': 'sbx',
+      'E2b-Sandbox-Port': '9000',
+    })
+    expect(headers.origin).toBeUndefined()
   })
 })
 

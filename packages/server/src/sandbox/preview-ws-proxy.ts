@@ -11,28 +11,6 @@ import { resolveGatewayPreviewPort } from './ttyd-gateway-port.js'
 
 const PREVIEW_WS_RE = /^\/api\/tasks\/([^/]+)\/preview\/(\d+)(\/.*)?$/
 
-const HOP_BY_HOP = new Set([
-  'connection',
-  'keep-alive',
-  'proxy-authenticate',
-  'proxy-authorization',
-  'te',
-  'trailers',
-  'transfer-encoding',
-  'upgrade',
-  'host',
-  'cookie',
-  'content-length',
-])
-
-/** Client→OVC handshake headers must not be forwarded; upstream `ws` generates its own. */
-const CLIENT_WS_HANDSHAKE = new Set([
-  'sec-websocket-key',
-  'sec-websocket-version',
-  'sec-websocket-extensions',
-  'sec-websocket-protocol',
-])
-
 const wss = new WebSocketServer({ noServer: true })
 
 function buildUpstreamPath(port: string, subpath: string | undefined): string {
@@ -49,15 +27,12 @@ export function buildGatewayWebSocketUrl(baseUrl: string, previewPath: string, q
   return `${wsProtocol}//${base.host}${prefix}${normalized}${query}`
 }
 
-function buildForwardHeaders(req: IncomingMessage, authHeaders: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = { ...authHeaders }
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined) continue
-    const lower = key.toLowerCase()
-    if (HOP_BY_HOP.has(lower) || CLIENT_WS_HANDSHAKE.has(lower)) continue
-    out[key] = Array.isArray(value) ? value.join(', ') : value
-  }
-  return out
+/**
+ * Gateway WS upgrade: send sandbox data-plane auth only.
+ * Do not forward browser Origin/Referer (CloudRun host) — gateway returns 403 on upgrade.
+ */
+export function buildUpstreamGatewayWsHeaders(authHeaders: Record<string, string>): Record<string, string> {
+  return { ...authHeaders }
 }
 
 /** Browser ttyd uses Sec-WebSocket-Protocol: tty; upstream must match or ttyd closes immediately. */
@@ -164,11 +139,11 @@ export function attachPreviewWebSocketProxy(server: Server): void {
         publicPortNum === TTYD_VIRTUAL_PORT ? String(await resolveGatewayPreviewPort(sandbox, TTYD_VIRTUAL_PORT)) : port
       const previewPath = buildUpstreamPath(gatewayPort, subpath)
       const wsUrl = buildGatewayWebSocketUrl(sandbox.baseUrl, previewPath, query)
-      const forwardHeaders = buildForwardHeaders(req, await sandbox.getAuthHeaders())
+      const upstreamHeaders = buildUpstreamGatewayWsHeaders(await sandbox.getAuthHeaders())
       const clientProtocols = parseClientWsProtocols(req)
 
       wss.handleUpgrade(req, socket, head, (clientWs) => {
-        const upstreamWs = connectUpstreamPreviewWebSocket(wsUrl, clientProtocols, forwardHeaders)
+        const upstreamWs = connectUpstreamPreviewWebSocket(wsUrl, clientProtocols, upstreamHeaders)
         bridgeSockets(clientWs, upstreamWs)
 
         clientWs.on('ping', (data) => {
