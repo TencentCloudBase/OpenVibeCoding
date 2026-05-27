@@ -101,7 +101,7 @@ flowchart TD
 - 每次 `./init.sh` **只生成一个文件**：选 1 → `.env.local`，选 2 → `.env.cloud`。
 - 两个都要：先跑一遍选 1，再跑一遍选 2（CloudBase / CodeBuddy 等步骤会再走一遍）。
 - **覆盖**：仅针对本次选中的文件询问；选「否」则跳过写入。
-- 选 **2** 时会多问 `ASK_USER_BASE_URL`（云托管公网根 URL）。
+- 选 **2** 时会问 `ASK_USER_BASE_URL`（云托管公网根 URL）；首次部署前可回车用占位，`pnpm deploy:cloud` 在能读到默认域名时会写回 `.env.cloud`。
 
 ## 本地开发流程
 

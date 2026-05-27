@@ -18,6 +18,25 @@ export const ENV_CLOUD = resolve(ROOT, '.env.cloud')
 /** Keys only used on the deploy machine / CLI — not pushed to CloudRun */
 export const DEPLOY_ONLY_KEYS = new Set(['TCB_TOKEN'])
 
+/** Written by init when user skips ASK_USER_BASE_URL before first deploy */
+export const ASK_USER_BASE_URL_PLACEHOLDER = 'https://YOUR-SERVICE.run.tcloudbase.com'
+
+/** True when URL is empty, init placeholder, or obviously local-only */
+export function isAskUserBaseUrlUnset(url) {
+  const v = (url || '').trim()
+  if (!v) return true
+  if (v === ASK_USER_BASE_URL_PLACEHOLDER) return true
+  if (/YOUR-SERVICE/i.test(v)) return true
+  if (/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/?$/i.test(v)) return true
+  return false
+}
+
+export function normalizeAskUserBaseUrl(url) {
+  const v = (url || '').trim()
+  if (!v) return ''
+  return /^https?:\/\//i.test(v) ? v : `https://${v}`
+}
+
 /**
  * Parse KEY=VALUE lines (no export prefix). Last duplicate key wins.
  * @param {string} [filePath]

@@ -110,7 +110,7 @@ function AgentActivityLine({
 
   // Sandbox done but model has not started streaming yet.
   if (sandbox.status === 'success' || sandbox.status === 'failed') {
-    if (!hasAgentContent && phase !== 'tool_executing') {
+    if (!hasAgentContent) {
       const label = sandbox.status === 'failed' ? '等待模型（受限模式）…' : '等待模型响应…'
       return <StatusLine icon={Sparkles} iconClass="text-primary/70" label={label} spinning muted />
     }

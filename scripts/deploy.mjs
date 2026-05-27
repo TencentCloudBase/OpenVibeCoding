@@ -17,7 +17,14 @@ import { execSync } from 'child_process'
 import { createRequire } from 'module'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
-import { ENV_CLOUD, loadEnvFile, cloudRuntimeEnvFromFile } from './lib/env-files.mjs'
+import {
+  ENV_CLOUD,
+  loadEnvFile,
+  cloudRuntimeEnvFromFile,
+  isAskUserBaseUrlUnset,
+  normalizeAskUserBaseUrl,
+  saveEnvVar,
+} from './lib/env-files.mjs'
 
 const require = createRequire(import.meta.url)
 const CloudBase = require('@cloudbase/manager-node')
@@ -147,10 +154,11 @@ async function deployCloudRun(deployEnv, options) {
       log('未找到 .env.cloud，请运行 ./init.sh 生成或手动创建', 'warn')
     } else {
       const runtimeEnv = cloudRuntimeEnvFromFile(ENV_CLOUD)
-      if (accessUrl && !runtimeEnv.ASK_USER_BASE_URL) {
-        runtimeEnv.ASK_USER_BASE_URL = accessUrl.startsWith('http')
-          ? accessUrl
-          : `https://${accessUrl}`
+      if (accessUrl && isAskUserBaseUrlUnset(runtimeEnv.ASK_USER_BASE_URL)) {
+        const normalized = normalizeAskUserBaseUrl(accessUrl)
+        runtimeEnv.ASK_USER_BASE_URL = normalized
+        saveEnvVar(ENV_CLOUD, 'ASK_USER_BASE_URL', normalized)
+        log('已从云托管默认域名写回 .env.cloud 的 ASK_USER_BASE_URL', 'success')
       }
       try {
         await syncCloudRunEnv(app, envId, DEFAULT_SERVICE_NAME, runtimeEnv)
@@ -167,6 +175,10 @@ async function deployCloudRun(deployEnv, options) {
   console.log(`  ${colors.bright}服务：${colors.reset}${DEFAULT_SERVICE_NAME}`)
   if (accessUrl) {
     console.log(`  ${colors.bright}访问地址：${colors.reset}${accessUrl}`)
+  } else if (existsSync(ENV_CLOUD) && isAskUserBaseUrlUnset(loadEnvFile(ENV_CLOUD).ASK_USER_BASE_URL)) {
+    console.log(
+      `  ${colors.yellow}ASK_USER_BASE_URL 仍为占位：部署完成后到控制台复制默认域名写入 .env.cloud 再执行 deploy:cloud${colors.reset}`,
+    )
   }
   console.log(`  ${colors.bright}构建进度：${colors.reset}`)
   console.log(

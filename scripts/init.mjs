@@ -19,6 +19,7 @@ import crypto from 'crypto'
 import {
   ENV_LOCAL,
   ENV_CLOUD,
+  ASK_USER_BASE_URL_PLACEHOLDER,
   loadEnvFile,
   saveEnvVar,
 } from './lib/env-files.mjs'
@@ -735,10 +736,7 @@ async function setupCustomModel() {
   console.log('')
 
   const setupCodeBuddyModel = await askYesNo('是否配置 CodeBuddy 自定义模型（models.json）', false)
-  const setupOpenCodeModel = await askYesNo(
-    '是否配置 OpenCode 自定义模型（opencode.json）',
-    envWriteTarget !== ENV_LOCAL,
-  )
+  const setupOpenCodeModel = await askYesNo('是否配置 OpenCode 自定义模型（opencode.json）', false)
 
   if (setupCodeBuddyModel || setupOpenCodeModel) {
     if (!(await ensureCloudbaseApiKey())) {
@@ -942,9 +940,12 @@ async function setupApplicationEnv() {
   }
 
   console.log('')
-  console.log('  ASK_USER_BASE_URL：云托管公网根 URL（如 https://xxx.run.tcloudbase.com）')
+  console.log('  ASK_USER_BASE_URL：Agent 向用户提问时拼接链接用的云托管公网根 URL')
+  console.log('  首次部署前控制台往往还没有默认域名，可直接回车用占位。')
+  console.log(`  占位：${ASK_USER_BASE_URL_PLACEHOLDER}`)
+  console.log('  首次 pnpm deploy:cloud 成功后会尝试从云托管读取域名并写回 .env.cloud')
   const cloudUrl =
-    (await promptInput('  ASK_USER_BASE_URL（回车使用占位，部署后再改）')) ||
+    (await promptInput('  ASK_USER_BASE_URL（回车=占位，部署后自动/手动改）')) ||
     getPreserved('ASK_USER_BASE_URL', '')
 
   const header = `# OpenVibeCoding — CloudRun runtime
@@ -956,7 +957,7 @@ async function setupApplicationEnv() {
       buildSharedEnvBody(get, getPreserved, {
         port: '80',
         nodeEnv: 'production',
-        askUserBaseUrl: cloudUrl || 'https://YOUR-SERVICE.run.tcloudbase.com',
+        askUserBaseUrl: cloudUrl || ASK_USER_BASE_URL_PLACEHOLDER,
       }),
   )
   log('已写入 .env.cloud', 'success')
@@ -1160,8 +1161,8 @@ async function main() {
     console.log(`${colors.dim}需要云托管配置时，再运行 ./init.sh 并选择 2) .env.cloud${colors.reset}`)
   } else {
     console.log(`${colors.cyan}云托管部署${colors.reset}`)
-    console.log(`  确认 ${colors.bright}.env.cloud${colors.reset} 中 ASK_USER_BASE_URL 等为公网地址`)
-    console.log(`  ${colors.bright}pnpm deploy:cloud${colors.reset}`)
+    console.log(`  ${colors.bright}pnpm deploy:cloud${colors.reset}  （ASK_USER_BASE_URL 占位可在首次部署后写回）`)
+    console.log(`  若仍为占位，到控制台复制默认域名后改 ${colors.bright}.env.cloud${colors.reset} 再部署一次`)
     console.log('')
     console.log(`${colors.dim}需要本地开发时，再运行 ./init.sh 并选择 1) .env.local${colors.reset}`)
     console.log(`${colors.dim}deploy 只读 .env.cloud，与 .env.local 无关${colors.reset}`)
