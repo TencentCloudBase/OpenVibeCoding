@@ -1,7 +1,7 @@
 /**
  * Point an existing stateful SDT at a new container image (after 沙箱业务镜像 rebuild).
  *
- * Usage (from packages/server, with .env loaded):
+ * Usage (repo root .env.local loaded):
  *   STATEFUL_TOOL_ID=sdt-xxx STATEFUL_SANDBOX_IMAGE=ccr.../tcb-sandbox-ags:app-vibecoding \
  *     pnpm exec tsx scripts/update-stateful-tool-image.ts
  */
@@ -11,7 +11,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-config({ path: resolve(here, '../.env') })
+config({ path: resolve(here, '../../../.env.local') })
 
 async function callAgs(action: string, param: Record<string, unknown>) {
   const managerModule = await import('@cloudbase/manager-node')
@@ -26,8 +26,8 @@ async function callAgs(action: string, param: Record<string, unknown>) {
     ver: string,
   ) => { request: (a: string, p: object) => Promise<unknown> }
 
-  const secretId = process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || ''
-  const secretKey = process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || ''
+  const secretId = process.env.TCB_SECRET_ID || ''
+  const secretKey = process.env.TCB_SECRET_KEY || ''
   const envId = process.env.TCB_ENV_ID || ''
   if (!secretId || !secretKey || !envId) {
     throw new Error('TCB_ENV_ID / TCB_SECRET_ID / TCB_SECRET_KEY required')

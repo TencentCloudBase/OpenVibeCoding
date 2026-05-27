@@ -30,7 +30,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files — only root .env.example is committed; all secrets live in .env.local / .env.cloud
 .env*
 !.env.example
 

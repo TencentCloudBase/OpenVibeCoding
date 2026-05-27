@@ -16,7 +16,7 @@
  *           assistant.status = 'done'
  *
  * 用法：
- *   npx tsx --env-file=.env scripts/test-persistence-suspend-e2e.mts
+ *   npx tsx --env-file=../../.env.local scripts/test-persistence-suspend-e2e.mts
  */
 
 import 'dotenv/config'

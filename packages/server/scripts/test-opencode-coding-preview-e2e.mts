@@ -2,7 +2,7 @@
 /**
  * 【过时】上游 main 保留的 SCF 环境 e2e，feature/stateful-infra 分支请勿运行。
  * 依赖 `scf-sandbox-manager`，仅适用于 SCF 沙箱；AGS + 沙箱业务镜像请用 verify-stateful-e2e.ts。
- * Stateful: `npx tsx --env-file=.env scripts/verify-stateful-e2e.ts`
+ * Stateful: `npx tsx scripts/verify-stateful-e2e.ts` (loads ../../.env.local)
  *
  * E2E: OpenCode runtime + coding mode + preview + 第二轮修改
  *
@@ -14,7 +14,7 @@
  *
  * 用法：
  *   cd packages/server
- *   npx tsx --env-file=.env scripts/test-opencode-coding-preview-e2e.mts
+ *   npx tsx --env-file=../../.env.local scripts/test-opencode-coding-preview-e2e.mts
  */
 
 import 'dotenv/config'

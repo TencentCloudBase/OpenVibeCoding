@@ -9,7 +9,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-config({ path: resolve(here, '../.env') })
+config({ path: resolve(here, '../../../.env.local') })
 
 /** Match ensure-stateful-tool.ts — preview via :9000, envd for e2b SDK. */
 const STANDARD_TOOL_PORTS = [
@@ -30,8 +30,8 @@ async function callAgs(action: string, param: Record<string, unknown>) {
     ver: string,
   ) => { request: (a: string, p: object) => Promise<unknown> }
 
-  const secretId = process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || ''
-  const secretKey = process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || ''
+  const secretId = process.env.TCB_SECRET_ID || ''
+  const secretKey = process.env.TCB_SECRET_KEY || ''
   const envId = process.env.TCB_ENV_ID || ''
   if (!secretId || !secretKey || !envId) throw new Error('TCB_ENV_ID / TCB_SECRET_ID / TCB_SECRET_KEY required')
 

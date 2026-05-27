@@ -72,7 +72,7 @@ export async function resolveSandboxInstanceMode(): Promise<{
   source: SandboxInstanceModeSource
   envDefault: SandboxInstanceMode
 }> {
-  const envIsolation = process.env.WORKSPACE_ISOLATION || process.env.SANDBOX_INSTANCE_MODE || ''
+  const envIsolation = process.env.WORKSPACE_ISOLATION || ''
   const envDefault = normalizeSandboxMode(envIsolation || BUILTIN_DEFAULT)
 
   try {

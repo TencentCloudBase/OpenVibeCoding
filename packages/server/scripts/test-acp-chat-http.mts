@@ -8,7 +8,7 @@
  * 走完整 SSE 流，验证 runtime=opencode-acp 时整条链路的 HTTP 行为。
  *
  * 用法（packages/server 目录）：
- *   npx tsx --env-file=.env scripts/test-acp-chat-http.mts
+ *   npx tsx --env-file=../../.env.local scripts/test-acp-chat-http.mts
  */
 
 import 'dotenv/config'

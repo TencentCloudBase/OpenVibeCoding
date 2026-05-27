@@ -181,7 +181,7 @@ auth.post('/register', async (c) => {
       )
     }
     if (msg.includes('Missing JWE secret')) {
-      return c.json({ error: 'Server missing JWE_SECRET in packages/server/.env' }, 500)
+      return c.json({ error: 'Server missing JWE_SECRET in .env.local' }, 500)
     }
     return c.json(
       {

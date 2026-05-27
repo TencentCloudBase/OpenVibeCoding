@@ -3,6 +3,8 @@
 # ========================================
 #  Project Initialization Script
 #  Entry point for setting up the project
+#
+#  Stateful 分支：init 写 .env.local + .env.cloud；不跑 Docker/TCR（见 scripts/init.mjs）
 # ========================================
 
 set -e

@@ -17,7 +17,7 @@
  *   E. 前端 tasks.ts 转换逻辑能消化（模拟: 转成 TaskMessage 不报错）
  *
  * 用法：
- *   npx tsx --env-file=.env scripts/test-persistence-e2e.mts
+ *   npx tsx --env-file=../../.env.local scripts/test-persistence-e2e.mts
  */
 
 import 'dotenv/config'

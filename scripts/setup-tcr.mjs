@@ -22,7 +22,7 @@ import { existsSync, readFileSync, writeFileSync, appendFileSync } from 'fs'
 import { resolve } from 'path'
 import { homedir } from 'os'
 import crypto from 'crypto'
-import readline from 'readline'
+import { promptInput } from './lib/prompt.mjs'
 import { createRequire } from 'module'
 
 const require = createRequire(import.meta.url)
@@ -34,7 +34,7 @@ const tencentcloud = require('tencentcloud-sdk-nodejs')
 
 const TCR_DOMAIN = 'ccr.ccs.tencentyun.com'
 const ENV_FILE = resolve(process.cwd(), '.env.local')
-const SERVER_ENV_FILE = resolve(process.cwd(), 'packages/server/.env')
+const ENV_LOCAL_FILE = resolve(process.cwd(), '.env.local')
 const CLOUDBASE_AUTH_FILE = resolve(homedir(), '.config/.cloudbase/auth.json')
 const DEFAULT_NAMESPACE_PREFIX = 'cloudbase-vibecoding'
 // docker.io/yhyanghang/cloudbase-workspace:260515-0120e18d
@@ -135,14 +135,14 @@ function loadEnvFile() {
   return env
 }
 
-/** Mirror TCR image URI into packages/server/.env for first-time CreateSandboxTool. */
+/** Mirror TCR image URI into .env.local for first-time CreateSandboxTool. */
 function syncStatefulSandboxImageToServer(tcrImage) {
-  if (!existsSync(SERVER_ENV_FILE)) {
-    log('packages/server/.env not found; skip STATEFUL_SANDBOX_IMAGE sync', 'warn')
+  if (!existsSync(ENV_LOCAL_FILE)) {
+    log('.env.local not found; skip STATEFUL_SANDBOX_IMAGE sync', 'warn')
     return
   }
   const key = 'STATEFUL_SANDBOX_IMAGE'
-  const content = readFileSync(SERVER_ENV_FILE, 'utf-8')
+  const content = readFileSync(ENV_LOCAL_FILE, 'utf-8')
   const line = `${key}=${tcrImage}`
   const lines = content.split('\n')
   let replaced = false
@@ -163,8 +163,8 @@ function syncStatefulSandboxImageToServer(tcrImage) {
       newLines.push('', line)
     }
   }
-  writeFileSync(SERVER_ENV_FILE, newLines.join('\n'))
-  log('STATEFUL_SANDBOX_IMAGE synced to packages/server/.env', 'success')
+  writeFileSync(ENV_LOCAL_FILE, newLines.join('\n'))
+  log('STATEFUL_SANDBOX_IMAGE synced to .env.local', 'success')
 }
 
 function saveEnvVar(key, value) {
@@ -185,52 +185,6 @@ function saveEnvVar(key, value) {
     // Append new value
     appendFileSync(ENV_FILE, `\n${key}=${value}`)
   }
-}
-
-/**
- * Prompt user for input
- */
-function promptInput(prompt, hidden = false) {
-  return new Promise((resolve) => {
-    if (hidden) {
-      // Raw mode: disable echo so password is not shown
-      process.stdout.write(`${prompt}: `)
-      process.stdin.setRawMode(true)
-      process.stdin.resume()
-      let password = ''
-      const onData = (char) => {
-        const c = char.toString('utf8')
-        switch (c) {
-          case '\n':
-          case '\r':
-          case '\u0004':
-            process.stdin.setRawMode(false)
-            process.stdin.pause()
-            process.stdin.removeListener('data', onData)
-            process.stdout.write('\n')
-            resolve(password)
-            break
-          case '\u0003':
-            process.exit()
-            break
-          default:
-            if (c.charCodeAt(0) === 127) {
-              password = password.slice(0, -1)
-            } else {
-              password += c
-            }
-            break
-        }
-      }
-      process.stdin.on('data', onData)
-    } else {
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-      rl.question(`${prompt}: `, (answer) => {
-        rl.close()
-        resolve(answer.trim())
-      })
-    }
-  })
 }
 
 /**

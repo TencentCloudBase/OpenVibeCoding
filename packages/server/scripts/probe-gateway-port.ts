@@ -16,7 +16,7 @@ import {
 } from '../src/sandbox/stateful/gateway.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
-config({ path: resolve(here, '../.env') })
+config({ path: resolve(here, '../../../.env.local') })
 
 async function main() {
   const sandboxId = process.env.SANDBOX_ID || process.env.STATEFUL_SANDBOX_ID || ''

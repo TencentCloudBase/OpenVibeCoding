@@ -10,7 +10,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const envPath = resolve(__dirname, '../.env')
+const envPath = resolve(__dirname, '../../../.env.local')
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, 'utf8').split('\n')) {
     const t = line.trim()
@@ -100,8 +100,8 @@ async function main() {
     const session = await provider.prepare(inst, {
       credentials: {
         envId: process.env.TCB_ENV_ID || '',
-        secretId: process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || '',
-        secretKey: process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || '',
+        secretId: process.env.TCB_SECRET_ID || '',
+        secretKey: process.env.TCB_SECRET_KEY || '',
       },
       codingMode: true,
       backendOptions: { backend: 'stateful' },

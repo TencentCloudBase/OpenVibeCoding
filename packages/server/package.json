@@ -12,7 +12,7 @@
     "./agent/cloudbase-agent.service": "./src/agent/cloudbase-agent.service.ts"
   },
   "scripts": {
-    "dev": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting --silent && tsup src/util/skill-loader-override.ts --format cjs --outDir dist/util --no-splitting --silent && DOTENVX_PATH=.env tsx watch --env-file=.env src/index.ts",
+    "dev": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting --silent && tsup src/util/skill-loader-override.ts --format cjs --outDir dist/util --no-splitting --silent && tsx watch --env-file=../../.env.local src/index.ts",
     "build": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting && tsup src/util/skill-loader-override.ts --format cjs --outDir dist/util --no-splitting && tsup src/index.ts --format esm --target node22",
     "start": "node dist/index.js",
     "test": "vitest run",

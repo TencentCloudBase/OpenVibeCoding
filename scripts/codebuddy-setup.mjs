@@ -4,13 +4,13 @@
  * CodeBuddy 模型配置引导脚本
  *
  * 作用：
- *   - 从 CloudBase 拉取可用 AI 模型列表（DescribeAIModels）
+ *   - 从当前 CloudBase 环境（AI+ / DescribeAIModels）拉取已开通模型列表
  *   - 生成 packages/server/.config/.codebuddy/models.json
- *   - 供 @tencent-ai/agent-sdk 读取自定义模型列表
+ *   - 供 @tencent-ai/agent-sdk 读取；模型调用走 CLOUDBASE_API_KEY（非 CODEBUDDY_API_KEY）
  *
  * 设计约束：
  *   - 只处理项目级配置
- *   - 凭证只存 packages/server/.env
+ *   - 凭证只存根目录 .env.local
  *   - 模板中的 ${VAR_NAME} 占位符在运行时被解析为环境变量值
  *
  * 用法：
@@ -19,7 +19,6 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import readline from 'node:readline'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
@@ -29,7 +28,9 @@ let managerApp = null
 // ─── Constants ───────────────────────────────────────────────────────────
 
 const ROOT = process.cwd()
-const SERVER_ENV_FILE = path.join(ROOT, 'packages', 'server', '.env')
+const ENV_TARGET_FILE = process.env.OVC_ENV_FILE
+  ? path.resolve(process.env.OVC_ENV_FILE)
+  : path.join(ROOT, '.env.local')
 const MODELS_CONFIG_DIR = path.join(ROOT, 'packages', 'server', '.config', '.codebuddy')
 const MODELS_CONFIG_FILE = path.join(MODELS_CONFIG_DIR, 'models.json')
 
@@ -59,74 +60,6 @@ function log(msg, type = 'info') {
 function logSection(title) {
   console.log('')
   console.log(`${colors.bold}${colors.cyan}━━━ ${title} ━━━${colors.reset}`)
-}
-
-let _rl = null
-
-function drainStdin() {
-  return new Promise((resolve) => {
-    if (!process.stdin.readable) return resolve()
-    process.stdin.resume()
-    const drain = () => {
-      while (process.stdin.read() !== null) {
-        /* discard */
-      }
-    }
-    drain()
-    setTimeout(() => {
-      drain()
-      process.stdin.pause()
-      resolve()
-    }, 10)
-  })
-}
-
-async function prompt(question, { hidden = false, defaultValue = '' } = {}) {
-  if (hidden) {
-    if (_rl) {
-      _rl.close()
-      _rl = null
-    }
-    await drainStdin()
-    process.stdout.write(`${question}: `)
-    process.stdin.setRawMode(true)
-    process.stdin.resume()
-    return new Promise((resolve) => {
-      let buf = ''
-      const onData = (chunk) => {
-        const c = chunk.toString('utf8')
-        if (c === '\n' || c === '\r' || c === '\u0004') {
-          process.stdin.setRawMode(false)
-          process.stdin.pause()
-          process.stdin.removeListener('data', onData)
-          process.stdout.write('\n')
-          resolve(buf || defaultValue)
-        } else if (c === '\u0003') {
-          process.exit(130)
-        } else if (c.charCodeAt(0) === 127) {
-          buf = buf.slice(0, -1)
-        } else {
-          buf += c
-        }
-      }
-      process.stdin.on('data', onData)
-    })
-  }
-  if (_rl) {
-    _rl.close()
-    _rl = null
-  }
-  await drainStdin()
-  _rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-  const hint = defaultValue ? ` ${colors.dim}[${defaultValue}]${colors.reset}` : ''
-  return new Promise((resolve) => {
-    _rl.question(`${question}${hint}: `, (answer) => {
-      _rl.close()
-      _rl = null
-      const value = answer.trim()
-      resolve(value || defaultValue)
-    })
-  })
 }
 
 // ─── Env file helpers ───────────────────────────────────────────────────
@@ -274,46 +207,33 @@ function writeModelsConfig(config) {
 // ─── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
-  logSection('CodeBuddy 模型配置')
+  const envLabel = path.basename(ENV_TARGET_FILE)
+  logSection('CodeBuddy 自定义模型（数据源：CloudBase AI+）')
+  console.log('')
+  console.log(`  ${colors.dim}从当前 TCB 环境读取已开通模型 → models.json；与 CODEBUDDY_API_KEY（Copilot）无关。${colors.reset}`)
+  console.log(`  ${colors.dim}env：${envLabel}${colors.reset}`)
+  console.log('')
 
-  const envNow = parseEnvFile(SERVER_ENV_FILE)
+  const envNow = parseEnvFile(ENV_TARGET_FILE)
   const envId = envNow['TCB_ENV_ID']
   const secretId = envNow['TCB_SECRET_ID']
   const secretKey = envNow['TCB_SECRET_KEY']
   const apiKey = envNow['CLOUDBASE_API_KEY']
 
   if (!envId || !secretId || !secretKey) {
-    log('缺少 CloudBase 凭证，请确保 packages/server/.env 中包含 TCB_ENV_ID、TCB_SECRET_ID、TCB_SECRET_KEY', 'err')
+    log(`缺少 CloudBase 凭证，请确保 ${envLabel} 含 TCB_ENV_ID、TCB_SECRET_ID、TCB_SECRET_KEY`, 'err')
     process.exit(1)
   }
 
-  // 1. 检查 / 引导输入 CLOUDBASE_API_KEY
-  if (!apiKey) {
-    log('缺少 CLOUDBASE_API_KEY，请确保 packages/server/.env 中已配置', 'warn')
-    console.log(`  可从 https://tcb.cloud.tencent.com/dev?envId=${envId}#/env/apikey 创建获取`)
-    console.log('')
-    const value = await prompt('  CLOUDBASE_API_KEY', { hidden: true })
-    if (value && value.trim() !== '') {
-      const { added, updated } = upsertEnvFile(SERVER_ENV_FILE, {
-        CLOUDBASE_API_KEY: value.trim(),
-        CODEBUDDY_USE_CUSTOM_MODELS: 'true',
-      })
-      if (added.includes('CLOUDBASE_API_KEY')) log('已追加 CLOUDBASE_API_KEY 到 packages/server/.env', 'ok')
-      if (updated.includes('CLOUDBASE_API_KEY')) log('已更新 packages/server/.env 中的 CLOUDBASE_API_KEY', 'ok')
-      if (added.includes('CODEBUDDY_USE_CUSTOM_MODELS')) log('已追加 CODEBUDDY_USE_CUSTOM_MODELS=true 到 packages/server/.env', 'ok')
-      if (updated.includes('CODEBUDDY_USE_CUSTOM_MODELS')) log('已更新 packages/server/.env 中的 CODEBUDDY_USE_CUSTOM_MODELS', 'ok')
-      envNow['CLOUDBASE_API_KEY'] = value.trim()
-      envNow['CODEBUDDY_USE_CUSTOM_MODELS'] = 'true'
-    } else {
-      log('未输入 CLOUDBASE_API_KEY，跳过', 'warn')
-    }
+  if (!apiKey?.trim()) {
+    log(`缺少 CLOUDBASE_API_KEY，请先 ./init.sh 完成「CloudBase AI API Key」步骤，或写入 ${envLabel}`, 'err')
+    console.log(`  创建：https://tcb.cloud.tencent.com/dev?envId=${envId}#/env/apikey`)
+    process.exit(1)
   }
 
-  // 2. 拉取 CloudBase AI 模型列表
-  log('拉取 CloudBase AI 模型列表...', 'step')
+  log('拉取当前环境的 AI 模型列表（DescribeAIModels）...', 'step')
   const modelList = await describeAIModes(envId, secretId, secretKey)
 
-  // 3. 构建 CodeBuddy 模型配置
   const newConfig = buildCodeBuddyModelsConfig(modelList, envId)
 
   if (newConfig.models.length === 0) {
@@ -344,7 +264,6 @@ async function main() {
       }
     }
 
-    // 提示已从 CloudBase 移除的模型
     const removedCloudbaseModels = existingConfig.models.filter(
       (m) => !newModelIds.has(m.id) && m.vendor === 'cloudbase',
     )

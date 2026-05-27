@@ -78,10 +78,8 @@ async function callAgsManagerApi(action: string, param: Record<string, unknown>)
   const CloudService = ((managerUtilsModule as any).CloudService ||
     (managerUtilsModule as any).default?.CloudService) as any
 
-  const secretId =
-    process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || process.env.TENCENT_SECRET_ID || ''
-  const secretKey =
-    process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || process.env.TENCENT_SECRET_KEY || ''
+  const secretId = process.env.TCB_SECRET_ID || ''
+  const secretKey = process.env.TCB_SECRET_KEY || ''
   const token = process.env.TCB_TOKEN || process.env.TENCENTCLOUD_SESSIONTOKEN || ''
   const managerEnvId = process.env.TCB_ENV_ID || ''
 

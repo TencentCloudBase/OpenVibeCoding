@@ -134,7 +134,7 @@ releaseEnv() → 销毁 CAM + 环境资源
 ## 调试
 
 - `AGENT_DEBUG_JSONL=1` — 开启完整消息日志（写入 `debug-jsonl/` 目录）
-- `packages/server/.env` 中的 `NODE_ENV=development` — 开发模式详细错误
+- `.env.local` 中的 `NODE_ENV=development` — 开发模式详细错误
 - Agent Registry 日志前缀：`[Registry]`
 - SSE Poll 日志前缀：`[SSE poll]`
 - 沙箱日志前缀：`[sandbox]`

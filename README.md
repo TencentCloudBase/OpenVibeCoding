@@ -302,7 +302,7 @@ The command will:
 1. Call the Tencent CloudBase AI+ endpoint [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) to fetch models
 2. Walk you through configuring the Tencent CloudBase API Key
 3. Take the complete config from the catalog and write it to `.opencode/opencode.json` (including npm / baseURL / models)
-4. Append the API Key to `packages/server/.env`
+4. Append the API Key to `.env.local`
 
 ### Example output
 
@@ -328,7 +328,7 @@ The command will:
 ```
 
 ```bash
-# packages/server/.env gets the API Key appended
+# .env.local gets the API Key appended
 CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 ```
 
@@ -368,7 +368,7 @@ pnpm codebuddy:setup
 The command will:
 
 1. Call the Tencent CloudBase AI+ endpoint [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) to fetch models enabled in the current environment
-2. Check for `CLOUDBASE_API_KEY`; if missing, prompt for input and write it to `packages/server/.env`
+2. Check for `CLOUDBASE_API_KEY`; if missing, prompt for input and write it to `.env.local`
 3. Also set `CODEBUDDY_USE_CUSTOM_MODELS=true`
 4. Generate `packages/server/.config/.codebuddy/models.json` for the SDK to read
 
@@ -393,7 +393,7 @@ The command will:
 ```
 
 ```bash
-# packages/server/.env gets auto-appended
+# .env.local gets auto-appended
 CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 CODEBUDDY_USE_CUSTOM_MODELS=true
 ```
@@ -429,7 +429,7 @@ Append a custom entry to the `models` array (note: do **not** set `vendor` to `c
 }
 ```
 
-Make sure the matching env variable is defined in `packages/server/.env`, and set:
+Make sure the matching env variable is defined in `.env.local`, and set:
 
 ```bash
 CODEBUDDY_USE_CUSTOM_MODELS=true

@@ -26,13 +26,13 @@
     "deploy:cloud": "node scripts/deploy.mjs",
     "opencode:setup": "node scripts/opencode-setup.mjs",
     "codebuddy:setup": "node scripts/codebuddy-setup.mjs",
-    "deploy:cloud": "node scripts/deploy.mjs",
     "prepare": "husky"
   },
   "devDependencies": {
     "@cloudbase/manager-node": "^4.10.6",
     "@cloudbase/node-sdk": "^3.18.1",
     "@eslint/eslintrc": "^3.3.3",
+    "@inquirer/password": "^4.0.23",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/ms": "^2.1.0",
     "@types/node": "^20.19.30",

@@ -1,12 +1,16 @@
 # CloudRun 部署（云托管）
 
-OpenVibeCoding 以根目录 `Dockerfile` 构建**前后端一体**容器，监听 **80**。环境变量在控制台配置，**不要**把 `packages/server/.env` 打进镜像（`.dockerignore` 已排除）。
+一体容器（`Dockerfile`）监听 **80**。密钥**不打进镜像**（`.dockerignore` 排除 `.env*`）。
 
-## 前置
+## 环境文件
 
-- 已完成 `./init.sh`（或手动具备 `TCB_ENV_ID`、`TCB_SECRET_ID`、`TCB_SECRET_KEY`）
-- `packages/server/.env` 中沙箱与 Agent 相关变量与本地一致（部署后在控制台再填一份）
-- 已安装 CloudBase CLI：`npm i -g @cloudbase/cli` 且 `cloudbase login`
+| 文件 | 用途 |
+| --- | --- |
+| `.env.example` | 文档模板（可提交） |
+| `.env.local` | 仅本地 `pnpm dev` |
+| `.env.cloud` | `pnpm deploy:cloud` 读此文件（CLI 凭证 + 部署后同步到服务的运行时变量） |
+
+`./init.sh` 每次只生成其一：选 1 → `.env.local`，选 2 → `.env.cloud`；两份都要则跑两次 init。云端差异主要是 `PORT`、`NODE_ENV`、`ASK_USER_BASE_URL`。
 
 ## 一键部署
 
@@ -14,26 +18,24 @@ OpenVibeCoding 以根目录 `Dockerfile` 构建**前后端一体**容器，监�
 pnpm deploy:cloud
 ```
 
-- 服务名默认：`vibecoding-platform`
-- 云端从源码 + `Dockerfile` 构建，无需本机 Docker
-- 构建进度：控制台 → 云托管 → 服务详情 → 部署记录
+1. 使用 `.env.cloud` 中的 `TCB_*` 调用 CloudBase CLI 上传源码并云端构建  
+2. 部署完成后将 `.env.cloud` 同步到服务 `EnvParams`（无需手抄控制台）  
+3. 若 API 同步失败，脚本会提示到控制台粘贴 `.env.cloud`
 
-## 控制台必改项（相对本地）
+跳过环境变量同步（仅上传代码）：
 
-| 变量 | 值 |
-| --- | --- |
-| `PORT` | `80` |
-| `NODE_ENV` | `production` |
-| `ASK_USER_BASE_URL` | 云托管公网根 URL（如 `https://xxx.run.tcloudbase.com`），**不能**用 `127.0.0.1` |
+```bash
+pnpm deploy:cloud --skip-env-sync
+```
 
-其余与本地 `packages/server/.env` 同名：`TCB_*`、`TCB_API_KEY`、`CODEBUDDY_*`、可选 `GIT_ARCHIVE_*` 等。勿配置 `STATEFUL_TOOL_ID`（多副本应走 DB + `openvibecoding-{TCB_ENV_ID}` Tool 名）。
+## 部署后
 
-## 部署后验证
+- 构建进度：控制台 → 云托管 → 服务 `vibecoding-platform` → 部署记录  
+- 确认 `ASK_USER_BASE_URL` 为公网根 URL（勿用 `127.0.0.1`）  
+- 勿配置 `STATEFUL_TOOL_ID`（多副本用 DB + `openvibecoding-{TCB_ENV_ID}`）
 
-1. 打开控制台给出的默认域名，`GET /health` 为 ok
-2. 登录并创建任务，确认沙箱进度与预览
-3. 若沙箱失败，对照 [docs/setup.md](./setup.md) 沙箱排障；本地可用 `pnpm --filter @coder/server stop:stateful-instances`
+## 验证
 
-## 与上游 main
-
-`scripts/deploy.mjs` 与上游 `TencentCloudBase/OpenVibeCoding` `main` 对齐；合并上游后优先保留本分支 stateful 相关 env 说明。
+1. `GET /health`  
+2. 登录并创建任务，检查沙箱与预览  
+3. 沙箱失败见 [setup.md](./setup.md) 排障

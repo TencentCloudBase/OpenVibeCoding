@@ -1,36 +1,30 @@
 #!/usr/bin/env node
 
 /**
- * Deploy Script — 一键部署到 CloudBase 云托管
+ * Deploy to CloudBase CloudRun (container).
+ *
+ * Env layout (repo root):
+ *   .env.local  — local dev only (pnpm dev)
+ *   .env.cloud  — cloud: CLI credentials + runtime vars synced after deploy
+ *   .env.example — documentation only
  *
  * Usage:
- *   pnpm deploy:cloud              # 部署到云托管
- *   pnpm deploy:cloud --skip-build # 跳过本地构建步骤（云端会重新构建）
- *
- * TODO: 云函数（镜像模式）部署暂未完成，存在以下问题：
- *   - CLI 无法正确传递 ImagePort 参数
- *   - 平台默认 ImagePort=9000，需要镜像内 ENV PORT=9000 匹配
- *   - 镜像冷启动时间过长（1.29GB），容易超过 InitTimeout
- *   待平台侧修复后可重新启用
+ *   pnpm deploy:cloud
+ *   pnpm deploy:cloud --skip-env-sync   # deploy only, do not call UpdateCloudRunServer
  */
 
 import { execSync } from 'child_process'
 import { createRequire } from 'module'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
+import { ENV_CLOUD, loadEnvFile, cloudRuntimeEnvFromFile } from './lib/env-files.mjs'
 
 const require = createRequire(import.meta.url)
 const CloudBase = require('@cloudbase/manager-node')
 
-// ===================== Constants =====================
-
 const ROOT = process.cwd()
-const ENV_FILE = resolve(ROOT, '.env.local')
-const SERVER_ENV_FILE = resolve(ROOT, 'packages/server/.env')
 const CLOUDBASERC = resolve(ROOT, 'cloudbaserc.json')
 const DEFAULT_SERVICE_NAME = 'vibecoding-platform'
-
-// ===================== Helpers =====================
 
 const colors = {
   reset: '\x1b[0m',
@@ -57,20 +51,6 @@ function logSection(title) {
   console.log(`${colors.bright}${colors.cyan}━━━ ${title} ━━━${colors.reset}`)
 }
 
-function loadEnvFile(filePath) {
-  const env = {}
-  if (existsSync(filePath)) {
-    readFileSync(filePath, 'utf-8').split('\n').forEach((line) => {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...rest] = trimmed.split('=')
-        if (key) env[key.trim()] = rest.join('=').trim()
-      }
-    })
-  }
-  return env
-}
-
 function commandExists(name) {
   try {
     execSync(`which ${name}`, { stdio: 'pipe' })
@@ -85,8 +65,6 @@ function run(cmd, options = {}) {
   execSync(cmd, { stdio: 'inherit', cwd: ROOT, ...options })
 }
 
-// ===================== CloudBase SDK Helper =====================
-
 function createCloudBaseApp(env) {
   return new CloudBase({
     secretId: env.TCB_SECRET_ID,
@@ -95,53 +73,94 @@ function createCloudBaseApp(env) {
   })
 }
 
-// ===================== CloudRun Deploy =====================
+async function syncCloudRunEnv(app, envId, serverName, runtimeEnv) {
+  const keys = Object.keys(runtimeEnv)
+  if (keys.length === 0) {
+    log('.env.cloud 无有效变量，跳过云托管环境变量同步', 'warn')
+    return false
+  }
 
-async function deployCloudRun(env) {
+  logSection('同步云托管环境变量')
+  log(`从 .env.cloud 写入 ${keys.length} 个变量到服务 ${serverName}`, 'info')
+
+  const tcbr = app.commonService('tcbr')
+  await tcbr.call({
+    Action: 'UpdateCloudRunServer',
+    Param: {
+      EnvId: envId,
+      ServerName: serverName,
+      Items: [
+        {
+          Key: 'EnvParams',
+          Value: JSON.stringify(runtimeEnv),
+        },
+      ],
+    },
+  })
+  log('云托管环境变量已更新（新实例生效）', 'success')
+  return true
+}
+
+async function deployCloudRun(deployEnv, options) {
   logSection('部署到云托管（容器服务）')
 
-  const envId = env.TCB_ENV_ID
+  const envId = deployEnv.TCB_ENV_ID
   if (!envId) {
     log('缺少 TCB_ENV_ID，请先运行 ./init.sh', 'error')
     process.exit(1)
   }
 
   if (!commandExists('cloudbase')) {
-    log('cloudbase CLI 未安装，请先安装：npm i -g @cloudbase/cli', 'error')
+    log('cloudbase CLI 未安装：npm i -g @cloudbase/cli', 'error')
     process.exit(1)
   }
 
-  // Ensure cloudbaserc.json has envId so CLI can read it
   const rcBackup = existsSync(CLOUDBASERC) ? readFileSync(CLOUDBASERC, 'utf-8') : null
-  const rcContent = { envId }
-  writeFileSync(CLOUDBASERC, JSON.stringify(rcContent, null, 2))
+  writeFileSync(CLOUDBASERC, JSON.stringify({ envId }, null, 2))
 
   try {
-    // cloudbase cloudrun deploy uploads source + Dockerfile to cloud for building
-    // No local Docker required — cloud builds the image from Dockerfile
     log('提交到云托管（云端构建）...')
     run(`cloudbase cloudrun deploy -s ${DEFAULT_SERVICE_NAME} --port 80 --force --source .`)
-  } catch (err) {
+  } catch {
     log('部署失败', 'error')
-    log(`可在控制台手动部署：https://tcb.cloud.tencent.com/dev?envId=${envId}#/run`, 'info')
+    log(`控制台：https://tcb.cloud.tencent.com/dev?envId=${envId}#/run`, 'info')
     process.exit(1)
   } finally {
     if (rcBackup) writeFileSync(CLOUDBASERC, rcBackup)
   }
 
-  // Query service domain via CloudBase manager-node SDK
   let accessUrl = ''
+  const app = createCloudBaseApp(deployEnv)
   try {
-    const app = createCloudBaseApp(env)
     const tcbr = app.commonService('tcbr')
     const result = await tcbr.call({
       Action: 'DescribeCloudRunServerDetail',
       Param: { EnvId: envId, ServerName: DEFAULT_SERVICE_NAME },
     })
     accessUrl = result.BaseInfo?.DefaultDomainName || ''
-  } catch { /* ignore — URL is optional */ }
+  } catch {
+    /* optional */
+  }
 
-  // Done
+  if (!options.skipEnvSync) {
+    if (!existsSync(ENV_CLOUD)) {
+      log('未找到 .env.cloud，请运行 ./init.sh 生成或手动创建', 'warn')
+    } else {
+      const runtimeEnv = cloudRuntimeEnvFromFile(ENV_CLOUD)
+      if (accessUrl && !runtimeEnv.ASK_USER_BASE_URL) {
+        runtimeEnv.ASK_USER_BASE_URL = accessUrl.startsWith('http')
+          ? accessUrl
+          : `https://${accessUrl}`
+      }
+      try {
+        await syncCloudRunEnv(app, envId, DEFAULT_SERVICE_NAME, runtimeEnv)
+      } catch (err) {
+        log('环境变量 API 同步失败，请在控制台 → 云托管 → 服务配置 粘贴 .env.cloud', 'warn')
+        console.error(err)
+      }
+    }
+  }
+
   console.log('')
   log('部署已提交，云端构建中...', 'success')
   console.log('')
@@ -150,11 +169,11 @@ async function deployCloudRun(env) {
     console.log(`  ${colors.bright}访问地址：${colors.reset}${accessUrl}`)
   }
   console.log(`  ${colors.bright}构建进度：${colors.reset}`)
-  console.log(`  https://tcb.cloud.tencent.com/dev?envId=${envId}#/platform-run/service/detail?serverName=${DEFAULT_SERVICE_NAME}&tabId=deploy&envId=${envId}`)
+  console.log(
+    `  https://tcb.cloud.tencent.com/dev?envId=${envId}#/platform-run/service/detail?serverName=${DEFAULT_SERVICE_NAME}&tabId=deploy&envId=${envId}`,
+  )
   console.log('')
 }
-
-// ===================== Main =====================
 
 async function main() {
   console.log('')
@@ -162,21 +181,23 @@ async function main() {
   console.log('')
 
   const args = process.argv.slice(2)
+  const skipEnvSync = args.includes('--skip-env-sync')
 
-  // Load env
-  const env = { ...loadEnvFile(ENV_FILE), ...loadEnvFile(SERVER_ENV_FILE) }
-
-  if (!env.TCB_ENV_ID) {
-    log('未找到 TCB_ENV_ID，请先运行 ./init.sh 完成初始化', 'error')
+  const deployEnv = loadEnvFile(ENV_CLOUD)
+  if (!existsSync(ENV_CLOUD)) {
+    log('未找到 .env.cloud，请运行 ./init.sh 并选择 2) .env.cloud', 'error')
+    process.exit(1)
+  }
+  if (!deployEnv.TCB_ENV_ID) {
+    log('.env.cloud 缺少 TCB_ENV_ID', 'error')
+    process.exit(1)
+  }
+  if (!deployEnv.TCB_SECRET_ID || !deployEnv.TCB_SECRET_KEY) {
+    log('.env.cloud 缺少 TCB_SECRET_ID / TCB_SECRET_KEY', 'error')
     process.exit(1)
   }
 
-  if (!env.TCB_SECRET_ID || !env.TCB_SECRET_KEY) {
-    log('未找到 TCB_SECRET_ID / TCB_SECRET_KEY，请先运行 ./init.sh 完成初始化', 'error')
-    process.exit(1)
-  }
-
-  await deployCloudRun(env)
+  await deployCloudRun(deployEnv, { skipEnvSync })
 }
 
 main().catch((err) => {

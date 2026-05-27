@@ -14,7 +14,7 @@ import {
 } from '../src/sandbox/stateful-custom-configuration.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
-config({ path: resolve(here, '../.env') })
+config({ path: resolve(here, '../../../.env.local') })
 
 async function callAgs(action: string, param: Record<string, unknown>) {
   const managerModule = await import('@cloudbase/manager-node')
@@ -29,8 +29,8 @@ async function callAgs(action: string, param: Record<string, unknown>) {
     ver: string,
   ) => { request: (a: string, p: object) => Promise<unknown> }
 
-  const secretId = process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || ''
-  const secretKey = process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || ''
+  const secretId = process.env.TCB_SECRET_ID || ''
+  const secretKey = process.env.TCB_SECRET_KEY || ''
   const envId = process.env.TCB_ENV_ID || ''
   const app = new CloudBase({ secretId, secretKey, envId })
   const ags = new CloudService(app.context, 'ags', '2025-09-20')

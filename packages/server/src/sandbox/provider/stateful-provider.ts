@@ -80,10 +80,8 @@ function readStatefulRuntimeConfig(envId: string, toolId: string): StatefulRunti
   const accessToken = getTcbAccessToken()
   const sandboxBaseUrl = resolveStatefulGatewayUrl(envId)
   const preCreatedSandboxId = process.env.STATEFUL_SANDBOX_ID || ''
-  const managerSecretId =
-    process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || process.env.TENCENT_SECRET_ID || ''
-  const managerSecretKey =
-    process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || process.env.TENCENT_SECRET_KEY || ''
+  const managerSecretId = process.env.TCB_SECRET_ID || ''
+  const managerSecretKey = process.env.TCB_SECRET_KEY || ''
   const managerToken = process.env.TCB_TOKEN || process.env.TENCENTCLOUD_SESSIONTOKEN || ''
   const managerEnvId = process.env.TCB_ENV_ID || envId
 

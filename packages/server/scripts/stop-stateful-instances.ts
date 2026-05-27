@@ -1,6 +1,6 @@
 /**
  * Stop active AGS sandbox instances for the configured stateful tool (shared-env cleanup).
- * Loads packages/server/.env like verify-stateful-e2e.ts.
+ * Loads repo root .env.local (see scripts/lib/env-files.mjs).
  *
  * Usage: pnpm stop:stateful-instances
  */
@@ -9,7 +9,7 @@ import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const envPath = resolve(__dirname, '../.env')
+const envPath = resolve(__dirname, '../../../.env.local')
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, 'utf8').split('\n')) {
     const t = line.trim()
@@ -33,9 +33,8 @@ async function callAgsManagerApi(action: string, param: Record<string, unknown>)
     (managerUtilsModule as any).default?.CloudService) as any
 
   const secretId =
-    process.env.TCB_SECRET_ID || process.env.TENCENTCLOUD_SECRET_ID || process.env.TENCENT_SECRET_ID || ''
-  const secretKey =
-    process.env.TCB_SECRET_KEY || process.env.TENCENTCLOUD_SECRET_KEY || process.env.TENCENT_SECRET_KEY || ''
+    process.env.TCB_SECRET_ID || ''
+  const secretKey = process.env.TCB_SECRET_KEY || ''
   const token = process.env.TCB_TOKEN || process.env.TENCENTCLOUD_SESSIONTOKEN || ''
   const managerEnvId = process.env.TCB_ENV_ID || ''
 
@@ -54,7 +53,7 @@ async function resolveToolId(): Promise<string> {
 
   const envId = process.env.TCB_ENV_ID || ''
   if (!envId) {
-    throw new Error('Set STATEFUL_TOOL_ID or TCB_ENV_ID in packages/server/.env')
+    throw new Error('Set STATEFUL_TOOL_ID or TCB_ENV_ID in .env.local')
   }
 
   const { statefulToolNameForEnv } = await import('../src/sandbox/ensure-stateful-tool.js')

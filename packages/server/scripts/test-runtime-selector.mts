@@ -11,7 +11,7 @@
  * 不依赖真实 LLM —— 只验证路由层，不等 agent 跑完。
  *
  * 用法：
- *   npx tsx --env-file=.env scripts/test-runtime-selector.mts
+ *   npx tsx --env-file=../../.env.local scripts/test-runtime-selector.mts
  */
 
 import 'dotenv/config'

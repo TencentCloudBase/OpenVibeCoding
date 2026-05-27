@@ -29,7 +29,7 @@ const PROVISION_MODES = [
   },
 ] as const
 
-const SANDBOX_INSTANCE_MODES = [
+const WORKSPACE_ISOLATION_MODES = [
   {
     value: 'shared',
     label: '共享实例',
@@ -268,7 +268,7 @@ export function AdminSettingsPage() {
           </div>
 
           <RadioGroup value={sandboxInstanceMode} onValueChange={setSandboxInstanceMode} className="space-y-3">
-            {SANDBOX_INSTANCE_MODES.map((mode) => (
+            {WORKSPACE_ISOLATION_MODES.map((mode) => (
               <label
                 key={mode.value}
                 className={`flex items-start gap-3 rounded-lg border p-4 cursor-pointer transition-colors ${
