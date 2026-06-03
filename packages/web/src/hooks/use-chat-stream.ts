@@ -305,7 +305,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
       onRestoreDraft: (text: string) => void,
       imageBlocks?: Array<{ data: string; mimeType: string }>,
       _opts?: { isAutoFix?: boolean },
-    ) => {
+    ): Promise<boolean> => {
       const userMsgId = `local-${Date.now()}`
       const userMsg: TaskMessage = {
         id: userMsgId,
@@ -339,7 +339,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
             const data = await response.json()
             throw new Error(data.error || 'Failed to send message')
           }
-          return
+          return false
         }
 
         assistantMsgId = `stream-${Date.now()}`
@@ -356,6 +356,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
           ],
           ...(planMode.active ? { permissionMode: 'plan' as const } : {}),
         })
+        return true
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : 'Failed to send message'
         console.error('[sendMessage] error:', errMsg)
@@ -364,6 +365,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
         setMessages((prev) => prev.filter((m) => m.id !== userMsgId && m.id !== assistantMsgId))
         toast.error(errMsg)
         onRestoreDraft(text)
+        return false
       } finally {
         await exitStreaming()
       }

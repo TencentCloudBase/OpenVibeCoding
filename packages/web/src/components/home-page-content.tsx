@@ -6,7 +6,7 @@ import { toast } from 'sonner'
 import { useNavigate, useLocation } from 'react-router'
 import { useTasks } from '@/components/app-layout'
 import { setSelectedOwner, setSelectedRepo } from '@/lib/utils/cookies'
-import type { Session } from '@/lib/session/types'
+import type { Session, Connector } from '@/lib/session/types'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -439,6 +439,7 @@ export function HomePageContent({
     keepAlive: boolean
     enableBrowser: boolean
     mode: 'default' | 'coding'
+    mcpServerList?: Connector[]
     imageBlocks?: Array<{ data: string; mimeType: string }>
   }) => {
     console.log(
@@ -486,6 +487,9 @@ export function HomePageContent({
           selectedModel: data.selectedModel,
           installDependencies: data.installDependencies,
           maxDuration: data.maxDuration,
+          keepAlive: data.keepAlive,
+          enableBrowser: data.enableBrowser,
+          mcpServerList: data.mcpServerList,
         })
         taskIds.push(id)
         return {
@@ -499,6 +503,7 @@ export function HomePageContent({
           maxDuration: data.maxDuration,
           keepAlive: data.keepAlive,
           enableBrowser: data.enableBrowser,
+          mcpServerList: data.mcpServerList,
         }
       })
 
@@ -561,6 +566,9 @@ export function HomePageContent({
           selectedModel: model,
           installDependencies: data.installDependencies,
           maxDuration: data.maxDuration,
+          keepAlive: data.keepAlive,
+          enableBrowser: data.enableBrowser,
+          mcpServerList: data.mcpServerList,
         })
         taskIds.push(id)
         return {
@@ -574,6 +582,7 @@ export function HomePageContent({
           maxDuration: data.maxDuration,
           keepAlive: data.keepAlive,
           enableBrowser: data.enableBrowser,
+          mcpServerList: data.mcpServerList,
         }
       })
 

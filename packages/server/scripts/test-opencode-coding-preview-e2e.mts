@@ -120,7 +120,7 @@ async function ensureTaskCodingMode(): Promise<void> {
       prNumber: null,
       prStatus: null,
       prMergeCommitSha: null,
-      mcpServerIds: null,
+      mcpServerList: null,
       createdAt: now,
       updatedAt: now,
     } as any)

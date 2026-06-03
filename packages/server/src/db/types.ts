@@ -60,7 +60,7 @@ export interface Task {
   prNumber: number | null
   prStatus: string | null
   prMergeCommitSha: string | null
-  mcpServerIds: string | null
+  mcpServerList: string | null
   createdAt: number
   updatedAt: number
   completedAt: number | null
@@ -78,7 +78,9 @@ export interface Connector {
   oauthClientId: string | null
   oauthClientSecret: string | null
   command: string | null
+  args: string | null
   env: string | null
+  headers: string | null
   status: string
   createdAt: number
   updatedAt: number
@@ -247,7 +249,7 @@ type TaskNullableFields =
   | 'prNumber'
   | 'prStatus'
   | 'prMergeCommitSha'
-  | 'mcpServerIds'
+  | 'mcpServerList'
 
 export type NewTask = Omit<Task, 'createdAt' | 'updatedAt' | 'completedAt' | 'deletedAt' | TaskNullableFields> &
   Partial<Pick<Task, TaskNullableFields>> & {

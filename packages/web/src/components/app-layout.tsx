@@ -4,6 +4,7 @@ import type { Task } from '@coder/shared'
 import { loadTaskList, prependTask } from '@/lib/task-list-store'
 import { ConnectorsProvider } from '@/components/connectors-provider'
 import { getSidebarWidth, setSidebarWidth, getSidebarOpen, setSidebarOpen } from '@/lib/utils/cookies'
+import type { Connector } from '@/lib/session/types'
 
 interface AppLayoutProps {
   children: React.ReactNode
@@ -24,6 +25,9 @@ interface TasksContextType {
     selectedModel: string
     installDependencies: boolean
     maxDuration: number
+    keepAlive?: boolean
+    enableBrowser?: boolean
+    mcpServerList?: Connector[] | null
   }) => { id: string; optimisticTask: Task }
 }
 
@@ -122,6 +126,9 @@ export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, i
       selectedModel: string
       installDependencies: boolean
       maxDuration: number
+      keepAlive?: boolean
+      enableBrowser?: boolean
+      mcpServerList?: Connector[] | null
     }) => {
       const id = generateId()
       const optimisticTask: Task = {
@@ -135,8 +142,8 @@ export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, i
         selectedModel: taskData.selectedModel,
         installDependencies: taskData.installDependencies,
         maxDuration: taskData.maxDuration,
-        keepAlive: false,
-        enableBrowser: false,
+        keepAlive: taskData.keepAlive ?? false,
+        enableBrowser: taskData.enableBrowser ?? false,
         mode: 'default',
         status: 'pending',
         progress: 0,
@@ -150,7 +157,7 @@ export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, i
         agentSessionId: null,
         sandboxUrl: null,
         previewUrl: null,
-        mcpServerIds: null,
+        mcpServerList: (taskData.mcpServerList as unknown as Task['mcpServerList']) ?? null,
         prUrl: null,
         prNumber: null,
         prStatus: null,

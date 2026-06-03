@@ -26,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - **CloudBase 上传后端签发**：新增 `POST /api/storage/upload-credential`，用永久密钥（优先用户级 / 兜底支撑账号）调 STS 签出临时凭证，避免子账号 GetFederationToken 触发 GrantOtherResource
 - **运维脚本**：`scripts/reset-user-cam-secrets.ts` 清理用户失效的 user-level CAM 密钥
 - **GitHub Action**：`.github/workflows/claude-code.yml`，issue/PR 中 `@claude` 触发 AI agent
+- **支持自定义 MCP 服务**：新建任务支持配置 MCP 服务，任务界面支持增加、删除 MCP 服务。
 
 ### Changed
 

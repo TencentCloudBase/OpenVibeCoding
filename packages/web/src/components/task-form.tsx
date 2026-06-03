@@ -19,6 +19,7 @@ import { CodeBuddy, MiMo, OpenCode, ProviderLogos, type ProviderKey } from '@/co
 import { setInstallDependencies, setMaxDuration, setKeepAlive, setEnableBrowser } from '@/lib/utils/cookies'
 import { useConnectors } from '@/components/connectors-provider'
 import { ConnectorDialog } from '@/components/connectors/manage-connectors'
+import type { Connector } from '@/lib/session/types'
 import { toast } from 'sonner'
 import { useAtom, useSetAtom } from 'jotai'
 import { taskPromptAtom } from '@/lib/atoms/task'
@@ -47,6 +48,7 @@ interface TaskFormProps {
     maxDuration: number
     keepAlive: boolean
     enableBrowser: boolean
+    mcpServerList?: Connector[]
     imageBlocks?: Array<{ data: string; mimeType: string }>
   }) => void
   isSubmitting: boolean
@@ -179,7 +181,7 @@ export function TaskForm({
   const [showMcpServersDialog, setShowMcpServersDialog] = useState(false)
 
   // Connectors state
-  const { connectors } = useConnectors()
+  const { connectors, clearConnectors } = useConnectors()
 
   // Ref for the textarea to focus it programmatically
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -334,10 +336,24 @@ export function TaskForm({
       return
     }
 
+    // Clear connectors from localStorage and memory on new task creation
+    clearConnectors()
+
     // If owner/repo not selected, let parent handle it (will show sign-in if needed)
     // Don't clear localStorage here - user might need to sign in and come back
     if (!selectedOwner || !selectedRepo) {
       console.log('[TaskForm] no repo selected, calling onSubmit directly')
+      const connectedMcps = connectors
+        .filter((c) => c.status === 'connected')
+        .map((c) => ({
+          name: c.name,
+          description: c.description,
+          type: c.type,
+          baseUrl: c.baseUrl,
+          command: c.command,
+          args: c.args,
+          headers: c.headers,
+        }))
       onSubmit({
         prompt: prompt.trim(),
         repoUrl: '',
@@ -349,6 +365,7 @@ export function TaskForm({
         maxDuration,
         keepAlive,
         enableBrowser,
+        mcpServerList: connectedMcps.length > 0 ? connectedMcps : undefined,
         imageBlocks:
           pendingImages.length > 0 ? pendingImages.map(({ data, mimeType }) => ({ data, mimeType })) : undefined,
       })
@@ -390,6 +407,17 @@ export function TaskForm({
     }
 
     console.log('[TaskForm] repo selected, calling onSubmit with repoUrl:', selectedRepoData?.clone_url)
+    const connectedMcps = connectors
+      .filter((c) => c.status === 'connected')
+      .map((c) => ({
+        name: c.name,
+        description: c.description,
+        type: c.type,
+        baseUrl: c.baseUrl,
+        command: c.command,
+        args: c.args,
+        headers: c.headers,
+      }))
     onSubmit({
       prompt: prompt.trim(),
       repoUrl: selectedRepoData?.clone_url || '',
@@ -401,6 +429,7 @@ export function TaskForm({
       maxDuration,
       keepAlive,
       enableBrowser,
+      mcpServerList: connectedMcps.length > 0 ? connectedMcps : undefined,
       imageBlocks:
         pendingImages.length > 0 ? pendingImages.map(({ data, mimeType }) => ({ data, mimeType })) : undefined,
     })

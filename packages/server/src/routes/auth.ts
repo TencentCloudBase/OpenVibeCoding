@@ -5,7 +5,11 @@ import bcrypt from 'bcryptjs'
 import { nanoid } from 'nanoid'
 import { encryptJWE } from '../lib/session'
 import { requireAuth, type AppEnv, type AppSession } from '../middleware/auth'
-import { provisionUserResources, rollbackProvisionedResources } from '../cloudbase/provision.js'
+import {
+  provisionUserResources,
+  rollbackProvisionedResources,
+  ensureSharedEnvAuthDomains,
+} from '../cloudbase/provision.js'
 import { acquireEnv } from '../cloudbase/env-lifecycle.js'
 
 const SESSION_COOKIE_NAME = 'nex_session'
@@ -138,7 +142,10 @@ auth.post('/register', async (c) => {
         return c.json({ error: 'Failed to create cloud environment, please try again later' }, 500)
       }
     }
-    // shared / task：注册不做 provision
+    // shared / task：注册不做 provision，但 shared 模式需确保主环境安全域名
+    if (provisionMode === 'shared') {
+      ensureSharedEnvAuthDomains().catch(() => {})
+    }
 
     setCookie(c, SESSION_COOKIE_NAME, sessionValue, {
       path: '/',

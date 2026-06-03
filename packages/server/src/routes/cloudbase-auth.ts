@@ -5,7 +5,7 @@ import { nanoid } from 'nanoid'
 import { encryptJWE } from '../lib/session'
 import { encrypt } from '../lib/crypto'
 import type { AppEnv, AppSession } from '../middleware/auth'
-import { provisionUserResources } from '../cloudbase/provision.js'
+import { provisionUserResources, ensureSharedEnvAuthDomains } from '../cloudbase/provision.js'
 
 const SESSION_COOKIE_NAME = 'nex_session'
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 365 // 1 year in seconds
@@ -129,6 +129,8 @@ cloudbaseAuth.post('/login', async (c) => {
             createdAt: now,
             updatedAt: now,
           })
+          // shared/task 模式：确保主环境安全域名
+          ensureSharedEnvAuthDomains().catch(() => {})
         }
       }
     }

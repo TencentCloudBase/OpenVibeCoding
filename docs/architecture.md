@@ -540,7 +540,7 @@ erDiagram
         text sandboxMode "shared | isolated"
         text selectedAgent "codebuddy | opencode | mimo"
         text selectedModel
-        text mcpServerIds "JSON array"
+        text mcpServerList "JSON array"
         text prUrl
         integer createdAt
     }

@@ -464,9 +464,14 @@ export async function provisionUserResources(
     // ─── 步骤 4.5：添加安全域名 ──────────────────────────────────
     try {
       const mainEnvId = process.env.TCB_ENV_ID
-      const domains = ['localhost:5173']
+      const domains = ['localhost:5174']
       if (mainEnvId) {
-        domains.push(`${mainEnvId}.ap-shanghai.app.tcloudbase.com`)
+        let defaultDomain: string
+        try {
+          const gwRes = await (tcbClient as any).DescribeCloudBaseGWService({ EnvId: mainEnvId })
+          defaultDomain = gwRes.DefaultDomain
+          domains.push(defaultDomain)
+        } catch {}
       }
       console.log('[provision] Adding security domains:', domains.join(', '))
       await (tcbClient as any).CreateAuthDomain({
@@ -562,6 +567,34 @@ export async function ensureAuthDomains(envId: string, domains: string[]): Promi
       return
     }
     console.log('[provision] CreateAuthDomain failed:', (e as Error).message)
+  }
+}
+
+/**
+ * 为 shared 模式的主环境添加安全域名（localhost + DefaultDomain）。
+ * 使用 DescribeCloudBaseGWService 获取 DefaultDomain，保证域名格式正确。
+ * 非关键操作，失败不影响注册流程。
+ */
+export async function ensureSharedEnvAuthDomains(): Promise<void> {
+  const envId = process.env.TCB_ENV_ID
+  if (!envId) return
+
+  try {
+    const { tcbClient } = getClients()
+    let defaultDomain = `${envId}.service.tcloudbase.com`
+    try {
+      const gwRes = await (tcbClient as any).DescribeCloudBaseGWService({
+        EnableRegion: true,
+        EnableUnion: true,
+        ServiceId: envId,
+      })
+      if (gwRes.DefaultDomain) defaultDomain = gwRes.DefaultDomain
+    } catch {
+      // fallback to concatenated domain
+    }
+    await ensureAuthDomains(envId, ['localhost:5173', defaultDomain])
+  } catch {
+    // non-critical
   }
 }
 

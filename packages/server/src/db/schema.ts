@@ -88,7 +88,7 @@ export const tasks = sqliteTable(
     prNumber: integer('pr_number'),
     prStatus: text('pr_status'),
     prMergeCommitSha: text('pr_merge_commit_sha'),
-    mcpServerIds: text('mcp_server_ids'), // JSON string of string[]
+    mcpServerList: text('mcp_server_list'), // JSON string of Connector[]
     createdAt: integer('created_at').notNull().$defaultFn(now),
     updatedAt: integer('updated_at').notNull().$defaultFn(now),
     completedAt: integer('completed_at'),
@@ -119,7 +119,9 @@ export const connectors = sqliteTable('connectors', {
   oauthClientId: text('oauth_client_id'),
   oauthClientSecret: text('oauth_client_secret'),
   command: text('command'),
+  args: text('args'),
   env: text('env'),
+  headers: text('headers'),
   status: text('status').notNull().default('disconnected'), // 'connected' | 'disconnected'
   createdAt: integer('created_at').notNull().$defaultFn(now),
   updatedAt: integer('updated_at').notNull().$defaultFn(now),
