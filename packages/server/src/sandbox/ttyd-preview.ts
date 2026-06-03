@@ -1,9 +1,8 @@
 /**
- * Web Terminal preview — public virtual port 7681, proxied as /api/tasks/:id/preview/7681/.
+ * Web Terminal preview — port 7681, proxied as /api/tasks/:id/preview/7681/.
  */
 
 import type { SandboxInstance } from './provider/types.js'
-import { resolveGatewayPreviewPort } from './ttyd-gateway-port.js'
 
 export const TTYD_VIRTUAL_PORT = 7681
 
@@ -43,9 +42,7 @@ async function wakeTtydViaTrw(sandbox: SandboxInstance): Promise<void> {
 }
 
 export async function resolveTtydPreviewPort(sandbox: SandboxInstance): Promise<TtydPreviewResolve> {
-  const gatewayPort = await resolveGatewayPreviewPort(sandbox, TTYD_VIRTUAL_PORT)
-
-  let probe = await probeTtydPreviewPort(sandbox, gatewayPort)
+  let probe = await probeTtydPreviewPort(sandbox, TTYD_VIRTUAL_PORT)
   if (probe === 'ready') {
     return { status: 'ready', port: TTYD_VIRTUAL_PORT, retryable: false }
   }
@@ -55,8 +52,7 @@ export async function resolveTtydPreviewPort(sandbox: SandboxInstance): Promise<
 
   await wakeTtydViaTrw(sandbox)
 
-  const gatewayPortAfterWake = await resolveGatewayPreviewPort(sandbox, TTYD_VIRTUAL_PORT)
-  probe = await probeTtydPreviewPort(sandbox, gatewayPortAfterWake)
+  probe = await probeTtydPreviewPort(sandbox, TTYD_VIRTUAL_PORT)
   if (probe === 'ready') {
     return { status: 'ready', port: TTYD_VIRTUAL_PORT, retryable: false }
   }

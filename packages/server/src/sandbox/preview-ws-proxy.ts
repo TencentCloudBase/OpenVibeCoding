@@ -6,8 +6,6 @@ import type { IncomingMessage, Server } from 'node:http'
 import { URL } from 'node:url'
 import WebSocket, { WebSocketServer } from 'ws'
 import { resolveSandboxForTaskWs } from './ws-auth.js'
-import { TTYD_VIRTUAL_PORT } from './ttyd-preview.js'
-import { resolveGatewayPreviewPort } from './ttyd-gateway-port.js'
 
 const PREVIEW_WS_RE = /^\/api\/tasks\/([^/]+)\/preview\/(\d+)(\/.*)?$/
 
@@ -134,10 +132,7 @@ export function attachPreviewWebSocketProxy(server: Server): void {
         return
       }
 
-      const publicPortNum = Number(port)
-      const gatewayPort =
-        publicPortNum === TTYD_VIRTUAL_PORT ? String(await resolveGatewayPreviewPort(sandbox, TTYD_VIRTUAL_PORT)) : port
-      const previewPath = buildUpstreamPath(gatewayPort, subpath)
+      const previewPath = buildUpstreamPath(port, subpath)
       const wsUrl = buildGatewayWebSocketUrl(sandbox.baseUrl, previewPath, query)
       const upstreamHeaders = buildUpstreamGatewayWsHeaders(await sandbox.getAuthHeaders())
       const clientProtocols = parseClientWsProtocols(req)

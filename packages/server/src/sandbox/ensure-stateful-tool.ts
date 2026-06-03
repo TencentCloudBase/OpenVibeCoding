@@ -96,8 +96,7 @@ async function createSandboxTool(envId: string): Promise<string> {
         CPU: process.env.STATEFUL_TOOL_CPU || '2',
         Memory: process.env.STATEFUL_TOOL_MEMORY || '2Gi',
       },
-      // Preview (vite/ttyd) and MCP go through TRW :9000 (/preview/{port}/). Do not declare 5173/7681 here —
-      // the gateway may treat them as real container ports and break /preview/7681/ virtual routing.
+      // Preview (vite/ttyd) and MCP go through TRW :9000 (/preview/{port}/). Only TRW + envd ports declared.
       Ports: [
         { Name: 'trw', Protocol: 'TCP', Port: 9000 },
         { Name: 'envd', Protocol: 'TCP', Port: 49983 },

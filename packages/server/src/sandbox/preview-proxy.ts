@@ -5,7 +5,6 @@
 import type { Context } from 'hono'
 import type { SandboxInstance } from './provider/types.js'
 import { TTYD_VIRTUAL_PORT } from './ttyd-preview.js'
-import { resolveGatewayPreviewPort } from './ttyd-gateway-port.js'
 
 const HOP_BY_HOP = new Set([
   'connection',
@@ -87,10 +86,7 @@ export async function proxyTaskPreview(
   subpath: string,
 ): Promise<Response> {
   const authHeaders = await sandbox.getAuthHeaders()
-  const publicPortNum = Number(normalizePort(port))
-  const gatewayPort =
-    publicPortNum === TTYD_VIRTUAL_PORT ? String(await resolveGatewayPreviewPort(sandbox, TTYD_VIRTUAL_PORT)) : port
-  const upstreamPath = buildUpstreamPreviewPath(gatewayPort, subpath)
+  const upstreamPath = buildUpstreamPreviewPath(port, subpath)
   const query = c.req.url.includes('?') ? new URL(c.req.url).search : ''
   const targetUrl = `${sandbox.baseUrl}${upstreamPath}${query}`
 

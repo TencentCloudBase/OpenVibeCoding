@@ -10,7 +10,7 @@ describe('rewritePreviewPaths', () => {
     expect(out).not.toContain('"/preview/5173/')
   })
 
-  it('does not rewrite ttyd virtual port HTML', () => {
+  it('does not rewrite ttyd port HTML', () => {
     expect(shouldRewritePreviewBody('text/html', '7681')).toBe(false)
     expect(shouldRewritePreviewBody('text/html', '5173')).toBe(true)
   })

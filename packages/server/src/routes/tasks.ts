@@ -2614,7 +2614,7 @@ tasksRouter.get('/:taskId/preview-health', requireUserEnv, async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// GET /:taskId/terminal-health — ttyd via TRW virtual port /preview/7681/
+// GET /:taskId/terminal-health — ttyd via TRW /preview/7681/
 // ---------------------------------------------------------------------------
 
 tasksRouter.get('/:taskId/terminal-health', requireUserEnv, async (c) => {

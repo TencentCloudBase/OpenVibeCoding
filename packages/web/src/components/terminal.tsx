@@ -1,5 +1,5 @@
 /**
- * Web terminal via TRW ttyd — virtual port 7681 only, proxied as /api/tasks/:id/preview/7681/.
+ * Web terminal via TRW ttyd — port 7681, proxied as /api/tasks/:id/preview/7681/.
  */
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
@@ -211,7 +211,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(function Terminal
       >
         <p>{gateStatus === 'error' ? '无法连接沙箱终端' : 'Web 终端暂不可用'}</p>
         <p className="text-[10px] opacity-70 max-w-md">
-          终端走沙箱虚拟口 7681。若长时间不可用，点「重试」或先发一条消息等待沙箱就绪。
+          终端走沙箱端口 7681。若长时间不可用，点「重试」或先发一条消息等待沙箱就绪。
         </p>
         <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={handleRetry}>
           <RefreshCw className="h-3 w-3 mr-1" />
