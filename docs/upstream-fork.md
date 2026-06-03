@@ -27,10 +27,12 @@
 
 ### 本线相对上游的持久差异（示例）
 
-- 沙箱 infra：Stateful Tool / 实例生命周期、gateway 数据面、沙箱业务镜像 vibecoding 镜像
-- `WORKSPACE_ISOLATION`（shared / isolated，与 main 同名）与进度文案
+- 沙箱 infra：Stateful Tool / 实例生命周期、gateway 数据面、沙箱业务镜像 vibecoding 镜像（**无** SCF `scf-sandbox-manager`）
+- preview / terminal：`/preview/5173`、`/preview/7681` 经 OVC 代理；WebSocket 升级**不转发**浏览器 `Origin`（防 gateway 403）
+- ttyd：TRW 真监听 `:7681`，已删除 `ttyd-gateway-port.ts` 虚拟端口探测 shim
+- 环境：`TCB_API_KEY`、`.env.local` / `.env.cloud` 双文件 init（main 仍偏 `packages/server/.env` + SCF 镜像变量）
+- `WORKSPACE_ISOLATION` 默认与进度文案（本线偏 shared + Stateful TTL）
 - 公开 TCR 默认镜像、`stateful-vibecoding-image` 解析链
-- 与 SCF 时代假设脱钩的文档与默认配置
 
 ## 上游同步记录
 
@@ -38,7 +40,8 @@
 | --- | --- | --- | --- | --- |
 | 2026-05-21 | `git merge origin/main` | `a878ddbbee2f6320395dc7f84a7e6a068c524e75` | `20dedbdbb00997d8f23c289317836de14df44d60` | 无冲突；含下方 5 个上游 commit |
 | 2026-05-25 | `git merge origin/main` | `4592517`（fix readme 等） | （merge commit） | 约 10 文件冲突；保留 AGS/沙箱业务镜像 路径 |
-| 2026-05-27 | `git merge origin/main` → `feature/stateful-infra` | `dc70b08d8e3019884b51a9b4ae219b7a1af8d439` | `1e20ed4`（含 merge `0d4e65b`） | 试跑分支 `merge-trial/main-into-stateful` 已 fast-forward 合入；冲突同上；`type-check` / `lint` / `build` 通过 |
+| 2026-05-27 | `git merge origin/main` → `feature/stateful-infra` | `dc70b08d8e3019884b51a9b4ae219b7a1af8d439` | `0d4e65b` → `81dcf89` | 试跑分支 fast-forward 合入；冲突见 5/27 行；`type-check` / `lint` / `build` 通过 |
+| 2026-06-03 | `git merge origin/main` → `feature/stateful-infra` | `b783b227964054dcd4ee3ead17ea628d0a7839b1` | `f9de960`（本线顶 `53d902d`） | MCP 对话 + 自定义 MCP；删 `scf-sandbox-manager`；合并后 `1438db3` 去 ttyd shim、`53d902d` web 类型修复 |
 
 **历史：2026-05-21 并入**（`43c3e60..a878ddb`）：
 
@@ -50,7 +53,7 @@
 | `4669043` | Merge pull request #23（CodeBuddy TokenHub） |
 | `a878ddb` | feat: 更新 agent 选项 |
 
-**本次并入的上游 commit**（`4592517..dc70b08`，2026-05-27 试跑合并）：
+**历史：2026-05-27 并入**（`4592517..dc70b08`）：
 
 | SHA | 说明 |
 | --- | --- |
@@ -66,12 +69,30 @@
 | `24f9bba` | Merge PR #27 podman-fallback |
 | `dc70b08` | feat(init): TCR enterprise registry |
 
-**当前对齐状态**（2026-05-27，分支 `feature/stateful-infra`）：
+**本次并入的上游 commit**（`dc70b08..b783b22`，2026-06-03 合并）：
 
-- `git merge-base HEAD origin/main` → `dc70b08`（与上游 `main` 最新对齐）
-- 功能分支顶：`1e20ed4`（fast-forward 自试跑 merge `0d4e65b` + 上游同步文档）
-- 本线保留：Stateful 沙箱、`TCB_API_KEY`、`.env.local` / `.env.cloud`、preview WebSocket 代理（不转发浏览器 `Origin`）
-- 从上游并入：`opencode-ai`、TCR 企业版 + podman、`coding-mode` 写工具自动放行、社区文档
+| SHA | 说明 |
+| --- | --- |
+| `34956ef` | fix(sandbox): DefaultDomain 动态拉取（DescribeCloudBaseGWService） |
+| `e81d5cc` | fix: 修正安全域名添加规则 |
+| `1ac741f` | fix: 预览域名 + shared 环境 ensure 域名 |
+| `866659f` | fix: AskUserQuestion 答完后新一轮消息不出现 |
+| `6f0cf02` | feat: 支持对话时添加 MCP 服务（PR #29） |
+| `454dd7e` | feat: 支持 SSE / stdio 自定义 MCP（PR #30） |
+
+**合并后本线追加**（不在 upstream `main`）：
+
+| SHA | 说明 |
+| --- | --- |
+| `1438db3` | refactor(sandbox): TRW 真 `:7681`，删除 `ttyd-gateway-port` shim |
+| `53d902d` | fix(web): MCP 合并余波（`mcpServerList` 类型、`refreshTasks` 重复声明） |
+
+**当前对齐状态**（2026-06-03，分支 `feature/stateful-infra`）：
+
+- `git merge-base HEAD origin/main` → `b783b22`（与上游 `main` 最新对齐）
+- 功能分支顶：`53d902d`（merge `f9de960` + 上表两行本线 fix）
+- 本线保留：Stateful 沙箱、`TCB_API_KEY`、双 env 文件、preview WS 不转发 `Origin`、无 SCF sandbox 路径
+- 从上游并入：MCP 对话 / 自定义 MCP、预览与安全域名修复、AskUser 续聊修复；以及 5/27 段的 OpenCode / TCR / podman 等
 - 回归：本地 `pnpm dev`；云端 `pnpm deploy:cloud`（服务 `vibecoding-platform`）
 - 中文与 stateful 说明：[README-zh.md](../README-zh.md)、[setup.md](./setup.md)
 
@@ -79,7 +100,7 @@
 
 ```bash
 git fetch origin
-git log dc70b08..origin/main --oneline
+git log b783b22..origin/main --oneline
 ```
 
 ## 偶尔从上游同步（推荐流程）
@@ -88,7 +109,7 @@ git log dc70b08..origin/main --oneline
 git fetch origin
 
 # 自上次对齐的顶往下看
-git log dc70b08d8e3019884b51a9b4ae219b7a1af8d439..origin/main --oneline
+git log b783b227964054dcd4ee3ead17ea628d0a7839b1..origin/main --oneline
 
 # 整分支合并（可能冲突，需人工解）
 git merge origin/main

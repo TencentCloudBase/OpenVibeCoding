@@ -604,7 +604,7 @@ export async function createStatefulMcpClient(deps: McpDeps): Promise<McpClientB
                 enabled,
                 repoUrl: null,
                 selectedAgent: 'codebuddy',
-                selectedModel: depsCurrentModel || 'hy3-preview-ioa',
+                selectedModel: depsCurrentModel || 'hy3-preview',
                 lastRunAt: null,
                 nextRunAt: null,
                 lockedBy: null,

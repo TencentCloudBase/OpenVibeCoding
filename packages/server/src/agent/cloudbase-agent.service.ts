@@ -153,7 +153,7 @@ const SYSTEM_MODELS: ModelInfo[] = [
   { id: 'kimi-k2.6', name: 'Kimi-K2.6' },
   { id: 'minimax-m2.7', name: 'MiniMax-M2.7' },
   { id: 'hunyuan-2.0-thinking', name: 'Hunyuan-2.0-Thinking' },
-  { id: 'hy3-preview-ioa', name: 'Hunyuan-3 Preview (IOA)' },
+  { id: 'hy3-preview', name: 'Hunyuan-3 Preview' },
   { id: 'deepseek-v3-2-volc', name: 'DeepSeek-V3.2' },
 ]
 
