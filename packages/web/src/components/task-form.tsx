@@ -48,7 +48,7 @@ interface TaskFormProps {
     maxDuration: number
     keepAlive: boolean
     enableBrowser: boolean
-    mcpServerList?: Connector[]
+    mcpServerList?: Array<Pick<Connector, 'name' | 'description' | 'type' | 'baseUrl' | 'command' | 'args' | 'headers'>>
     imageBlocks?: Array<{ data: string; mimeType: string }>
   }) => void
   isSubmitting: boolean

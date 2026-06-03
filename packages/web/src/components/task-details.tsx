@@ -383,7 +383,6 @@ export function TaskDetails({
   const previewAbortRef = useRef<AbortController | null>(null)
   const previewReadyLoggedRef = useRef(false)
   const previewRestartLoggedRef = useRef(false)
-  const { refreshTasks } = useTasks()
 
   // ── 预览错误自动修复 ────────────────────────────────────────────
   // 两个触发源：
@@ -1326,7 +1325,7 @@ export function TaskDetails({
     }
 
     setLoadingMcpServers(true)
-    setMcpServers(task.mcpServerList as Connector[])
+    setMcpServers(task.mcpServerList as unknown as Connector[])
     setLoadingMcpServers(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(task.mcpServerList)])
