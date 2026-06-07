@@ -66,10 +66,10 @@ export function isGitArchiveConfigured(): boolean {
 }
 
 /**
- * Git archive vars for POST /api/workspace/init `env` only.
- * PUT /api/workspace/env accepts CloudBase credential keys only (not GIT_ARCHIVE_*).
+ * Git archive vars for POST /api/workspace/init or PUT /api/workspace/env (`env`).
+ * TRW persists GIT_ARCHIVE_* via workspace env API (not arbitrary Start env).
  * Do not pass via StartSandboxInstance CustomConfiguration.Env — boot-time
- * ENABLE_GIT_ARCHIVE blocks /health and fails AGS port binding.
+ * ENABLE_GIT_ARCHIVE can block /health and fail AGS port binding.
  */
 export function buildGitArchiveInitEnv(): Record<string, string> {
   const env: Record<string, string> = {}

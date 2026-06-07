@@ -27,7 +27,9 @@ interface TasksContextType {
     maxDuration: number
     keepAlive?: boolean
     enableBrowser?: boolean
-    mcpServerList?: Array<Pick<Connector, 'name' | 'description' | 'type' | 'baseUrl' | 'command' | 'args' | 'headers'>> | null
+    mcpServerList?: Array<
+      Pick<Connector, 'name' | 'description' | 'type' | 'baseUrl' | 'command' | 'args' | 'headers'>
+    > | null
   }) => { id: string; optimisticTask: Task }
 }
 
@@ -128,7 +130,9 @@ export function AppLayout({ children, initialSidebarWidth, initialSidebarOpen, i
       maxDuration: number
       keepAlive?: boolean
       enableBrowser?: boolean
-      mcpServerList?: Array<Pick<Connector, 'name' | 'description' | 'type' | 'baseUrl' | 'command' | 'args' | 'headers'>> | null
+      mcpServerList?: Array<
+        Pick<Connector, 'name' | 'description' | 'type' | 'baseUrl' | 'command' | 'args' | 'headers'>
+      > | null
     }) => {
       const id = generateId()
       const optimisticTask: Task = {
