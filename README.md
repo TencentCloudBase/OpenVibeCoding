@@ -7,6 +7,11 @@
 </p>
 
 <p align="center">
+  <b>🔥 Open-source alternative to <a href="https://developers.openai.com/codex/sites">OpenAI Codex Sites</a></b><br/>
+  Self-hosted · Multi-framework · Multi-agent · Your code, your cloud, your data.
+</p>
+
+<p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://pnpm.io/"><img src="https://img.shields.io/badge/maintained%20with-pnpm-cc00ff.svg" alt="pnpm"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node"></a>
@@ -26,7 +31,32 @@
 
 ## Overview
 
-An open-source alternative to [Lovable](https://lovable.dev) / [v0](https://v0.dev) / [bolt.new](https://bolt.new) — an AI full-stack app development platform built on Tencent CloudBase. Conversational code generation, live preview, one-click deployment, with dual Agent runtimes (CodeBuddy / OpenCode) and three-tier environment isolation.
+An open-source alternative to [OpenAI Codex Sites](https://developers.openai.com/codex/sites) / [Lovable](https://lovable.dev) / [v0](https://v0.dev) / [bolt.new](https://bolt.new) — an AI full-stack app development platform built on Tencent CloudBase. Describe what you want, the agent writes the code, you preview it live, and deploy with one click. Dual Agent runtimes (CodeBuddy / OpenCode), three-tier environment isolation, and full self-hosting on your own cloud.
+
+> **Why this matters now**: OpenAI's Codex Sites (June 2026) lets ChatGPT Business / Enterprise users describe a site and have Codex host it on OpenAI-managed Cloudflare Workers infrastructure. Great for closed-ecosystem productivity, **but** — closed source, framework-locked (Workers ES modules only), agent-locked (OpenAI only), data lives at OpenAI, requires a paid ChatGPT seat. This project gives you the same conversational create → preview → deploy loop, but **fully open-source, on your own cloud, with any framework and any agent**.
+
+---
+
+## News
+
+| Date     | Player          | What shipped                                                                                       |
+| -------- | --------------- | -------------------------------------------------------------------------------------------------- |
+| 2026-06  | **This repo**   | Open-source self-hostable platform — same conversational create → preview → deploy on your cloud   |
+| 2026-06  | OpenAI          | **Codex Sites** — describe → host on OpenAI-managed Cloudflare Workers (D1 + R2). Closed-source.   |
+| 2025-08  | Vercel          | v0.dev rebranded to v0.app — AI builder positioned for non-developers as well                      |
+| 2024-11  | Lovable         | Public launch (pivoted from GPT-Engineer); Supabase integration                                    |
+| 2024-10  | StackBlitz      | bolt.new launched — in-browser WebContainer dev loop                                               |
+| 2024-09  | Replit          | Replit Agent launched (full-stack scaffold + deploy)                                               |
+| 2024-06  | Anthropic       | Claude Artifacts shipped with Claude 3.5 Sonnet                                                    |
+| 2023-10  | Vercel          | v0.dev launched — generative UI from prompt                                                        |
+
+### How we read this
+
+According to Codex Sites' public materials: users invoke it via `@Sites` inside the Codex app to turn a natural-language description into a deployable website, web app, or game, hosted by OpenAI on a Cloudflare Workers-compatible runtime; D1 (database), R2 (object storage), and workspace-authenticated identity are available as optional bindings; the workflow is create → save a reviewable version → deploy to production; environment variables and access modes (`admins_only` / `workspace_all` / `custom`) are managed through the Sites panel in the sidebar.
+
+This project implements: CodeBuddy / OpenCode dual agent runtimes, with CloudBase providing the database, object storage, Functions, domain, and CDN; MCP wires up tool calls; the sandbox runs on CloudBase AGS Stateful + TRW vibecoding images (gateway data plane); the main loop is create → live preview → one-click deploy, all running inside your own Tencent Cloud account.
+
+---
 
 **AI generation process**
 
@@ -40,18 +70,41 @@ An open-source alternative to [Lovable](https://lovable.dev) / [v0](https://v0.d
 
 ## Why this project
 
-|                       | Lovable / v0 / bolt.new   | This project                                                              |
-| --------------------- | ------------------------- | ------------------------------------------------------------------------- |
-| Source code           | Closed-source SaaS        | Fully open-source (Apache 2.0), self-hostable                             |
-| Pricing               | Usage-based / subscription| Bring your own cloud resources, cost-controllable                         |
-| Infrastructure        | Vendor-locked             | Tencent CloudBase (DB / Storage / Functions / CDN)                        |
-| Agent engine          | Single built-in model     | CodeBuddy + OpenCode dual engines, free model switching                   |
-| Environment isolation | User-level only           | shared / isolated / task three-tier isolation, multi-tenant ready         |
-| Sandbox               | Platform-managed          | CloudBase AGS Stateful + 沙箱业务镜像 (TCR images), gateway data plane              |
-| Cloud resource ops    | None / limited            | MCP tools operate DB, Storage, Functions, domains directly                |
-| Deploy targets        | Platform-hosted only      | Web CDN / WeChat Mini Program / custom domains                            |
-| Human-in-the-loop     | Basic chat                | Plan mode + four-value ToolConfirm + inline AskUser form                  |
-| Extensibility         | Not extensible            | Monorepo, decoupled frontend/backend, fork-friendly                       |
+### vs OpenAI Codex Sites
+
+Codex Sites is closed-source, so we can only describe it from its public docs. The table below compares **what each system openly states**, not behind-the-scenes capability — feature parity is not the goal here.
+
+|                       | Codex Sites (per public docs)              | This project (verifiable in repo)                                       |
+| --------------------- | ------------------------------------------ | ----------------------------------------------------------------------- |
+| Source code           | Closed-source                              | Apache 2.0, full source in this repo                                    |
+| Hosting target        | OpenAI-managed Cloudflare Workers          | Your own Tencent CloudBase account                                      |
+| Data residency        | OpenAI / Cloudflare (D1 + R2)              | Your account — DB / Storage / Functions are yours                       |
+| Build output          | Workers-compatible ES modules              | Any container-runnable stack (Next, Vite, Python, Go, …)                |
+| Agent runtime         | OpenAI Codex                               | CodeBuddy SDK + OpenCode (ACP) — both swappable                         |
+| Access requirement    | ChatGPT Business / Enterprise seat         | Self-hosted, no external subscription                                   |
+| WeChat Mini Program   | Not advertised                             | Built-in deploy target with QR preview                                  |
+| Plugin / tool model   | OpenAI plugin system                       | MCP — bring any MCP server                                              |
+
+> Things Codex Sites has that we **don't** yet: save-version-then-deploy two-stage flow, in-thread annotations, role-specific plugin packs, dedicated env / access-control settings UI. See `News › How we read this` for the honest take.
+
+### vs Lovable / v0 / bolt.new
+
+These are closed SaaS products; the comparison below is at the level of **how the platform itself is delivered**, not feature-by-feature UX.
+
+|                       | Lovable / v0 / bolt.new    | This project                                                      |
+| --------------------- | -------------------------- | ----------------------------------------------------------------- |
+| Distribution          | Hosted SaaS only           | Source available, self-hostable (Apache 2.0)                      |
+| Cost model            | Usage-based / subscription | You pay your cloud bill directly                                  |
+| Infrastructure        | Vendor's own cloud         | Tencent CloudBase (DB / Storage / Functions / CDN)                |
+| Agent engine          | Single built-in            | CodeBuddy + OpenCode, swap from the UI                            |
+| Environment isolation | User-level only            | shared / isolated / task three-tier isolation, multi-tenant ready |
+| Sandbox               | Platform-managed           | CloudBase AGS Stateful + TRW vibecoding images, gateway data plane |
+| Cloud resource ops    | None / limited             | MCP tools operate DB, Storage, Functions, domains directly          |
+| Deploy targets        | Vendor-hosted only         | Web CDN / WeChat Mini Program / custom domain                     |
+| Human-in-the-loop     | Basic chat                 | Plan mode + four-value ToolConfirm + inline AskUser form          |
+| Extensibility         | UI-only                    | Monorepo, decoupled FE/BE, MCP for tools                          |
+
+> We're not claiming our UX is better than these — they've had years and a lot of polish. The point is **shape**: same conversational create → preview → deploy loop, but in a form you can read, fork, and run yourself.
 
 ---
 

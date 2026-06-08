@@ -7,6 +7,11 @@
 </p>
 
 <p align="center">
+  <b>🔥 <a href="https://developers.openai.com/codex/sites">OpenAI Codex Sites</a> 的开源平替</b><br/>
+  自托管 · 多框架 · 多 Agent · 代码、云、数据全在你自己手里。
+</p>
+
+<p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
   <a href="https://pnpm.io/"><img src="https://img.shields.io/badge/maintained%20with-pnpm-cc00ff.svg" alt="pnpm"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen.svg" alt="Node"></a>
@@ -26,7 +31,32 @@
 
 ## Overview
 
-[Lovable](https://lovable.dev) / [v0](https://v0.dev) / [bolt.new](https://bolt.new) 的开源替代方案 — 基于腾讯云 CloudBase 构建的 AI 全栈应用开发平台。对话式生成代码、实时预览、一键部署，支持双 Agent 运行时（CodeBuddy / OpenCode）与三级环境隔离。
+[OpenAI Codex Sites](https://developers.openai.com/codex/sites) / [Lovable](https://lovable.dev) / [v0](https://v0.dev) / [bolt.new](https://bolt.new) 的开源替代方案 — 基于腾讯云 CloudBase 构建的 AI 全栈应用开发平台。一句话描述需求，Agent 写代码，实时预览，一键部署。支持双 Agent 运行时（CodeBuddy / OpenCode）、三级环境隔离，全部跑在你自己的云上。
+
+> **为什么是现在**：OpenAI 在 2026 年 6 月发布了 Codex Sites，让 ChatGPT Business / Enterprise 用户可以用自然语言描述网站，由 Codex 部署到 OpenAI 托管的 Cloudflare Workers 上。功能很好，**但是** —— 闭源、框架锁定（只能输出 Workers ES module）、Agent 锁定（只能用 OpenAI）、数据放在 OpenAI、必须订阅 ChatGPT 商业版。本项目提供同样的"对话生成 → 预览 → 部署"完整链路，但是**完全开源、跑在你自己的云、任意框架、任意 Agent**，并原生支持微信小程序部署。
+
+---
+
+## News
+
+| 时间     | 玩家          | 发布内容                                                                            |
+| -------- | ------------- | ----------------------------------------------------------------------------------- |
+| 2026-06  | **本项目**    | 开源、可自托管的同类平台 —— 在你自己的云上跑同样的"对话生成 → 预览 → 部署"链路       |
+| 2026-06  | OpenAI        | **Codex Sites** — 描述需求 → 托管到 OpenAI 管的 Cloudflare Workers (D1 + R2)。闭源。 |
+| 2025-08  | Vercel        | v0.dev 更名为 v0.app —— 面向非开发者也开放的 AI 构建器                               |
+| 2024-11  | Lovable       | 公开发布（由 GPT-Engineer 转型而来），集成 Supabase                                  |
+| 2024-10  | StackBlitz    | bolt.new 上线 —— 浏览器内 WebContainer 开发循环                                       |
+| 2024-09  | Replit        | Replit Agent 发布（全栈脚手架 + 部署）                                               |
+| 2024-06  | Anthropic     | Claude Artifacts 随 Claude 3.5 Sonnet 上线                                           |
+| 2023-10  | Vercel        | v0.dev 上线 —— 对话生成式 UI                                                         |
+
+### 我们怎么看
+
+根据 Codex Sites 公开资料显示：用户在 Codex 应用中通过 `@Sites` 触发，将自然语言描述转为可上线的网站、Web 应用或游戏，由 OpenAI 托管在 Cloudflare Workers 兼容运行时上；可选 D1（数据库）/ R2（对象存储）/ 工作区身份认证；流程为创建 → 保存可审阅版本 → 发布到生产；环境变量、访问控制（admins_only / workspace_all / custom）通过侧边栏的 Sites 面板管理。
+
+本项目实现：基于 CodeBuddy / OpenCode 双 Agent 运行时，CloudBase 提供数据库、对象存储、Functions、域名、CDN，MCP 串起工具调用，沙箱基于 CloudBase AGS Stateful + TRW vibecoding 镜像（gateway 数据面），主循环为创建 → 实时预览 → 一键部署，全部跑在你自己的腾讯云账号下。
+
+---
 
 **AI 生成过程**
 
@@ -40,18 +70,41 @@
 
 ## 为什么选这个
 
+### vs OpenAI Codex Sites
+
+Codex Sites 闭源，下方对比仅基于其**公开文档**对外宣告的能力，不代表其内部实现细节，也不以"功能追平"为目标。
+
+|              | Codex Sites（按公开文档）         | 本项目（仓库内可验证）                                |
+| ------------ | --------------------------------- | ----------------------------------------------------- |
+| 源码         | 闭源                              | Apache 2.0，源码即仓库                                 |
+| 托管目标     | OpenAI 托管的 Cloudflare Workers   | 你自己的腾讯云 CloudBase 账号                          |
+| 数据归属     | OpenAI / Cloudflare（D1 + R2）    | 你自己的账号 —— DB / Storage / Functions 都在你这里   |
+| 构建产物     | Workers 兼容的 ES module           | 任意容器内可跑的栈（Next、Vite、Python、Go…）         |
+| Agent 引擎   | OpenAI Codex                       | CodeBuddy SDK + OpenCode（ACP），都可换               |
+| 使用门槛     | ChatGPT Business / Enterprise 订阅 | 自托管，无外部订阅                                     |
+| 微信小程序   | 文档未提及                         | 内置部署目标，含二维码预览                             |
+| 插件 / 工具  | OpenAI 插件体系                    | MCP —— 接入任意 MCP Server                            |
+
+> Codex Sites 有、本项目**还没有**的：保存版本→发布的两阶段流程、对预览的内嵌标注、角色化插件包、env / 访问控制的精致设置面板。详见 News › 我们怎么看。
+
+### vs Lovable / v0 / bolt.new
+
+这些是闭源 SaaS，下面的对比是**平台本身怎么交付给你**的层面，不是逐项 UX 比较。
+
 |            | Lovable / v0 / bolt.new | 本项目                                             |
 | ---------- | ----------------------- | -------------------------------------------------- |
-| 源码       | 闭源 SaaS               | 完全开源（Apache 2.0），可私有化部署               |
-| 定价       | 按量付费 / 订阅制       | 自带云资源，成本可控                               |
-| 基础设施   | 绑定特定平台            | 腾讯云 CloudBase（DB / Storage / Functions / CDN） |
-| Agent 引擎 | 内置单一模型            | CodeBuddy + OpenCode 双引擎，模型自由切换          |
+| 交付形式   | 仅托管 SaaS             | 提供源码，可自托管（Apache 2.0）                    |
+| 计费方式   | 按量 / 订阅             | 你直接付云账单                                      |
+| 基础设施   | 厂商自有云              | 腾讯云 CloudBase（DB / Storage / Functions / CDN） |
+| Agent 引擎 | 内置单一                | CodeBuddy + OpenCode，前端可换                     |
 | 环境隔离   | 用户级隔离              | shared / isolated / task 三级隔离，支持多租户      |
-| 沙箱       | 平台托管                | CloudBase AGS Stateful + 沙箱业务镜像（TCR 镜像），gateway 数据面 |
+| 沙箱       | 平台托管                | CloudBase AGS Stateful + TRW vibecoding 镜像，gateway 数据面 |
 | 云资源操作 | 无 / 有限               | MCP 工具直接操作 DB、存储、函数、域名              |
-| 部署目标   | 平台内托管              | Web CDN / 微信小程序 / 自定义域名                  |
+| 部署目标   | 厂商内托管              | Web CDN / 微信小程序 / 自定义域名                  |
 | 人机协作   | 基础对话                | Plan 模式 + ToolConfirm 四值权限 + 内联提问表单    |
-| 可扩展性   | 不可扩展                | Monorepo 架构，前后端分离，可二次开发              |
+| 可扩展性   | 仅 UI 层                | Monorepo，前后端分离，工具走 MCP                   |
+
+> 我们不声称 UX 比这些更好 —— 它们都打磨多年。这里强调的是**形态**：同样的对话生成 → 预览 → 部署主循环，但是开源、可读、可 fork、可自跑。
 
 ---
 

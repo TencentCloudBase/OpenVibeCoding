@@ -97,6 +97,13 @@ function useCustomModels(): boolean {
   return v === '1' || v === 'true' || v === 'yes'
 }
 
+// 是否从 SDK 动态拉取模型列表（替代硬编码的 SYSTEM_MODELS）
+// 开启后调用 query().supportedModels()，失败时降级到 SYSTEM_MODELS
+function useDynamicModels(): boolean {
+  const v = process.env.CODEBUDDY_DYNAMIC_MODELS
+  return v === '1' || v === 'true' || v === 'yes'
+}
+
 // 解析 ${VAR_NAME} 占位符为环境变量值（与模板复制一致）
 function resolveEnvPlaceholders(text: string): string {
   return text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, varName) => {
@@ -157,23 +164,24 @@ const SYSTEM_MODELS: ModelInfo[] = [
   { id: 'deepseek-v3-2-volc', name: 'DeepSeek-V3.2' },
 ]
 
-// Dynamic model fetch from SDK (reserved for future use)
+// 从 SDK 动态拉取模型列表（CODEBUDDY_DYNAMIC_MODELS=1 时启用）
 async function fetchSupportedModels(): Promise<ModelInfo[]> {
   try {
     const q = query({ prompt: '', options: { permissionMode: 'bypassPermissions' } })
     const models = await q.supportedModels()
     q.return?.()
+    // SDK ModelInfo: { value, displayName, description }
     if (Array.isArray(models) && models.length > 0) {
       return models.map((m: any) =>
         typeof m === 'string'
           ? { id: m, name: m }
-          : { id: m.id || m.name || DEFAULT_MODEL, name: m.name || m.id || DEFAULT_MODEL, ...m },
+          : { id: m.value || m.id || DEFAULT_MODEL, name: m.displayName || m.name || m.value || DEFAULT_MODEL },
       )
     }
   } catch (e) {
     console.warn('[Agent] Failed to fetch supported models from SDK:', e)
   }
-  return [{ id: DEFAULT_MODEL, name: DEFAULT_MODEL }]
+  return []
 }
 
 export async function getSupportedModels(): Promise<ModelInfo[]> {
@@ -181,6 +189,9 @@ export async function getSupportedModels(): Promise<ModelInfo[]> {
   if (useCustomModels()) {
     const customModels = loadCustomModelsFromTemplate()
     cachedModels = customModels.length > 0 ? customModels : SYSTEM_MODELS
+  } else if (useDynamicModels()) {
+    const dynamic = await fetchSupportedModels()
+    cachedModels = dynamic.length > 0 ? dynamic : SYSTEM_MODELS
   } else {
     cachedModels = SYSTEM_MODELS
   }

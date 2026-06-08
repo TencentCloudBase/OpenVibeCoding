@@ -79,7 +79,8 @@ function runCommand(cmd, silent = false) {
       stdio: silent ? 'pipe' : 'inherit',
     })
   } catch (error) {
-    throw new Error(`Command failed: ${cmd}`)
+    const detail = error.stderr?.trim() || error.stdout?.trim() || error.message || ''
+    throw new Error(`Command failed: ${cmd}${detail ? '\n  ' + detail : ''}`)
   }
 }
 
@@ -132,20 +133,26 @@ async function checkPnpm() {
     return true
   }
 
-  // pnpm --version 失败 — 判断是签名/缓存错误还是真正未安装
+  // pnpm --version 失败 — 细分错误类型
   const errorOutput = result.output || ''
+
   const isSignatureError =
     errorOutput.includes('keyid') ||
     errorOutput.includes('signature') ||
     errorOutput.includes('Cannot find matching keyid') ||
     errorOutput.includes('verifySignature')
 
+  // Windows 上 corepack shim 路径解析错误（/d/ 被误解析到 C 盘）
+  const isCorpackPathError =
+    errorOutput.includes('MODULE_NOT_FOUND') ||
+    errorOutput.includes('Cannot find module') ||
+    errorOutput.includes('corepack')
+
   if (isSignatureError) {
     log('pnpm 存在但 corepack 签名验证失败', 'warn')
     log('正在尝试修复 corepack 缓存...')
     try {
       runCommand('corepack disable && corepack enable')
-      // 验证修复结果
       const verify = runCommandSafe('pnpm --version')
       if (verify.success) {
         log(`pnpm ${verify.output.trim()} 已恢复`, 'success')
@@ -154,8 +161,28 @@ async function checkPnpm() {
     } catch {
       // corepack disable/enable 失败，继续走安装流程
     }
-    // 修复失败，引导用户手动处理或重新安装
     log('自动修复失败，将尝试重新安装 pnpm', 'warn')
+  } else if (isCorpackPathError && IS_WINDOWS) {
+    // Windows 上 corepack shim 路径错误（Node.js 安装在非 C 盘时常见）
+    log('检测到 corepack 路径解析错误（Node.js 可能安装在非 C 盘）', 'warn')
+    log('正在禁用 corepack 并通过 npm 重新安装 pnpm...')
+    try {
+      runCommand('corepack disable pnpm')
+    } catch {
+      // corepack disable 失败不影响后续
+    }
+    try {
+      runCommand('npm install -g pnpm')
+      const verify = runCommandSafe('pnpm --version')
+      if (verify.success) {
+        log(`pnpm ${verify.output.trim()} 安装成功`, 'success')
+        return true
+      }
+    } catch (e) {
+      log('通过 npm 安装 pnpm 失败', 'warn')
+    }
+    log('自动修复失败，请手动运行：npm install -g pnpm', 'error')
+    return false
   } else {
     log('pnpm 未安装', 'warn')
   }
@@ -166,13 +193,18 @@ async function checkPnpm() {
     return false
   }
 
-  log('正在通过 corepack 安装 pnpm...')
+  log('正在通过 npm 安装 pnpm...')
   try {
-    runCommand('corepack enable && corepack prepare pnpm@latest --activate')
+    // Windows 优先用 npm 直接安装，避免 corepack 路径问题
+    if (IS_WINDOWS) {
+      runCommand('npm install -g pnpm')
+    } else {
+      runCommand('corepack enable && corepack prepare pnpm@latest --activate')
+    }
     log('pnpm 安装成功', 'success')
     return true
   } catch (error) {
-    log('通过 corepack 安装失败，尝试使用 npm...', 'warn')
+    log('安装失败，尝试备用方式...', 'warn')
     try {
       runCommand('npm install -g pnpm')
       log('pnpm 安装成功', 'success')
@@ -296,7 +328,8 @@ function getCloudbaseCredential() {
       tmpSecretKey: auth.credential.tmpSecretKey,
       tmpToken: auth.credential.tmpToken,
     }
-  } catch {
+  } catch (err) {
+    console.warn(`[init] Failed to parse cloudbase auth.json: ${err.message || err}`)
     return null
   }
 }
@@ -334,7 +367,8 @@ async function runCloudbaseLogin() {
       resolve(code === 0)
     })
 
-    child.on('error', () => {
+    child.on('error', (err) => {
+      console.error(`[init] cloudbase login process error: ${err.message || err}`)
       resolve(false)
     })
   })
@@ -347,6 +381,12 @@ const tcbConfig = {
   token: '',
   envId: '',
   provisionMode: 'shared',
+}
+
+// In-memory store for TCR type selection
+const tcrConfig = {
+  type: 'personal',     // 'personal' | 'enterprise'
+  registryId: '',       // enterprise only
 }
 
 // In-memory store for CodeBuddy auth config
@@ -397,8 +437,8 @@ async function setupCloudbaseConfig() {
           encoding: 'utf-8',
         })
         log('cloudbase CLI 登录成功', 'success')
-      } catch {
-        log('cloudbase CLI 登录失败，将继续尝试获取环境列表', 'warn')
+      } catch (e) {
+        log(`cloudbase CLI 登录失败: ${e.stderr?.trim() || e.message || e}，将继续尝试获取环境列表`, 'warn')
       }
     }
     // choice === '2' 或其他：继续进入密钥输入
@@ -440,7 +480,7 @@ async function setupCloudbaseConfig() {
         })
         log('cloudbase CLI 登录成功', 'success')
       } catch (e) {
-        log('cloudbase CLI 登录失败，请检查密钥是否正确', 'warn')
+        log(`cloudbase CLI 登录失败: ${e.stderr?.trim() || e.message || e}`, 'warn')
       }
 
       usePermanentKey = true
@@ -469,7 +509,7 @@ async function setupCloudbaseConfig() {
     const parsed = JSON.parse(output)
     envList = (parsed.data || []).filter(e => e.status === 'NORMAL')
   } catch (e) {
-    log(`无法从 cloudbase CLI 获取环境列表: ${e.message || output}`, 'warn')
+    log(`无法从 cloudbase CLI 获取环境列表: ${e.stderr?.trim() || e.message || output}`, 'warn')
   }
 
   let selectedEnvId = ''
@@ -908,6 +948,329 @@ async function setupTcrEnterprise(env) {
   return true
 }
 
+// ===================== TCR Type Selection =====================
+
+async function selectTcrType() {
+  logSection('选择镜像仓库类型')
+
+  const serverEnvFile = resolve(process.cwd(), 'packages/server/.env')
+  const serverEnv = {}
+  if (existsSync(serverEnvFile)) {
+    readFileSync(serverEnvFile, 'utf-8').split('\n').forEach(line => {
+      const t = line.trim()
+      if (t && !t.startsWith('#')) {
+        const [k, ...v] = t.split('=')
+        if (k) serverEnv[k.trim()] = v.join('=').trim()
+      }
+    })
+  }
+
+  // 已配置镜像则跳过
+  const existingUri = serverEnv['SANDBOX_IMAGE_URI'] || serverEnv['SCF_SANDBOX_IMAGE_URI']
+  if (existingUri) {
+    log(`镜像已配置，跳过类型选择：${existingUri}`, 'success')
+    return true
+  }
+
+  console.log('')
+  console.log('  沙箱镜像将通过云托管 CD 构建并推送到腾讯云容器镜像服务（TCR）。')
+  console.log('  请选择使用的 TCR 版本：')
+  console.log('')
+  console.log('  1) 个人版（免费，适合个人开发）')
+  console.log('  2) 企业版（独立实例，需已购买）')
+  console.log('')
+
+  const choice = await promptInput('请选择（1 或 2，回车默认选 1）')
+  const isEnterprise = choice === '2'
+
+  if (!isEnterprise) {
+    tcrConfig.type = 'personal'
+    log('使用个人版 TCR', 'success')
+    return true
+  }
+
+  tcrConfig.type = 'enterprise'
+  log('使用企业版 TCR，正在查询实例列表...', 'info')
+
+  const { createRequire } = await import('module')
+  const req = createRequire(resolve(process.cwd(), 'package.json'))
+  let sdk
+  try {
+    sdk = req('tencentcloud-sdk-nodejs')
+  } catch {
+    log('未找到 tencentcloud-sdk-nodejs，请先运行 pnpm install', 'error')
+    return false
+  }
+
+  const secretId = tcbConfig.secretId
+  const secretKey = tcbConfig.secretKey
+  const token = tcbConfig.token
+
+  if (!secretId || !secretKey) {
+    log('缺少腾讯云密钥，无法查询 TCR 实例', 'error')
+    return false
+  }
+
+  const TcrClient = sdk.tcr.v20190924.Client
+  const credential = { secretId, secretKey }
+  if (token) credential.token = token
+
+  while (true) {
+    try {
+      const regions = ['ap-guangzhou', 'ap-shanghai', 'ap-beijing', 'ap-chengdu', 'ap-chongqing', 'ap-shenzhen']
+      const allInstances = []
+      for (const region of regions) {
+        const client = new TcrClient({
+          credential,
+          region,
+          profile: { httpProfile: { endpoint: 'tcr.tencentcloudapi.com' } },
+        })
+        try {
+          const result = await client.DescribeInstances({})
+          if (result.Registries) {
+            for (const r of result.Registries) {
+              if (!allInstances.find(i => i.RegistryId === r.RegistryId)) {
+                allInstances.push(r)
+              }
+            }
+          }
+        } catch {
+          // 该地域无实例或无权限，跳过
+        }
+      }
+
+      if (allInstances.length === 0) {
+        console.log('')
+        log('未找到企业版 TCR 实例，请先在控制台创建：', 'warn')
+        log('  https://console.cloud.tencent.com/tcr', 'info')
+        console.log('')
+        const retry = await promptInput('创建完成后按 Enter 重试，输入 skip 跳过改用个人版')
+        if (retry.toLowerCase() === 'skip') {
+          tcrConfig.type = 'personal'
+          log('已切换为个人版 TCR', 'info')
+          return true
+        }
+        continue
+      }
+
+      let selected
+      if (allInstances.length === 1) {
+        selected = allInstances[0]
+        log(`自动选择唯一实例：${selected.RegistryName}（${selected.RegistryId}）`, 'success')
+      } else {
+        console.log('')
+        console.log('  发现以下企业版 TCR 实例：')
+        allInstances.forEach((r, i) => {
+          console.log(`  ${i + 1}) ${r.RegistryName} (${r.RegistryId}) - ${r.RegionName || r.Region}`)
+        })
+        console.log('')
+        const idx = await promptInput(`请输入序号（1-${allInstances.length}）`)
+        const n = parseInt(idx, 10)
+        if (!n || n < 1 || n > allInstances.length) {
+          log('序号无效，请重新选择', 'warn')
+          continue
+        }
+        selected = allInstances[n - 1]
+        log(`已选择：${selected.RegistryName}（${selected.RegistryId}）`, 'success')
+      }
+
+      tcrConfig.registryId = selected.RegistryId
+      return true
+    } catch (err) {
+      log(`查询 TCR 实例失败：${err.message}`, 'error')
+      return false
+    }
+  }
+}
+
+// ===================== Sandbox Image via CloudRun CD =====================
+
+async function setupSandboxImage() {
+  logSection('配置沙箱镜像（CloudRun CD）')
+
+  const serverEnvFile = resolve(process.cwd(), 'packages/server/.env')
+  const serverEnv = {}
+  if (existsSync(serverEnvFile)) {
+    readFileSync(serverEnvFile, 'utf-8').split('\n').forEach(line => {
+      const t = line.trim()
+      if (t && !t.startsWith('#')) {
+        const [k, ...v] = t.split('=')
+        if (k) serverEnv[k.trim()] = v.join('=').trim()
+      }
+    })
+  }
+
+  // 已配置则跳过
+  const existingUri = serverEnv['SANDBOX_IMAGE_URI'] || serverEnv['SCF_SANDBOX_IMAGE_URI']
+  if (existingUri) {
+    log(`沙箱镜像已配置，跳过：${existingUri}`, 'success')
+    return true
+  }
+
+  const envId = tcbConfig.envId
+  if (!envId) {
+    log('缺少 TCB_ENV_ID，请先完成 CloudBase 配置', 'error')
+    return false
+  }
+
+  const { createRequire } = await import('module')
+  const req = createRequire(resolve(process.cwd(), 'package.json'))
+  let CloudBase
+  try {
+    CloudBase = req('@cloudbase/manager-node')
+  } catch {
+    log('未找到 @cloudbase/manager-node，请先运行 pnpm install', 'error')
+    return false
+  }
+
+  const app = new CloudBase({
+    secretId: tcbConfig.secretId,
+    secretKey: tcbConfig.secretKey,
+    token: tcbConfig.token,
+    envId,
+  })
+  const tcbr = app.commonService('tcbr', '2022-02-17')
+
+  // 检测云托管是否开通
+  while (true) {
+    try {
+      await tcbr.call({ Action: 'DescribeCloudRunServers', Param: { EnvId: envId } })
+      break
+    } catch (err) {
+      const msg = err.message || ''
+      if (msg.includes('not exist') || msg.includes('NotExist') || msg.includes('InvalidParameter')) {
+        console.log('')
+        log('云托管服务未开通，请先在控制台开通：', 'warn')
+        log('  https://console.cloud.tencent.com/tcbr', 'info')
+        console.log('')
+        await promptInput('开通完成后按 Enter 继续')
+      } else {
+        break
+      }
+    }
+  }
+
+  // 写 cloudbaserc.json 确保 CLI 能识别环境
+  const cloudbaseRcFile = resolve(process.cwd(), 'cloudbaserc.json')
+  const rcBackup = existsSync(cloudbaseRcFile) ? readFileSync(cloudbaseRcFile, 'utf-8') : null
+  writeFileSync(cloudbaseRcFile, JSON.stringify({ envId }, null, 2))
+
+  const SERVICE_NAME = 'sandbox-base-image'
+  const SOURCE_DIR = resolve(process.cwd(), 'scripts/sandbox-image')
+
+  // 若服务不存在，先用 API 预创建（MinNum=0, MaxNum=1），避免 deploy 触发自动扩容
+  // 注意：CreateCloudRunServer 的 MaxNum 必须 > 0，不能为 0
+  try {
+    const existResult = await tcbr.call({
+      Action: 'DescribeCloudRunServers',
+      Param: { EnvId: envId, ServerName: SERVICE_NAME },
+    })
+    const exists = existResult.ServerList?.length > 0
+    if (!exists) {
+      log('服务不存在，预创建（MinNum=0, MaxNum=1）以禁止自动拉起 Pod...', 'info')
+      await tcbr.call({
+        Action: 'CreateCloudRunServer',
+        Param: {
+          EnvId: envId,
+          ServerName: SERVICE_NAME,
+          DeployInfo: {
+            DeployType: 'code',
+          },
+          Items: [
+            { Key: 'Port', IntValue: 9000 },
+            { Key: 'MinNum', IntValue: 0 },
+            { Key: 'MaxNum', IntValue: 1 },
+          ],
+        },
+      })
+      log('服务预创建完成（MinNum=0, MaxNum=1）', 'success')
+    }
+  } catch (err) {
+    // 预创建失败不阻断，deploy 时 CLI 会自动创建（副本数用默认值）
+    log(`预创建服务失败（将由 CLI 自动创建）：${err.message}`, 'warn')
+  }
+
+  try {
+    log(`部署沙箱镜像到云托管服务：${SERVICE_NAME}`)
+    execSync(
+      `cloudbase cloudrun deploy -s ${SERVICE_NAME} --port 9000 --force --source .`,
+      { stdio: 'inherit', cwd: SOURCE_DIR }
+    )
+    log('部署命令已提交，等待云端 CD 构建...', 'success')
+  } catch (err) {
+    log(`部署失败：${err.message}`, 'error')
+    if (rcBackup !== null) writeFileSync(cloudbaseRcFile, rcBackup)
+    return false
+  } finally {
+    if (rcBackup !== null) writeFileSync(cloudbaseRcFile, rcBackup)
+  }
+
+  // 轮询等待 CD 构建完成
+  const POLL_INTERVAL = 15000  // 15s
+  const MAX_POLLS = 40          // 最多 10 分钟
+  let imageUri = ''
+
+  console.log('')
+  log('等待 CD 构建完成（最多 10 分钟）...', 'info')
+
+  for (let i = 0; i < MAX_POLLS; i++) {
+    await new Promise(r => setTimeout(r, POLL_INTERVAL))
+    const elapsed = Math.round((i + 1) * POLL_INTERVAL / 1000)
+    process.stdout.write(`\r  ${colors.dim}已等待 ${elapsed}s / ${MAX_POLLS * POLL_INTERVAL / 1000}s...${colors.reset}`)
+
+    try {
+      const result = await tcbr.call({
+        Action: 'DescribeCloudRunServerDetail',
+        Param: { EnvId: envId, ServerName: SERVICE_NAME },
+      })
+      const uri = result.OnlineVersionInfos?.[0]?.ImageUrl
+      if (uri) {
+        imageUri = uri
+        process.stdout.write('\n')
+        break
+      }
+    } catch {
+      // 服务还未就绪，继续等待
+    }
+  }
+
+  if (!imageUri) {
+    process.stdout.write('\n')
+    log('超时未获取到镜像 URI，请在控制台确认构建状态：', 'warn')
+    log(`  https://tcb.cloud.tencent.com/dev?envId=${envId}#/platform-run/service/detail?serverName=${SERVICE_NAME}&tabId=deploy&envId=${envId}`, 'info')
+    return false
+  }
+
+  // 推断镜像类型
+  const host = imageUri.split('/')[0]
+  const imageType = host.endsWith('.tencentcloudcr.com') ? 'enterprise' : 'personal'
+
+  // 写入 packages/server/.env
+  const setVar = (content, key, value) => {
+    if (!value) return content
+    if (content.includes(`${key}=`)) {
+      return content.replace(new RegExp(`${key}=.*`), `${key}=${value}`)
+    }
+    return content + `\n${key}=${value}`
+  }
+
+  let content = existsSync(serverEnvFile) ? readFileSync(serverEnvFile, 'utf-8') : ''
+  content = setVar(content, 'SANDBOX_IMAGE_URI', imageUri)
+  content = setVar(content, 'SANDBOX_IMAGE_TYPE', imageType)
+  if (imageType === 'enterprise' && tcrConfig.registryId) {
+    content = setVar(content, 'SANDBOX_IMAGE_REGISTRY_ID', tcrConfig.registryId)
+  }
+  writeFileSync(serverEnvFile, content)
+
+  log(`镜像 URI：${imageUri}`, 'success')
+  log(`镜像类型：${imageType}`, 'success')
+  if (imageType === 'enterprise' && tcrConfig.registryId) {
+    log(`RegistryId：${tcrConfig.registryId}`, 'success')
+  }
+  log('沙箱镜像配置已写入 packages/server/.env', 'success')
+  return true
+}
+
 async function setupTcr() {
   logSection('配置 TCR（容器镜像服务）')
 
@@ -948,8 +1311,8 @@ async function setupTcr() {
     log('TCR 配置完成', 'success')
     return true
   } catch (error) {
-    log('TCR 配置失败，可稍后手动执行。', 'warn')
-    log('运行：node scripts/setup-tcr.mjs', 'info')
+    log(`TCR 配置失败: ${error.message || error}`, 'warn')
+    log('可稍后手动执行：node scripts/setup-tcr.mjs', 'info')
     return false
   }
 }

@@ -12,7 +12,7 @@
     "./agent/cloudbase-agent.service": "./src/agent/cloudbase-agent.service.ts"
   },
   "scripts": {
-    "dev": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting --silent && tsup src/util/skill-loader-override.ts --format cjs --outDir dist/util --no-splitting --silent && tsx watch --env-file=../../.env.local src/index.ts",
+    "dev": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting --silent && tsup src/util/skill-loader-override.ts --format cjs --outDir dist/util --no-splitting --silent && cross-env DOTENVX_PATH=../../.env.local tsx watch --env-file=../../.env.local src/index.ts",
     "build": "tsup src/sandbox/tool-override.ts --format cjs --outDir dist/sandbox --no-splitting && tsup src/util/skill-loader-override.ts --format cjs --outDir dist/util --no-splitting && tsup src/index.ts --format esm --target node22",
     "start": "node dist/index.js",
     "test": "vitest run",
@@ -59,6 +59,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/uuid": "^11.0.0",
     "@types/ws": "^8.5.13",
+    "cross-env": "^10.1.0",
     "tsup": "^8.0.0",
     "tsx": "^4.21.0",
     "typescript": "~5.7.0",

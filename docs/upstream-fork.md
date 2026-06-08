@@ -87,9 +87,19 @@
 | `1438db3` | refactor(sandbox): TRW 真 `:7681`，删除 `ttyd-gateway-port` shim |
 | `53d902d` | fix(web): MCP 合并余波（`mcpServerList` 类型、`refreshTasks` 重复声明） |
 
-**当前对齐状态**（2026-06-03，分支 `feature/stateful-infra`）：
+**当前对齐状态**（2026-06-08，分支 `temp-merge-upstream-main` / 待合入 `feature/stateful-infra`）：
 
-- `git merge-base HEAD origin/main` → `b783b22`（与上游 `main` 最新对齐）
+- `git merge-base HEAD origin/main` → `4f2bc70`（与上游 `main` 最新对齐）
+- 自 `b783b22` 并入 6 commits；**未采纳** SCF `setupSandboxImage` / `selectTcrType` 主流程，保留 Stateful `setupStatefulSandbox`
+- 吸收：`CODEBUDDY_DYNAMIC_MODELS`、Windows `cross-env`、init 日志、Codex Sites README、setup-tcr 日志改进
+
+| 日期 | 方式 | 上游 `main` 顶 | 本线 merge commit | 备注 |
+| --- | --- | --- | --- | --- |
+| 2026-06-08 | `git merge origin/main` → `temp-merge-upstream-main` | `4f2bc70` | （待提交） | 冲突 6 文件；拒 SCF 沙箱 init；README 沙箱口径改 AGS Stateful |
+
+**历史对齐**（2026-06-03，分支 `feature/stateful-infra`）：
+
+- `git merge-base HEAD origin/main` → `b783b22`
 - 功能分支顶：`53d902d`（merge `f9de960` + 上表两行本线 fix）
 - 本线保留：Stateful 沙箱、`TCB_API_KEY`、双 env 文件、preview WS 不转发 `Origin`、无 SCF sandbox 路径
 - 从上游并入：MCP 对话 / 自定义 MCP、预览与安全域名修复、AskUser 续聊修复；以及 5/27 段的 OpenCode / TCR / podman 等
@@ -100,7 +110,7 @@
 
 ```bash
 git fetch origin
-git log b783b22..origin/main --oneline
+git log 4f2bc70..origin/main --oneline
 ```
 
 ## 偶尔从上游同步（推荐流程）
@@ -109,7 +119,7 @@ git log b783b22..origin/main --oneline
 git fetch origin
 
 # 自上次对齐的顶往下看
-git log b783b227964054dcd4ee3ead17ea628d0a7839b1..origin/main --oneline
+git log 4f2bc70..origin/main --oneline
 
 # 整分支合并（可能冲突，需人工解）
 git merge origin/main
