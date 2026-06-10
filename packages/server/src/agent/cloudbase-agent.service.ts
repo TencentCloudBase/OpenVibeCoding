@@ -11,6 +11,7 @@ import {
   type SandboxProgressCallback,
 } from '../sandbox/scf-sandbox-manager.js'
 import { createSandboxMcpClient } from '../sandbox/sandbox-mcp-proxy.js'
+import { createSandboxStdioMcpClient } from '../sandbox/sandbox-stdio-mcp.js'
 import { archiveToGit } from '../sandbox/git-archive.js'
 import { getCodingSystemPrompt } from './coding-mode.js'
 import { getDb } from '../db/index.js'
@@ -1180,11 +1181,22 @@ export class CloudbaseAgentService {
             headers: mcp.headers || {},
           }
         } else if (serverType === 'stdio') {
-          mcpServers[mcp.name] = {
-            type: serverType,
-            command: mcp.command,
-            args: mcp.args,
-            env: mcp.env,
+          if (sandboxInstance) {
+            const stdioClient = await createSandboxStdioMcpClient(sandboxInstance, {
+              command: mcp.command,
+              args: mcp.args,
+              env: mcp.env,
+              name: mcp.name,
+            })
+            mcpServers[mcp.name] = stdioClient.sdkServer
+          } else {
+            // 如果没有沙箱实例，则在宿主机执行
+            mcpServers[mcp.name] = {
+              type: serverType,
+              command: mcp.command,
+              args: mcp.args,
+              env: mcp.env,
+            }
           }
         }
       }

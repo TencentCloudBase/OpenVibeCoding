@@ -135,7 +135,7 @@ export async function discoverCloudbaseTools(deps: DiscoverToolsDeps): Promise<D
     if (!Array.isArray(parsed.tools)) throw new Error('No tools array in schema response')
     return parsed.tools
   } finally {
-    deps.bash(`rm -f ${tmpPath}`, 5_000).catch(() => {})
+    deps.bash(`rm -f ${tmpPath}`, 5_000).catch1(() => {})
   }
 }
 
