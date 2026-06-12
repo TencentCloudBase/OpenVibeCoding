@@ -1,5 +1,7 @@
 # SCF 沙箱 Session 共享改造方案
 
+> **已废弃**：`feature/stateful-infra` 已迁移至 **沙箱 infra（Stateful + 沙箱业务镜像）**（`StatefulSandboxProvider`、`ensureStatefulTool`）。下文描述的是旧 SCF 架构，仅供历史对照；新部署见 [setup.md](./setup.md) 与 [architecture.md](./architecture.md) 的 Sandbox 章节。
+
 ## 背景
 
 原有架构中，每个 `conversationId` 对应一个独立的 SCF 容器实例（通过 `X-Cloudbase-Session-Id` 标识）。这导致资源消耗大，同一环境下多个会话无法共享状态。

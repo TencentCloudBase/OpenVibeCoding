@@ -24,7 +24,7 @@ process.env.PORT = String(PORT)
 
 // 通过 dotenv 加载 .env
 import { config } from 'dotenv'
-config({ path: '.env' })
+config({ path: '../../.env.local' })
 
 console.log('[e2e-http] booting server...')
 

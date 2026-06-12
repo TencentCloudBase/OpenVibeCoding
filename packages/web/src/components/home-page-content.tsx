@@ -439,7 +439,7 @@ export function HomePageContent({
     keepAlive: boolean
     enableBrowser: boolean
     mode: 'default' | 'coding'
-    mcpServerList?: Connector[]
+    mcpServerList?: Array<Pick<Connector, 'name' | 'description' | 'type' | 'baseUrl' | 'command' | 'args' | 'headers'>>
     imageBlocks?: Array<{ data: string; mimeType: string }>
   }) => {
     console.log(

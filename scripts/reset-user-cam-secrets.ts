@@ -16,9 +16,9 @@ import { config as loadEnv } from 'dotenv'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// 加载 packages/server/.env（DB_PROVIDER / TCB_* 等都在那里）
+// Load repo root .env.local (DB_PROVIDER / TCB_*)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-loadEnv({ path: path.resolve(__dirname, '../packages/server/.env') })
+loadEnv({ path: path.resolve(__dirname, '../.env.local') })
 
 import { getDb } from '../packages/server/src/db/index.js'
 

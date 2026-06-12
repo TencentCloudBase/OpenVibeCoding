@@ -12,6 +12,7 @@ const MILESTONE_SESSION_UPDATES = new Set([
   'tool_confirm',
   'artifact',
   'agent_phase',
+  'log',
 ])
 
 // ─── EventBuffer ───────────────────────────────────────────────────────

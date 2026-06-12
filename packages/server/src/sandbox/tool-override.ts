@@ -416,63 +416,10 @@ async function drainPtyOutput(baseUrl: string, headers: Record<string, string>, 
 }
 
 /**
- * 调用 Process/List 获取沙箱中所有存活进程。
+ * 确保指定 pid 在 ptyTaskRegistry 中存在（仅内存；沙箱业务镜像 无 e2b Process/List）。
  */
-async function listSandboxProcesses(
-  baseUrl: string,
-  headers: Record<string, string>,
-): Promise<Array<{ pid: number; cmd: string; args: string[] }>> {
-  try {
-    const res = await fetch(`${baseUrl}/e2b-compatible/process.Process/List`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: '{}',
-    })
-    if (!res.ok) return []
-
-    const data = (await res.json()) as any
-    return (data?.processes ?? [])
-      .filter((p: any) => p.pid)
-      .map((p: any) => ({
-        pid: p.pid,
-        cmd: p.config?.cmd ?? '',
-        args: p.config?.args ?? [],
-      }))
-  } catch {
-    return []
-  }
-}
-
-/**
- * 确保指定 pid 在 ptyTaskRegistry 中存在。
- * 内存没有则通过 Process/List 检查沙箱中是否存活，存活则恢复。
- */
-async function ensurePtyTask(
-  taskId: string,
-  baseUrl: string,
-  headers: Record<string, string>,
-): Promise<PtyTask | null> {
-  const existing = ptyTaskRegistry.get(taskId)
-  if (existing) return existing
-
-  const pid = Number(taskId)
-  if (!pid || isNaN(pid)) return null
-
-  const processes = await listSandboxProcesses(baseUrl, headers)
-  const found = processes.find((p) => p.pid === pid)
-  if (!found) return null
-
-  const restored: PtyTask = {
-    pid,
-    title: `(restored) ${found.cmd} ${found.args.join(' ')}`.trim(),
-    startTime: Date.now(),
-    status: 'running',
-    nextSeq: 0,
-    stdout: '',
-    exited: false,
-  }
-  ptyTaskRegistry.set(taskId, restored)
-  return restored
+async function ensurePtyTask(taskId: string): Promise<PtyTask | null> {
+  return ptyTaskRegistry.get(taskId) ?? null
 }
 
 /**
@@ -710,7 +657,7 @@ export function overrideTools(toolMap: Map<string, any>): void {
    * 返回 null 表示该 taskId 在沙箱中也不存在（应回退原始实现）。
    */
   async function formatPtyTaskOutput(taskId: string, filter?: string): Promise<{ content: string } | null> {
-    const task = await ensurePtyTask(taskId, baseUrl, headers)
+    const task = await ensurePtyTask(taskId)
     if (!task) return null
 
     // lazy：只在此刻拉取所有积压输出
@@ -774,7 +721,7 @@ export function overrideTools(toolMap: Map<string, any>): void {
 
     taskOutputTool.execute = async (params: any, context: ToolContext, extra?: any) => {
       const taskId = String(params.task_id || params.shell_id || '')
-      const task = await ensurePtyTask(taskId, baseUrl, headers)
+      const task = await ensurePtyTask(taskId)
 
       if (task) {
         const shouldBlock = params.block !== false
@@ -803,7 +750,7 @@ export function overrideTools(toolMap: Map<string, any>): void {
 
     taskStopTool.execute = async (params: any, context: ToolContext, extra?: any) => {
       const taskId = String(params.task_id || params.shell_id || '')
-      const task = await ensurePtyTask(taskId, baseUrl, headers)
+      const task = await ensurePtyTask(taskId)
       if (!task) return originalTaskStopExecute.call(taskStopTool, params, context, extra)
 
       return killPtyTask(baseUrl, headers, task, taskId)
@@ -875,20 +822,17 @@ export function overrideTools(toolMap: Map<string, any>): void {
         return cdnUrl
       }
 
-      // ── fallback：上传到沙箱 /e2b-compatible/files ──
+      // ── fallback：上传到沙箱 via 沙箱业务镜像 /api/tools/files_upload ──
       const sandboxRelPath = `generated-images/${filename}`
-      const form = new FormData()
-      form.append('file', blob, filename)
-
-      const uploadRes = await fetch(`${baseUrl}/e2b-compatible/files?path=${encodeURIComponent(sandboxRelPath)}`, {
+      const contentBase64 = Buffer.from(await blob.arrayBuffer()).toString('base64')
+      const uploadRes = await fetch(`${baseUrl}/api/tools/files_upload`, {
         method: 'POST',
-        headers: { ...headers },
-        body: form,
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ path: sandboxRelPath, contentBase64 }),
       })
-
-      if (!uploadRes.ok) {
-        const text = await uploadRes.text().catch(() => '')
-        throw new Error(`ImageGen upload to sandbox failed: ${uploadRes.status} ${text}`)
+      const uploadData = (await uploadRes.json().catch(() => ({}))) as { success?: boolean; error?: string }
+      if (!uploadRes.ok || !uploadData.success) {
+        throw new Error(`ImageGen upload to sandbox failed: ${uploadData.error || uploadRes.status}`)
       }
 
       return sandboxRelPath
@@ -936,7 +880,7 @@ export function overrideTools(toolMap: Map<string, any>): void {
 
     killShellTool.execute = async (params: any, context: ToolContext, extra?: any) => {
       const shellId = String(params.shell_id || '')
-      const task = await ensurePtyTask(shellId, baseUrl, headers)
+      const task = await ensurePtyTask(shellId)
       if (!task) return originalKillExecute.call(killShellTool, params, context, extra)
 
       return killPtyTask(baseUrl, headers, task, shellId)

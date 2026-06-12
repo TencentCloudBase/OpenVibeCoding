@@ -200,30 +200,23 @@ async function sandboxReadFile(sandbox: SandboxConfig, filePath: string): Promis
   }
 }
 
-/**
- * List a directory via /e2b-compatible/filesystem.Filesystem/ListDir.
- * Returns entries with their type via entry.type field.
- * Returns null if the path doesn't exist or is not a directory.
- */
-async function sandboxReadDir(
-  sandbox: SandboxConfig,
-  dirPath: string,
-): Promise<Array<{ name: string; isDirectory: boolean }> | null> {
+/** Find SKILL.md paths under a directory via 沙箱业务镜像 /api/tools/glob. */
+async function sandboxFindSkillMdPaths(sandbox: SandboxConfig, dirPath: string): Promise<string[]> {
   try {
-    const res = await fetch(`${sandbox.url}/e2b-compatible/filesystem.Filesystem/ListDir`, {
+    const res = await fetch(`${sandbox.url}/api/tools/glob`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...sandbox.headers },
-      body: JSON.stringify({ path: dirPath, depth: 1 }),
+      body: JSON.stringify({ pattern: '**/SKILL.md', path: dirPath }),
     })
-    if (!res.ok) return null
-    const data = (await res.json()) as { entries?: Array<{ name: string; type: string }> }
-    if (!data.entries) return null
-    return data.entries.map((e) => ({
-      name: e.name,
-      isDirectory: e.type === 'FILE_TYPE_DIRECTORY',
-    }))
+    if (!res.ok) return []
+    const data = (await res.json()) as { success?: boolean; result?: { output?: string } }
+    if (!data.success || !data.result?.output || data.result.output === 'No files found') return []
+    return data.result.output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith('('))
   } catch {
-    return null
+    return []
   }
 }
 
@@ -232,20 +225,8 @@ async function scanSandboxSkillsDirectory(
   dir: string,
   source: 'project' | 'user',
 ): Promise<SkillDefinition[]> {
-  // 1 request: list the directory with type info
-  const entries = await sandboxReadDir(sandbox, dir)
-  if (!entries) return []
-
-  // Collect all SKILL.md paths to read (from subdirs and bare files)
-  const skillFilePaths: string[] = []
-  for (const entry of entries) {
-    const fullPath = `${dir}/${entry.name}`
-    if (entry.isDirectory) {
-      skillFilePaths.push(`${fullPath}/SKILL.md`)
-    } else if (entry.name === 'SKILL.md') {
-      skillFilePaths.push(fullPath)
-    }
-  }
+  const skillFilePaths = await sandboxFindSkillMdPaths(sandbox, dir)
+  if (skillFilePaths.length === 0) return []
 
   // Fetch all SKILL.md files in batches of 30, concurrent within each batch
   const SKILL_READ_BATCH = 30

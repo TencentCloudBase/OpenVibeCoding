@@ -8,12 +8,12 @@
  *   - 引导用户选择要启用的 provider 并输入 API key
  *   - 把 provider 启用声明写入 .opencode/opencode.json
  *     （空对象 `{}` 风格，所有元数据由 opencode 运行时从 catalog 自动获取）
- *   - 把 API key 写入 packages/server/.env
+ *   - 把 API key 写入根目录 .env.local
  *
  * 设计约束：
  *   - 只处理项目级配置；不读写 ~/.local/share/opencode/auth.json
  *   - 不做 catalog 本地缓存；每次重新拉取
- *   - 凭证只存 packages/server/.env
+ *   - 凭证只存根目录 .env.local
  *
  * 用法：
  *   pnpm opencode:setup
@@ -23,7 +23,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline'
 import { createRequire } from 'node:module'
-
+import { promptInput } from './lib/prompt.mjs'
 const require = createRequire(import.meta.url)
 const CloudBaseManager = require('../packages/server/node_modules/@cloudbase/manager-node')
 let managerApp = null
@@ -35,7 +35,9 @@ const CATALOG_FETCH_TIMEOUT_MS = Number(process.env.MODELS_DEV_FETCH_TIMEOUT_MS)
 
 const ROOT = process.cwd()
 const OPENCODE_JSON = path.join(ROOT, '.opencode', 'opencode.json')
-const SERVER_ENV_FILE = path.join(ROOT, 'packages', 'server', '.env')
+const ENV_TARGET_FILE = process.env.OVC_ENV_FILE
+  ? path.resolve(process.env.OVC_ENV_FILE)
+  : path.join(ROOT, '.env.local')
 
 const colors = {
   reset: '\x1b[0m',
@@ -67,60 +69,14 @@ function logSection(title) {
 
 let _rl = null
 
-function drainStdin() {
-  return new Promise((resolve) => {
-    if (!process.stdin.readable) return resolve()
-    process.stdin.resume()
-    const drain = () => {
-      while (process.stdin.read() !== null) {
-        /* discard */
-      }
-    }
-    drain()
-    setTimeout(() => {
-      drain()
-      process.stdin.pause()
-      resolve()
-    }, 10)
-  })
-}
-
 async function prompt(question, { hidden = false, defaultValue = '' } = {}) {
   if (hidden) {
-    if (_rl) {
-      _rl.close()
-      _rl = null
-    }
-    await drainStdin()
-    process.stdout.write(`${question}: `)
-    process.stdin.setRawMode(true)
-    process.stdin.resume()
-    return new Promise((resolve) => {
-      let buf = ''
-      const onData = (chunk) => {
-        const c = chunk.toString('utf8')
-        if (c === '\n' || c === '\r' || c === '\u0004') {
-          process.stdin.setRawMode(false)
-          process.stdin.pause()
-          process.stdin.removeListener('data', onData)
-          process.stdout.write('\n')
-          resolve(buf || defaultValue)
-        } else if (c === '\u0003') {
-          process.exit(130)
-        } else if (c.charCodeAt(0) === 127) {
-          buf = buf.slice(0, -1)
-        } else {
-          buf += c
-        }
-      }
-      process.stdin.on('data', onData)
-    })
+    return promptInput(question, { hidden: true, defaultValue })
   }
   if (_rl) {
     _rl.close()
     _rl = null
   }
-  await drainStdin()
   _rl = readline.createInterface({ input: process.stdin, output: process.stdout })
   const hint = defaultValue ? ` ${colors.dim}[${defaultValue}]${colors.reset}` : ''
   return new Promise((resolve) => {
@@ -502,7 +458,7 @@ async function collectApiKeys(selected, envNow) {
   for (const it of selected) {
     const existing = envNow[it.envKey]
     if (existing) {
-      console.log(`  ${colors.green}✓${colors.reset} ${it.envKey} 已在 packages/server/.env 中（跳过）`)
+      console.log(`  ${colors.green}✓${colors.reset} ${it.envKey} 已在 env 中（跳过）`)
       continue
     }
     console.log('')
@@ -528,7 +484,7 @@ async function collectApiKeys(selected, envNow) {
  * 收集"已存在但缺 env 的 provider"的 env 值。
  * 与 collectApiKeys 区别：这里是补齐，不需要再写 provider 对象到 opencode.json。
  */
-async function collectMissingEnvs(envId, rows) {
+async function collectMissingEnvs(envId, rows, envNow) {
   const updates = {}
   // 把所有 row 的 missingEnv 去重展开成一个待补齐列表
   const todoMap = new Map() // envKey -> Set<providerId>
@@ -547,6 +503,9 @@ async function collectMissingEnvs(envId, rows) {
   console.log(`${colors.dim}回车留空 = 跳过该项${colors.reset}`)
 
   for (const [envKey, providers] of todoMap) {
+    if (envKey === 'CLOUDBASE_API_KEY' && envNow['CLOUDBASE_API_KEY']?.trim()) {
+      continue
+    }
     console.log('')
     let extraHint = ''
     if (envKey === 'CLOUDBASE_API_KEY') {
@@ -630,49 +589,62 @@ async function describeAIModes(envId, secretId, secretKey) {
     })
     return result?.AIModels || []
   } catch (err) {
-    // Non-fatal: server-side SDK uses admin creds and bypasses rules.
     console.error(
-      '[open code setup] Failed to describe ai models',
+      '[opencode setup] Failed to describe ai models',
       err instanceof Error ? err.message : err,
     )
   }
 }
 
 async function getCloudBaseModelConfig(envId, secretId, secretKey) {
-  const modelList = await describeAIModes(envId, secretId, secretKey)
-  let cloudBaseModels = {}
+  const modelList = (await describeAIModes(envId, secretId, secretKey)) || []
+  const cloudBaseModels = {}
   for (const it of modelList) {
-    if (it?.GroupName !== "cloudbase") {
-      continue;
+    if (it?.GroupName !== 'cloudbase') {
+      continue
     }
-    for (const model of it?.Models){
-      cloudBaseModels[model.Model] ={
-        id : model.Model,
-        name : model.Model,
+    for (const model of it?.Models) {
+      cloudBaseModels[model.Model] = {
+        id: model.Model,
+        name: model.Model,
       }
     }
   }
 
   return {
-    id: "cloudbase",
-    env: ["CLOUDBASE_API_KEY"],
-    npm: "",
+    id: 'cloudbase',
+    env: ['CLOUDBASE_API_KEY'],
+    npm: '',
     api: `https://${envId}.api.tcloudbasegateway.com/v1/ai/cloudbase`,
-    name: "cloudbase",
-    doc:"",
-    models: cloudBaseModels
+    name: 'cloudbase',
+    doc: '',
+    models: cloudBaseModels,
   }
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
-  logSection('OpenCode Provider 配置')
+  const envLabel = path.basename(ENV_TARGET_FILE)
+  logSection('OpenCode 自定义模型（数据源：CloudBase AI+）')
+  console.log('')
+  console.log(`  ${colors.dim}从当前 TCB 环境读取已开通模型 → opencode.json${colors.reset}`)
+  console.log(`  ${colors.dim}env：${envLabel}${colors.reset}`)
+  console.log('')
 
-  const envNow = parseEnvFile(SERVER_ENV_FILE)
+  const envNow = parseEnvFile(ENV_TARGET_FILE)
   const envId = envNow['TCB_ENV_ID']
   const secretId = envNow['TCB_SECRET_ID']
   const secretKey = envNow['TCB_SECRET_KEY']
+
+  if (!envId || !secretId || !secretKey) {
+    log(`缺少 CloudBase 凭证，请确保 ${envLabel} 含 TCB_*`, 'err')
+    process.exit(1)
+  }
+  if (!envNow['CLOUDBASE_API_KEY']?.trim()) {
+    log(`缺少 CLOUDBASE_API_KEY，请先 ./init.sh 完成「CloudBase AI API Key」步骤，或写入 ${envLabel}`, 'err')
+    process.exit(1)
+  }
 
   // 1. 拉 catalog
   // log('拉取 models.dev catalog...', 'step')
@@ -688,12 +660,13 @@ async function main() {
   //   process.exit(1)
   // }
 
-  // 仅添加 cloudbase 模型
   log('拉取 cloudbase 模型', 'step')
   const cloudBaseModelConfig = await getCloudBaseModelConfig(envId, secretId, secretKey)
 
   if (Object.keys(cloudBaseModelConfig.models).length === 0) {
-    logSection(`未配置 cloudbase 模型, 请前往 https://tcb.cloud.tencent.com/dev?envId=${envId}#/ai?tab=text-aiModel 开启模型配置` )
+    logSection(
+      `未配置 cloudbase 模型, 请前往 https://tcb.cloud.tencent.com/dev?envId=${envId}#/ai?tab=text-aiModel 开启模型配置`,
+    )
     process.exit(1)
   }
 
@@ -716,7 +689,7 @@ async function main() {
       { defaultValue: 'Y' },
     )
     if (ans.toLowerCase() !== 'n' && ans.toLowerCase() !== 'no') {
-      missingEnvUpdates = await collectMissingEnvs(envId,missingRows)
+      missingEnvUpdates = await collectMissingEnvs(envId, missingRows, envNow)
     }
   }
 
@@ -740,8 +713,8 @@ async function main() {
   // 默认仅支持 cloudbase
   let selected = []
   const byId = new Map(items.map((it) => [it.id, it]))
-  if (byId.has("cloudbase")) {
-    selected.push(byId.get("cloudbase"))
+  if (byId.has('cloudbase')) {
+    selected.push(byId.get('cloudbase'))
   }
 
 
@@ -750,7 +723,7 @@ async function main() {
   if (selected.length > 0) {
     log(`新增启用：${selected.map((s) => s.id).join(', ')}`, 'ok')
     logSection('API Key（新增 provider）')
-    console.log(`${colors.dim}所有 key 将写入 packages/server/.env（已 gitignore）。回车留空则跳过。${colors.reset}`)
+    console.log(`${colors.dim}所有 key 将写入 ${path.basename(ENV_TARGET_FILE)}。回车留空则跳过。${colors.reset}`)
     const newKeyUpdates = await collectApiKeys(selected, { ...envNow, ...missingEnvUpdates })
     envUpdates = { ...envUpdates, ...newKeyUpdates }
   }
@@ -794,11 +767,11 @@ async function main() {
   }
 
   if (Object.keys(envUpdates).length > 0) {
-    const { updated, added } = upsertEnvFile(SERVER_ENV_FILE, envUpdates)
+    const { updated, added } = upsertEnvFile(ENV_TARGET_FILE, envUpdates)
     const parts = []
     if (added.length > 0) parts.push(`新增 ${added.length} 项`)
     if (updated.length > 0) parts.push(`更新 ${updated.length} 项`)
-    log(`已写入 ${path.relative(ROOT, SERVER_ENV_FILE)} (${parts.join('，')})`, 'ok')
+    log(`已写入 ${path.relative(ROOT, ENV_TARGET_FILE)} (${parts.join('，')})`, 'ok')
   } else {
     log(`没有新的 env 变更`, 'info')
   }

@@ -2,6 +2,10 @@
   "name": "coding-agent-template",
   "version": "2.0.0",
   "private": true,
+  "engines": {
+    "node": ">=22.0.0 <23.0.0",
+    "pnpm": ">=10.0.0"
+  },
   "scripts": {
     "dev": "concurrently \"pnpm dev:server\" \"pnpm dev:web\"",
     "dev:web": "pnpm --filter @coder/web dev",
@@ -28,6 +32,7 @@
     "@cloudbase/manager-node": "^4.10.6",
     "@cloudbase/node-sdk": "^3.18.1",
     "@eslint/eslintrc": "^3.3.3",
+    "@inquirer/password": "^4.0.23",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/ms": "^2.1.0",
     "@types/node": "^20.19.30",

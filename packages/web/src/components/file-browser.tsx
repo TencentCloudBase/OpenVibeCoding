@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   File,
   Folder,
@@ -22,7 +22,9 @@ import { Button } from '@/components/ui/button'
 import { useAtom } from 'jotai'
 import { getTaskFileBrowserState } from '@/lib/atoms/file-browser'
 import { useMemo } from 'react'
+import { TASK_LOG } from '@coder/shared'
 import { toast } from 'sonner'
+import { pushLiveTaskLog } from '@/lib/push-live-task-log'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -418,6 +420,7 @@ export function FileBrowser({
   }, [
     branchName,
     taskId,
+    sandboxId,
     onFilesLoaded,
     viewMode,
     setState,
@@ -555,6 +558,7 @@ export function FileBrowser({
       const result = await response.json()
       if (!response.ok || !result.success) throw new Error(result.error || 'Failed to create file')
 
+      pushLiveTaskLog(taskId, { type: 'success', message: TASK_LOG.WORKSPACE_FILE_CREATED }, { persist: false })
       toast.success('文件创建成功')
       setShowNewFileDialog(false)
       setNewFileName('')
@@ -569,6 +573,7 @@ export function FileBrowser({
       }
     } catch (err) {
       console.error('Error creating file:', err)
+      pushLiveTaskLog(taskId, { type: 'error', message: TASK_LOG.WORKSPACE_FILE_CREATE_FAILED })
       toast.error(err instanceof Error ? err.message : 'Failed to create file')
     } finally {
       setIsCreatingFile(false)
@@ -597,6 +602,7 @@ export function FileBrowser({
       const result = await response.json()
       if (!response.ok || !result.success) throw new Error(result.error || 'Failed to create folder')
 
+      pushLiveTaskLog(taskId, { type: 'success', message: TASK_LOG.WORKSPACE_FOLDER_CREATED }, { persist: false })
       toast.success('文件夹创建成功')
       setShowNewFolderDialog(false)
       setNewFolderName('')
@@ -613,6 +619,7 @@ export function FileBrowser({
       }
     } catch (err) {
       console.error('Error creating folder:', err)
+      pushLiveTaskLog(taskId, { type: 'error', message: TASK_LOG.WORKSPACE_FOLDER_CREATE_FAILED })
       toast.error(err instanceof Error ? err.message : 'Failed to create folder')
     } finally {
       setIsCreatingFolder(false)
@@ -635,6 +642,7 @@ export function FileBrowser({
         const result = await response.json()
         if (!response.ok || !result.success) throw new Error(result.error || 'Failed to delete file')
 
+        pushLiveTaskLog(taskId, { type: 'success', message: TASK_LOG.WORKSPACE_FILE_DELETED }, { persist: false })
         toast.success('文件删除成功')
         setShowDeleteConfirm(false)
         setFileToDelete(null)
@@ -646,6 +654,7 @@ export function FileBrowser({
         }
       } catch (err) {
         console.error('Error deleting file:', err)
+        pushLiveTaskLog(taskId, { type: 'error', message: TASK_LOG.WORKSPACE_FILE_DELETE_FAILED })
         toast.error(err instanceof Error ? err.message : 'Failed to delete file')
       } finally {
         setIsDeleting(false)
@@ -653,6 +662,22 @@ export function FileBrowser({
     },
     [taskId, viewMode, currentViewData, setState],
   )
+
+  const prevSandboxIdRef = useRef<string | null | undefined>(sandboxId)
+
+  useEffect(() => {
+    const prev = prevSandboxIdRef.current
+    prevSandboxIdRef.current = sandboxId ?? null
+    if (!prev && sandboxId) {
+      setState({
+        [viewMode]: {
+          ...currentViewData,
+          fetchAttempted: false,
+          error: null,
+        },
+      })
+    }
+  }, [sandboxId, viewMode, setState, currentViewData])
 
   useEffect(() => {
     if ((hasBranch || sandboxId) && files.length === 0 && !loading && !fetchAttempted) {
@@ -794,14 +819,32 @@ export function FileBrowser({
   }, [])
 
   const handleDownload = useCallback(
-    (filePath: string) => {
+    async (filePath: string, options?: { asZip?: boolean }) => {
       const url = `/api/tasks/${taskId}/files/download?path=${encodeURIComponent(filePath)}`
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filePath.split('/').pop() || filePath
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
+      try {
+        const response = await fetch(url, { credentials: 'include' })
+        if (!response.ok) {
+          const data = (await response.json().catch(() => ({}))) as { error?: string }
+          throw new Error(data.error || 'Download failed')
+        }
+        const blob = await response.blob()
+        const disposition = response.headers.get('Content-Disposition')
+        let filename = filePath.split('/').pop() || 'download'
+        if (options?.asZip && !filename.endsWith('.zip')) filename = `${filename}.zip`
+        const match = disposition?.match(/filename\*?=(?:UTF-8''|")?([^";]+)"?/i)
+        if (match?.[1]) filename = decodeURIComponent(match[1])
+        const objectUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = objectUrl
+        a.download = filename
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(objectUrl)
+      } catch (err) {
+        console.error('Download failed:', err)
+        toast.error(err instanceof Error ? err.message : 'Download failed')
+      }
     },
     [taskId],
   )
@@ -1093,7 +1136,7 @@ export function FileBrowser({
                           <Clipboard className="w-4 h-4 mr-2" />
                           粘贴<DropdownMenuShortcut>{isMac ? '⌘V' : 'Ctrl+V'}</DropdownMenuShortcut>
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleDownload(fullPath)}>
+                        <DropdownMenuItem onClick={() => handleDownload(fullPath, { asZip: true })}>
                           <Download className="w-4 h-4 mr-2" />
                           下载为 zip
                         </DropdownMenuItem>

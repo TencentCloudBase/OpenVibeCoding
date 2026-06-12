@@ -3,6 +3,10 @@ FROM node:22-slim AS build
 
 WORKDIR /app
 
+# git: install-skills.sh clones cloudbase-skills via npx
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
 # Enable corepack for pnpm
 RUN corepack enable && corepack prepare pnpm@latest --activate
 

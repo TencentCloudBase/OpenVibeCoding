@@ -851,7 +851,7 @@ async function observeStreamWithLiveCallback(
     // This allows the frontend to exit its "busy" state and show the send button.
     try {
       const finalRun = getAgentRun(sessionId)
-      const finalStatus = finalRun?.status === 'error' ? 'error' : 'done'
+      const finalStatus = finalRun?.status === 'error' ? 'error' : 'completed'
       await getDb().tasks.update(sessionId, { status: finalStatus, updatedAt: Date.now() })
     } catch {
       // Non-critical — frontend will eventually poll the task and reconcile

@@ -85,7 +85,8 @@ export const policy: McpPolicy = {
 | `auth.ts` | `auth`（原生） | **[CORE]** 拦截 | action=start_auth → 重新注入凭证 |
 | `downloadTemplate.ts` | `downloadTemplate`（原生） | **[CORE]** 拦截 | 强制 ide=codebuddy |
 | `uploadFiles.ts` | `uploadFiles`（原生） | **[CORE]** 拦截 | 部署成功后产出 artifact |
-| `publishMiniprogram.ts` | `publishMiniprogram`（新增） | **[CORE]** augment | 调沙箱 /api/miniprogram/deploy |
+| `publishMiniprogram.ts` | `publishMiniprogram`（新增） | **[CORE]** augment | 沙箱业务镜像 `POST /api/jobs/miniprogram-deploy` |
+| `getDeployJobStatus.ts` | `getDeployJobStatus`（新增） | **[CORE]** augment | 沙箱业务镜像 `GET /api/jobs/:jobId` |
 | `getDeployJobStatus.ts` | `getDeployJobStatus`（新增） | **[CORE]** augment | 查询小程序部署状态 |
 | `cronTask.ts` | `cronTask`（新增） | **[CORE]** augment | 本地 DB + cron-scheduler |
 
@@ -187,7 +188,7 @@ middleware/mcp/cloudbase/           # CloudBase 专用，所有 policy 平铺在
 └── cronTask.ts                     # [CORE]
 
 routes/cloudbase-mcp.ts             # OpenCode HTTP runtime 入口
-sandbox/sandbox-mcp-proxy.ts        # CodeBuddy SDK runtime 入口
+sandbox/stateful/stateful-mcp-client.ts  # CodeBuddy SDK runtime（经沙箱业务镜像数据面）
                                     # 两条路径都用 lib/cloudbase-mcp-utils + middleware/mcp/cloudbase
 ```
 

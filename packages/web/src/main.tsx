@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router'
 import { Toaster } from '@/components/ui/sonner'
 import { Provider as JotaiProvider, useAtom, useAtomValue } from 'jotai'
+import { appJotaiStore } from './lib/jotai-store'
 import { AppLayout } from './components/app-layout'
 import { HomePage } from './pages/HomePage'
 import { TaskPage } from './pages/TaskPage'
@@ -364,7 +365,7 @@ function App() {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <JotaiProvider>
+    <JotaiProvider store={appJotaiStore}>
       <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
         <BrowserRouter>
           <App />

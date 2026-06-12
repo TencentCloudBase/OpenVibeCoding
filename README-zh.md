@@ -54,7 +54,7 @@
 
 根据 Codex Sites 公开资料显示：用户在 Codex 应用中通过 `@Sites` 触发，将自然语言描述转为可上线的网站、Web 应用或游戏，由 OpenAI 托管在 Cloudflare Workers 兼容运行时上；可选 D1（数据库）/ R2（对象存储）/ 工作区身份认证；流程为创建 → 保存可审阅版本 → 发布到生产；环境变量、访问控制（admins_only / workspace_all / custom）通过侧边栏的 Sites 面板管理。
 
-本项目实现：基于 CodeBuddy / OpenCode 双 Agent 运行时，CloudBase 提供数据库、对象存储、Functions、域名、CDN，MCP 串起工具调用，沙箱基于 SCF + TCR 容器镜像（另有更强的 Agent Sandbox 版本在 [`feature/stateful-infra`](https://github.com/TencentCloudBase/OpenVibeCoding/tree/feature/stateful-infra) 分支），主循环为创建 → 实时预览 → 一键部署，全部跑在你自己的腾讯云账号下。
+本项目实现：基于 CodeBuddy / OpenCode 双 Agent 运行时，CloudBase 提供数据库、对象存储、Functions、域名、CDN，MCP 串起工具调用，沙箱基于 CloudBase AGS Stateful + TRW vibecoding 镜像（gateway 数据面），主循环为创建 → 实时预览 → 一键部署，全部跑在你自己的腾讯云账号下。
 
 ---
 
@@ -97,8 +97,11 @@ Codex Sites 闭源，下方对比仅基于其**公开文档**对外宣告的能�
 | 计费方式   | 按量 / 订阅             | 你直接付云账单                                      |
 | 基础设施   | 厂商自有云              | 腾讯云 CloudBase（DB / Storage / Functions / CDN） |
 | Agent 引擎 | 内置单一                | CodeBuddy + OpenCode，前端可换                     |
-| 沙箱       | 平台托管                | CloudBase SCF + TCR 容器镜像，可定制运行时镜像     |
+| 环境隔离   | 用户级隔离              | shared / isolated / task 三级隔离，支持多租户      |
+| 沙箱       | 平台托管                | CloudBase AGS Stateful + TRW vibecoding 镜像，gateway 数据面 |
+| 云资源操作 | 无 / 有限               | MCP 工具直接操作 DB、存储、函数、域名              |
 | 部署目标   | 厂商内托管              | Web CDN / 微信小程序 / 自定义域名                  |
+| 人机协作   | 基础对话                | Plan 模式 + ToolConfirm 四值权限 + 内联提问表单    |
 | 可扩展性   | 仅 UI 层                | Monorepo，前后端分离，工具走 MCP                   |
 
 > 我们不声称 UX 比这些更好 —— 它们都打磨多年。这里强调的是**形态**：同样的对话生成 → 预览 → 部署主循环，但是开源、可读、可 fork、可自跑。
@@ -112,9 +115,8 @@ Codex Sites 闭源，下方对比仅基于其**公开文档**对外宣告的能�
 | **双 Agent 引擎** | CodeBuddy 与 OpenCode 可选，各自独立模型列表，前端一键切换                                           |
 | **三级环境隔离**  | shared（共用）/ isolated（用户独立）/ task（独立子账号），Admin 后台热切换，无需重启                 |
 | **环境池预热**    | 预创建 CloudBase 环境 + CAM + Policy，获取延迟从分钟级降至毫秒级；池空时自动回退实时创建             |
-| **编码沙箱**      | SCF 容器冷启动 → PTY 终端 → Vite Dev Server 端口动态分配；进度细分到镜像拉取、容器就绪、工作区初始化 |
+| **编码沙箱**      | AGS Tool/实例；沙箱业务镜像 工作区 `/home/user`；预览 `/preview/5173`、终端 `/preview/7681` 经 OpenVibeCoding 反代 |
 | **实时预览**      | 内嵌 Browser 工具栏（地址栏 / 导航 / 刷新）；HMR 热更新；预览错误自动修复反馈                        |
-| **子工作区**      | 同一 session 内多个隔离 Scope，独立 dev server，端口 5173–5199 动态分配                              |
 | **CloudBase MCP** | 50+ 工具覆盖 DB、Storage、Functions、域名、安全规则，Agent 可直接操作云资源                          |
 | **Human-in-Loop** | 工具执行四值确认（allow / always / deny / exit）；内联提问表单，不打断对话上下文                     |
 | **Plan 模式**     | 写操作自动拦截；三按钮决策（执行 / 完善 / 拒绝退出）；跨组件状态共享                                 |
@@ -167,72 +169,100 @@ Codex Sites 闭源，下方对比仅基于其**公开文档**对外宣告的能�
 
 ## 快速开始
 
-**前置条件**
+环境文件 **刻意分开**，避免把本地密钥打进云镜像、或把云配置误用于 `pnpm dev`：
 
-- Node.js >= 18
-- Docker
-- 腾讯云账号（CloudBase 环境 + API 密钥）
-- CodeBuddy API Key 或 OAuth 配置
+| | 本地开发 | 部署到云托管 |
+| --- | --- | --- |
+| **初始化** | `./init.sh` → 选 **1** → `.env.local` | `./init.sh` → 选 **2** → `.env.cloud` |
+| **命令** | `pnpm dev` | `pnpm deploy:cloud` |
+| **访问** | Web `http://localhost:5174`，API `:3001` | 默认域名 `https://*.sh.run.tcloudbase.com` |
+| **端口** | `PORT=3001` | 容器 **80**（勿改成 9000；9000 是沙箱 TRW 内部口） |
+| **详解** | 下文 [本地开发](#本地开发) | [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md) |
 
-**一键初始化**
+两条线都要：先 `./init.sh` 选 1，再 `./init.sh` 选 2。字段模板见 [.env.example](.env.example)。
 
 ```bash
 git clone https://github.com/TencentCloudBase/OpenVibeCoding.git
 cd OpenVibeCoding
-
-# macOS / Linux / Git Bash / WSL
-./init.sh
-
-# Windows（需先确认已装 Node.js >= 18 和 pnpm）
-node scripts/init.mjs
+./init.sh          # 按上表选 1 或 2
+pnpm dev           # 本地
+# 或
+pnpm deploy:cloud  # 云托管（需 cloudbase CLI）
 ```
-
-初始化脚本依次完成：Node.js 检查 → pnpm 安装 → `.env.local` 生成 → Docker 检查 → CloudBase 配置 → 依赖安装 → CodeBuddy 认证 → TCR 配置 → 数据库初始化。
-
-详细步骤与排障见 [docs/setup.md](docs/setup.md)。
 
 ---
 
-## 开发
+## 初始化
+
+`./init.sh` 检查 Node / pnpm 后执行 `scripts/init.mjs`。每次 **二选一**（不会一次生成两份 env）：
+
+| 选项 | 生成文件 | 用途 |
+| --- | --- | --- |
+| **1** | `.env.local` | `pnpm dev` / `pnpm dev:server`（`--env-file=../../.env.local`） |
+| **2** | `.env.cloud` | `pnpm deploy:cloud`（CLI 凭证 + 尝试同步到云托管运行时） |
+
+完整流程与排障：[docs/setup.md](docs/setup.md#配置文件职责)。
+
+---
+
+## 本地开发
+
+**前置**：Node **22.x**（`.nvmrc`）、pnpm 10+、CloudBase 支撑环境 + API 密钥、CodeBuddy 或 OpenCode（`npm i -g opencode-ai`）。本机只跑 OpenVibeCoding 前后端；**编码沙箱在云端**（Stateful + 沙箱业务镜像），不在本机 Docker 里跑任务。
+
+**环境**：只读根目录 **`.env.local`**。Vite 将 `/api` 代理到 `:3001`，前端无需单独 env。
+
+**Agent**：任务可选 **CodeBuddy** 或 **OpenCode**（`opencode-acp`），共用同一套云沙箱。
 
 ```bash
-pnpm dev          # 同时启动 web (localhost:5174) 和 server (localhost:3001)
-pnpm dev:web      # 仅启动前端
-pnpm dev:server   # 仅启动后端
+pnpm dev              # Web :5174 + API :3001
+pnpm dev:web          # 仅前端
+pnpm dev:server       # 仅后端
+pnpm build && pnpm start   # 本机一体启动（仍读本机环境，≠ 云托管）
 ```
 
-## 生产
+| 变量（`.env.local`） | 作用 |
+| --- | --- |
+| `JWE_SECRET` / `ENCRYPTION_KEY` | 会话与 MCP 密文 |
+| `TCB_ENV_ID` / `TCB_SECRET_*` | CloudBase 管理面 |
+| `TCB_API_KEY` | 沙箱数据面 gateway |
+| `CODEBUDDY_API_KEY` | CodeBuddy Agent |
 
-```bash
-pnpm build        # 构建所有包
-pnpm start        # 启动生产服务（端口 3001，同时服务 API 和静态文件）
-```
+Tool 名 `openvibecoding-{TCB_ENV_ID}` 自动创建/复用，**勿**配置 `STATEFUL_TOOL_ID`。排障见 [docs/setup.md](docs/setup.md)。
+
+---
 
 ## 部署到云托管
 
-本项目支持一键部署到 CloudBase 云托管（容器服务）。无需本地 Docker —— 脚本会将源码和 Dockerfile 提交到云端构建。
+与本地 **完全分开**：不要在本机 `pnpm dev` 的同时指望 `.env.cloud` 生效；部署读 **`.env.cloud`**，用 CloudBase CLI 上传源码，在云端按 `Dockerfile` 构建镜像。
 
-**前置条件**
+**前置**
 
-- 已完成 `./init.sh` 初始化（`TCB_ENV_ID`、`TCB_SECRET_ID`、`TCB_SECRET_KEY` 已配置）
-- 已安装 CloudBase CLI：`npm i -g @cloudbase/cli`
+- `./init.sh` 选 **2**，生成 `.env.cloud`（含 `TCB_SECRET_*`、`TCB_ENV_ID`）
+- `npm i -g @cloudbase/cli` 且 `cloudbase login`
+- `ASK_USER_BASE_URL` 可先占位；部署脚本会从默认域名（如 `https://vibecoding-platform-xxx.sh.run.tcloudbase.com`）**写回** `.env.cloud`
 
-**一键部署**
+**一键部署**（推荐在**本机终端**执行，避免 IDE 会话超时中断上传）：
 
 ```bash
 pnpm deploy:cloud
 ```
 
-脚本会自动执行：
-1. 提交源码 + Dockerfile 到云端构建镜像
-2. 部署为云托管容器服务（服务名：`vibecoding-platform`，端口：80）
-3. 查询并输出服务的访问地址
+脚本会：
 
-**部署完成后**
+1. **立即**打印云托管控制台链接（部署记录 / 构建日志）
+2. 提交源码（上传阶段无百分比，约每 15s 一行心跳提示）
+3. **轮询**服务/部署记录状态，直到本次发布生效或失败
+4. 若 `ASK_USER_BASE_URL` 仍为占位，用 `*.sh.run.tcloudbase.com` 写回 `.env.cloud`
+5. 尝试把 `.env.cloud` 同步到云托管环境变量（失败则提示控制台手贴）
 
-- 访问地址格式：`https://{serviceName}-{id}.{region}.run.tcloudbase.com`
-- 构建进度可在 [云开发控制台](https://tcb.cloud.tencent.com) → 云托管 → 服务详情 → 部署记录 中查看
-- 环境变量需在控制台的服务配置中手动设置（或后续版本支持自动注入）
+| 标志 | 含义 |
+| --- | --- |
+| `--no-wait` | 只提交构建，不轮询（CI / 自行看控制台） |
+| `--skip-env-sync` | 不同步环境变量到云托管 |
+
+服务名 **`vibecoding-platform`**，对外端口 **80**。沙箱 gateway 的 **9000** 与云托管监听端口无关。
+
+详情：[docs/cloudrun-deploy.md](docs/cloudrun-deploy.md)。
 
 ## 常用命令
 
@@ -263,7 +293,9 @@ pnpm opencode:setup   # 配置 OpenCode provider 和模型
 ├── docs/
 │   ├── setup.md                  # setup 详解与排障
 │   ├── architecture.md           # 系统架构文档
-│   └── scf-session-sharing.md    # SCF Session 共享设计
+│   ├── cloudrun-deploy.md        # 云托管部署
+│   ├── upstream-fork.md          # 上游分叉与同步
+│   └── scf-session-sharing.md    # （历史）SCF
 ├── packages/
 │   ├── web/                      # React 19 + Vite 前端
 │   ├── server/                   # Hono 后端：Auth、Agent 编排、Sandbox 管理
@@ -271,6 +303,7 @@ pnpm opencode:setup   # 配置 OpenCode provider 和模型
 │   └── shared/                   # ACP 协议类型、任务 / 消息 schema
 ├── scripts/
 │   ├── init.mjs                  # 交互式初始化脚本
+│   ├── deploy.mjs                # 云托管一键部署
 │   └── setup-tcr.mjs             # TCR 镜像仓库配置
 └── init.sh                       # 快速入口
 ```
@@ -285,7 +318,7 @@ pnpm opencode:setup   # 配置 OpenCode provider 和模型
 | 后端    | Hono, Node.js, Drizzle ORM                             |
 | 数据库  | CloudBase DB（主），SQLite（本地回退）                 |
 | AI      | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP      |
-| Sandbox | CloudBase SCF, TCR 容器镜像                            |
+| Sandbox | CloudBase AGS Stateful + 沙箱业务镜像，TCR 镜像                 |
 | 认证    | JWE session, bcrypt, Arctic (OAuth)                    |
 | 持久化  | CloudBase DB, 本地 .jsonl, Git archive                 |
 | 协议    | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |
@@ -296,36 +329,11 @@ pnpm opencode:setup   # 配置 OpenCode provider 和模型
 
 ## 环境变量
 
-完整变量说明见 [docs/setup.md](docs/setup.md)。核心变量：
+- 模板（可提交）：[.env.example](.env.example)  
+- 本地产物：`.env.local`  
+- 云托管产物：`.env.cloud`（与 local 大部分相同；`PORT=80`、`NODE_ENV=production`、`ASK_USER_BASE_URL` 为公网 URL）  
 
-```env
-# 加密密钥（init 脚本自动生成）
-JWE_SECRET=
-ENCRYPTION_KEY=
-
-# 认证
-NEXT_PUBLIC_AUTH_PROVIDERS=local   # local | github | cloudbase
-
-# CloudBase
-TCB_SECRET_ID=
-TCB_SECRET_KEY=
-TENCENTCLOUD_ACCOUNT_ID=
-TCB_ENV_ID=
-TCB_PROVISION_MODE=shared          # shared | isolated | task
-
-# TCR
-TCR_NAMESPACE=
-TCR_PASSWORD=
-TCR_IMAGE=
-
-# 可选
-MAX_MESSAGES_PER_DAY=50
-MAX_SANDBOX_DURATION=300
-ANTHROPIC_API_KEY=
-OPENAI_API_KEY=
-GEMINI_API_KEY=
-GIT_PERSONAL_AUTH=
-```
+完整说明：[docs/setup.md](docs/setup.md)
 
 ---
 
@@ -353,7 +361,7 @@ pnpm opencode:setup
 1. 调用腾讯云开发 AI+ 接口 [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) 拉取模型
 2. 引导并配置腾讯云开发 API Key
 3. 从 catalog 取完整配置写入 `.opencode/opencode.json`（含 npm/baseURL/models 等）
-4. 把 API Key 写入 `packages/server/.env`
+4. 把 API Key 写入 `.env.local`
 
 ### 生成结果示例
 
@@ -379,7 +387,7 @@ pnpm opencode:setup
 ```
 
 ```bash
-# packages/server/.env 会追加 API Key
+# .env.local 会追加 API Key
 CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 ```
 
@@ -423,7 +431,7 @@ pnpm codebuddy:setup
 该命令会：
 
 1. 调用腾讯云开发 AI+ 接口 [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) 拉取当前环境已开通的模型
-2. 检查 `CLOUDBASE_API_KEY`，缺失时引导输入并自动写入 `packages/server/.env`
+2. 检查 `CLOUDBASE_API_KEY`，缺失时引导输入并自动写入 `.env.local`
 3. 同时设置 `CODEBUDDY_USE_CUSTOM_MODELS=true`
 4. 生成 `packages/server/.config/.codebuddy/models.json` 供 SDK 读取
 
@@ -448,7 +456,7 @@ pnpm codebuddy:setup
 ```
 
 ```bash
-# packages/server/.env 会自动追加
+# .env.local 会自动追加
 CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 CODEBUDDY_USE_CUSTOM_MODELS=true
 ```
@@ -485,7 +493,7 @@ packages/server/.config/.codebuddy/models.json
 }
 ```
 
-同时确保在 `packages/server/.env` 中提供对应的环境变量，并设置：
+同时确保在 `.env.local` 中提供对应的环境变量，并设置：
 
 ```bash
 CODEBUDDY_USE_CUSTOM_MODELS=true
@@ -495,9 +503,10 @@ CODEBUDDY_USE_CUSTOM_MODELS=true
 
 ## 延伸阅读
 
-- [Setup 指南](docs/setup.md) — 初始化流程、环境变量、验证清单与排障
-- [系统架构](docs/architecture.md) — 系统分层、模块设计与关键数据流
-- [SCF Session 共享设计](docs/scf-session-sharing.md) — 沙箱 session 复用机制
+- [Setup 指南](docs/setup.md) — 初始化、本地开发、环境变量与排障
+- [云托管部署](docs/cloudrun-deploy.md) — `pnpm deploy:cloud` 行为与控制台对照
+- [系统架构](docs/architecture.md) — 分层、模块与数据流
+- [SCF Session 共享设计](docs/scf-session-sharing.md) — （历史）沙箱 session 复用
 
 ---
 

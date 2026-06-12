@@ -1,0 +1,52 @@
+/**
+ * Print AGS tool ports/image for STATEFUL_TOOL_ID.
+ *
+ *   pnpm exec tsx scripts/describe-stateful-tool.ts
+ */
+
+import { config } from 'dotenv'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { agsCredentialsFromProcessEnv, callAgsManagerApi } from '../src/lib/cloudbase-ags-api.js'
+
+const here = dirname(fileURLToPath(import.meta.url))
+config({ path: resolve(here, '../../../.env.local') })
+
+async function callAgs(action: string, param: Record<string, unknown>) {
+  return callAgsManagerApi(action, param, agsCredentialsFromProcessEnv())
+}
+
+async function main() {
+  const toolId = process.env.STATEFUL_TOOL_ID || process.env.STATEFUL_SANDBOX_TOOL_ID || ''
+  if (!toolId) throw new Error('STATEFUL_TOOL_ID required')
+
+  const resp = await callAgs('DescribeSandboxToolList', { ToolIds: [toolId] })
+  const tool = (resp.SandboxToolSet as Array<Record<string, unknown>> | undefined)?.[0]
+  if (!tool) {
+    console.log('No tool found for', toolId)
+    process.exit(1)
+  }
+
+  const cfg = tool.CustomConfiguration as Record<string, unknown> | undefined
+  const ports = (cfg?.Ports as Array<{ Name?: string; Port?: number; Protocol?: string }>) || []
+  console.log('ToolId:', tool.ToolId)
+  console.log('ToolName:', tool.ToolName)
+  console.log('Status:', tool.Status)
+  console.log('Image:', (cfg?.Image as string | undefined)?.slice(0, 120))
+  console.log('Ports:')
+  for (const p of ports) {
+    console.log(`  - ${p.Name ?? '?'}: ${p.Port} (${p.Protocol ?? 'TCP'})`)
+  }
+  const expected = [9000, 49983]
+  const actual = ports.map((p) => p.Port).filter((n): n is number => typeof n === 'number')
+  const extra = actual.filter((p) => !expected.includes(p))
+  console.log('standard ports (9000+49983):', expected.every((p) => actual.includes(p)) ? 'ok' : 'MISSING')
+  if (extra.length > 0) {
+    console.log('extra declared ports (may break /preview/7681/):', extra.join(', '))
+  }
+}
+
+main().catch((e) => {
+  console.error(e)
+  process.exit(1)
+})

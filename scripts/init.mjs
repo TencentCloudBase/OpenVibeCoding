@@ -16,12 +16,18 @@ import { existsSync, readFileSync, writeFileSync } from 'fs'
 import { resolve } from 'path'
 import { homedir } from 'os'
 import crypto from 'crypto'
-import readline from 'readline'
+import {
+  ENV_LOCAL,
+  ENV_CLOUD,
+  ASK_USER_BASE_URL_PLACEHOLDER,
+  loadEnvFile,
+  saveEnvVar,
+} from './lib/env-files.mjs'
+import { closeReadline, promptInput } from './lib/prompt.mjs'
 
 // ===================== Constants =====================
 
 const MIN_NODE_VERSION = 18
-const ENV_FILE = resolve(process.cwd(), '.env.local')
 const CLOUDBASE_AUTH_FILE = resolve(homedir(), '.config/.cloudbase/auth.json')
 
 const IS_WINDOWS = process.platform === 'win32'
@@ -88,79 +94,6 @@ function runCommandSafe(cmd) {
   } catch (error) {
     return { success: false, output: error.stdout || error.stderr || '' }
   }
-}
-
-// Shared readline state
-let _rl = null
-
-// Drain any leftover data in stdin buffer
-function drainStdin() {
-  return new Promise((resolve) => {
-    if (process.stdin.readable) {
-      process.stdin.resume()
-      const drain = () => {
-        while (process.stdin.read() !== null) { /* discard */ }
-      }
-      drain()
-      // Give a tick for any pending data
-      setTimeout(() => {
-        drain()
-        process.stdin.pause()
-        resolve()
-      }, 10)
-    } else {
-      resolve()
-    }
-  })
-}
-
-async function promptInput(prompt, hidden = false) {
-  return new Promise(async (resolve) => {
-    if (hidden) {
-      // Close shared rl temporarily for raw mode
-      if (_rl) { _rl.close(); _rl = null }
-      await drainStdin()
-      process.stdout.write(`${prompt}: `)
-      process.stdin.setRawMode(true)
-      process.stdin.resume()
-      let password = ''
-      const onData = (char) => {
-        const c = char.toString('utf8')
-        switch (c) {
-          case '\n':
-          case '\r':
-          case '\u0004':
-            process.stdin.setRawMode(false)
-            process.stdin.pause()
-            process.stdin.removeListener('data', onData)
-            process.stdout.write('\n')
-            resolve(password)
-            break
-          case '\u0003':
-            process.exit()
-            break
-          default:
-            if (c.charCodeAt(0) === 127) {
-              password = password.slice(0, -1)
-            } else {
-              password += c
-            }
-            break
-        }
-      }
-      process.stdin.on('data', onData)
-    } else {
-      // Close any existing rl to reset state
-      if (_rl) { _rl.close(); _rl = null }
-      await drainStdin()
-      _rl = readline.createInterface({ input: process.stdin, output: process.stdout })
-      _rl.question(`${prompt}: `, (answer) => {
-        _rl.close()
-        _rl = null
-        resolve(answer.trim())
-      })
-    }
-  })
 }
 
 async function askYesNo(prompt, defaultValue = false) {
@@ -339,72 +272,35 @@ function checkDocker() {
   return false
 }
 
-// ===================== TCR Setup =====================
+/** Set in main() before CloudBase setup: ENV_LOCAL or ENV_CLOUD */
+let envWriteTarget = ENV_LOCAL
 
-function loadEnvFile() {
-  const env = {}
-  if (existsSync(ENV_FILE)) {
-    const content = readFileSync(ENV_FILE, 'utf-8')
-    content.split('\n').forEach((line) => {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...valueParts] = trimmed.split('=')
-        if (key) {
-          env[key.trim()] = valueParts.join('=').trim()
-        }
-      }
-    })
-  }
-  return env
+function saveTargetEnvVar(key, value) {
+  saveEnvVar(envWriteTarget, key, value)
 }
 
-function saveServerEnvVar(key, value) {
-  const serverEnvFile = resolve(process.cwd(), 'packages/server/.env')
-  const env = {}
-  if (existsSync(serverEnvFile)) {
-    readFileSync(serverEnvFile, 'utf-8').split('\n').forEach((line) => {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [k, ...v] = trimmed.split('=')
-        if (k) env[k.trim()] = v.join('=').trim()
-      }
-    })
-  }
+async function promptEnvGenerationTarget() {
+  logSection('选择环境配置文件')
+  console.log('')
+  console.log('  每次 init 只生成一个文件；本地与云端请各运行一次。')
+  console.log('')
+  console.log('  1) .env.local — 本地开发 (pnpm dev)')
+  console.log('  2) .env.cloud — 云托管运行时 (pnpm deploy:cloud)')
+  console.log('')
 
-  if (env[key]) {
-    const content = readFileSync(serverEnvFile, 'utf-8')
-    const lines = content.split('\n')
-    const newLines = lines.map((line) => {
-      if (line.trim().startsWith(`${key}=`)) {
-        return `${key}=${value}`
-      }
-      return line
-    })
-    writeFileSync(serverEnvFile, newLines.join('\n'))
-  } else {
-    const newline = Object.keys(env).length > 0 ? '\n' : ''
-    const content = existsSync(serverEnvFile) ? readFileSync(serverEnvFile, 'utf-8') : ''
-    writeFileSync(serverEnvFile, `${content}${newline}${key}=${value}`)
-  }
-}
-
-function saveEnvVar(key, value) {
-  const env = loadEnvFile()
-
-  if (env[key]) {
-    const content = readFileSync(ENV_FILE, 'utf-8')
-    const lines = content.split('\n')
-    const newLines = lines.map((line) => {
-      if (line.trim().startsWith(`${key}=`)) {
-        return `${key}=${value}`
-      }
-      return line
-    })
-    writeFileSync(ENV_FILE, newLines.join('\n'))
-  } else {
-    const newline = env && Object.keys(env).length > 0 ? '\n' : ''
-    const content = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf-8') : ''
-    writeFileSync(ENV_FILE, `${content}${newline}${key}=${value}`)
+  while (true) {
+    const answer = await promptInput('请选择 1 或 2')
+    if (answer === '1') {
+      envWriteTarget = ENV_LOCAL
+      log('将生成 .env.local', 'success')
+      return ENV_LOCAL
+    }
+    if (answer === '2') {
+      envWriteTarget = ENV_CLOUD
+      log('将生成 .env.cloud', 'success')
+      return ENV_CLOUD
+    }
+    log('请输入 1 或 2', 'warn')
   }
 }
 
@@ -478,7 +374,7 @@ async function runCloudbaseLogin() {
   })
 }
 
-// In-memory store for TCB credentials (not persisted to .env.local)
+// In-memory store for TCB credentials (flushed in setupApplicationEnv to envWriteTarget)
 const tcbConfig = {
   secretId: '',
   secretKey: '',
@@ -510,20 +406,7 @@ async function setupCloudbaseConfig() {
   const cliReady = await ensureCloudbaseInstalled()
   if (!cliReady) return false
 
-  const env = loadEnvFile()
-
-  // Check server/.env for existing TCB config (already-configured state)
-  const serverEnvFile = resolve(process.cwd(), 'packages/server/.env')
-  const serverEnv = {}
-  if (existsSync(serverEnvFile)) {
-    readFileSync(serverEnvFile, 'utf-8').split('\n').forEach(line => {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...rest] = trimmed.split('=')
-        if (key) serverEnv[key.trim()] = rest.join('=').trim()
-      }
-    })
-  }
+  const serverEnv = loadEnvFile(envWriteTarget)
 
   // ── 永久密钥询问 ──────────────────────────────────────────────
   const savedId = serverEnv['TCB_SECRET_ID'] || ''
@@ -584,9 +467,9 @@ async function setupCloudbaseConfig() {
       tcbConfig.secretKey = secretKey
 
       // 立即写入文件，避免中断后需要重复输入
-      saveServerEnvVar('TCB_SECRET_ID', secretId)
-      saveServerEnvVar('TCB_SECRET_KEY', secretKey)
-      log('密钥已写入 packages/server/.env', 'success')
+      saveTargetEnvVar('TCB_SECRET_ID', secretId)
+      saveTargetEnvVar('TCB_SECRET_KEY', secretKey)
+      log('密钥已写入目标 env 文件', 'success')
 
       // 使用永久密钥登录 cloudbase CLI
       log('正在使用永久密钥登录 cloudbase CLI...')
@@ -707,17 +590,7 @@ async function setupCloudbaseConfig() {
 async function setupCodebuddy() {
   logSection('CodeBuddy 认证配置')
 
-  const serverEnvFile = resolve(process.cwd(), 'packages/server/.env')
-  const existingServerEnv = {}
-  if (existsSync(serverEnvFile)) {
-    readFileSync(serverEnvFile, 'utf-8').split('\n').forEach(line => {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...rest] = trimmed.split('=')
-        if (key) existingServerEnv[key.trim()] = rest.join('=').trim()
-      }
-    })
-  }
+  const existingServerEnv = loadEnvFile(envWriteTarget)
 
   // Check if already configured
   const hasApiKey = !!existingServerEnv['CODEBUDDY_API_KEY']
@@ -780,7 +653,7 @@ async function setupCodebuddy() {
     console.log(`  ${colors.bright}2) OAuth（企业旗舰版）${colors.reset}`)
     console.log('     需要创建 OAuth 应用获取 Client ID / Secret。')
     console.log('')
-    console.log(`  ${colors.dim}3) 跳过，稍后自行在 packages/server/.env 中配置${colors.reset}`)
+    console.log(`  ${colors.dim}3) 跳过，稍后自行在 .env.local 中配置${colors.reset}`)
     console.log('')
 
     while (!codebuddyConfig.authMode) {
@@ -790,7 +663,7 @@ async function setupCodebuddy() {
       } else if (choice === '2') {
         codebuddyConfig.authMode = 'oauth'
       } else if (choice === '3') {
-        log('已跳过，稍后请手动配置 packages/server/.env', 'info')
+        log('已跳过，稍后请手动配置 .env.local', 'info')
         return true
       } else {
         log('请输入 1、2 或 3', 'warn')
@@ -873,18 +746,59 @@ async function setupCodebuddy() {
   return true
 }
 
+function childProcessEnv() {
+  return { ...process.env, OVC_ENV_FILE: envWriteTarget }
+}
+
+/** CloudBase AI+ API Key — shared by CodeBuddy / OpenCode custom model setup (not CODEBUDDY_API_KEY). */
+async function ensureCloudbaseApiKey() {
+  const env = loadEnvFile(envWriteTarget)
+  if (env['CLOUDBASE_API_KEY']?.trim()) {
+    return true
+  }
+
+  const envId = env['TCB_ENV_ID'] || tcbConfig.envId
+  logSection('CloudBase AI API Key（CLOUDBASE_API_KEY）')
+  console.log('')
+  console.log('  用途：拉取当前环境已开通的 AI 模型，写入 CodeBuddy / OpenCode 配置')
+  console.log('  不是 CodeBuddy Copilot 登录密钥（那是 CODEBUDDY_API_KEY）')
+  console.log('')
+  if (envId) {
+    console.log(`  创建：${colors.cyan}https://tcb.cloud.tencent.com/dev?envId=${envId}#/env/apikey${colors.reset}`)
+  }
+  console.log('')
+
+  const value = await promptInput('  CLOUDBASE_API_KEY', true)
+  if (!value?.trim()) {
+    log('未输入 CLOUDBASE_API_KEY，将跳过自定义模型配置', 'warn')
+    return false
+  }
+
+  saveTargetEnvVar('CLOUDBASE_API_KEY', value.trim())
+  saveTargetEnvVar('CODEBUDDY_USE_CUSTOM_MODELS', 'true')
+  log('已写入 CLOUDBASE_API_KEY', 'success')
+  return true
+}
+
 async function setupCustomModel() {
-
   console.log('')
-  console.log('  可选择配置以下自定义模型（从 CloudBase 拉取）。')
+  console.log('  自定义模型：从 CloudBase 环境（AI+）拉取已开通模型列表，不是向 CodeBuddy 产品拉模型。')
   console.log('')
 
-  // 1) CodeBuddy（默认启用）
-  const setupCodeBuddyModel = await askYesNo('是否配置 CodeBuddy 自定义模型 (默认启动)', true)
+  const setupCodeBuddyModel = await askYesNo('是否配置 CodeBuddy 自定义模型（models.json）', false)
+  const setupOpenCodeModel = await askYesNo('是否配置 OpenCode 自定义模型（opencode.json）', false)
+
+  if (setupCodeBuddyModel || setupOpenCodeModel) {
+    if (!(await ensureCloudbaseApiKey())) {
+      log('已跳过 CodeBuddy / OpenCode 模型配置', 'info')
+      return true
+    }
+  }
+
   if (setupCodeBuddyModel) {
     log('正在运行 CodeBuddy 模型配置脚本...')
     try {
-      execSync('node scripts/codebuddy-setup.mjs', { stdio: 'inherit' })
+      execSync('node scripts/codebuddy-setup.mjs', { stdio: 'inherit', env: childProcessEnv() })
       log('CodeBuddy 模型配置完成', 'success')
     } catch (error) {
       log('CodeBuddy 模型配置失败，可稍后手动执行：node scripts/codebuddy-setup.mjs', 'warn')
@@ -895,12 +809,10 @@ async function setupCustomModel() {
     log('已跳过 CodeBuddy 自定义模型配置，稍后请手动执行：node scripts/codebuddy-setup.mjs', 'info')
   }
 
-  // 2) OpenCode（默认启用）
-  const setupOpenCodeModel = await askYesNo('是否配置 OpenCode 自定义模型 (默认启动)', true)
   if (setupOpenCodeModel) {
     log('正在运行 OpenCode 模型配置脚本...')
     try {
-      execSync('node scripts/opencode-setup.mjs', { stdio: 'inherit' })
+      execSync('node scripts/opencode-setup.mjs', { stdio: 'inherit', env: childProcessEnv() })
       log('OpenCode 模型配置完成', 'success')
     } catch (error) {
       log('OpenCode 模型配置失败，可稍后手动执行：node scripts/opencode-setup.mjs', 'warn')
@@ -909,6 +821,31 @@ async function setupCustomModel() {
     }
   } else {
     log('已跳过 OpenCode 自定义模型配置，稍后请手动执行：node scripts/opencode-setup.mjs', 'info')
+  }
+
+  return true
+}
+
+async function setupStatefulSandbox() {
+  logSection('Stateful 沙箱运行时')
+  console.log('')
+  console.log('  需要 TCB_API_KEY（控制台 → 沙箱 API Key）。')
+  console.log('')
+
+  if (await askYesNo('是否现在填写 TCB_API_KEY？', true)) {
+    const apiKey = await promptInput('  TCB_API_KEY', true)
+    if (apiKey.trim()) {
+      saveTargetEnvVar('TCB_API_KEY', apiKey.trim())
+      log('TCB_API_KEY 已写入目标 env 文件', 'success')
+    }
+  }
+
+  if (await askYesNo('是否指定 STATEFUL_SANDBOX_IMAGE？（默认否，使用工程内置镜像）', false)) {
+    const image = await promptInput('  镜像 URI')
+    if (image.trim()) {
+      saveTargetEnvVar('STATEFUL_SANDBOX_IMAGE', image.trim())
+      log('STATEFUL_SANDBOX_IMAGE 已写入目标 env 文件', 'success')
+    }
   }
 
   return true
@@ -1337,8 +1274,9 @@ async function setupSandboxImage() {
 async function setupTcr() {
   logSection('配置 TCR（容器镜像服务）')
 
-  const env = loadEnvFile()
-  const imageType = env['SCF_SANDBOX_IMAGE_TYPE'] || 'personal'
+  const env = loadEnvFile(envWriteTarget)
+  const imageType =
+    env['SANDBOX_IMAGE_TYPE'] || env['SCF_SANDBOX_IMAGE_TYPE'] || 'personal'
 
   // 企业版模式：执行 docker login + pull + tag + push
   if (imageType === 'enterprise') {
@@ -1379,66 +1317,7 @@ async function setupTcr() {
   }
 }
 
-async function setupEnv() {
-  logSection('配置环境变量')
-
-  if (existsSync(ENV_FILE)) {
-    log('.env.local 已存在', 'success')
-    return true
-  }
-
-  // Create minimal .env.local
-  const envContent = `# Environment variables
-# Generated by init script
-
-# Session Encryption (auto-generated)
-JWE_SECRET=${crypto.randomBytes(32).toString('base64')}
-ENCRYPTION_KEY=${crypto.randomBytes(32).toString('hex')}
-
-# Auth Providers
-NEXT_PUBLIC_AUTH_PROVIDERS=local
-
-# Workspace isolation: each task gets its own SCF sandbox instance
-WORKSPACE_ISOLATION=isolated
-
-# Rate Limiting
-MAX_MESSAGES_PER_DAY=50
-MAX_SANDBOX_DURATION=300
-`
-
-  writeFileSync(ENV_FILE, envContent)
-  log('已创建 .env.local（使用默认值）', 'success')
-  return true
-}
-
-// ===================== Server Environment =====================
-
-async function setupServerEnv() {
-  logSection('配置服务端环境变量')
-
-  const env = loadEnvFile()
-  const serverEnvFile = resolve(process.cwd(), 'packages/server/.env')
-
-  // 读取已有的 server/.env（用于保留 CodeBuddy / Git Archive 等手动配置的值）
-  const existingServerEnv = {}
-  if (existsSync(serverEnvFile)) {
-    readFileSync(serverEnvFile, 'utf-8').split('\n').forEach(line => {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...rest] = trimmed.split('=')
-        if (key) existingServerEnv[key.trim()] = rest.join('=').trim()
-      }
-    })
-
-    const overwrite = await askYesNo('packages/server/.env 已存在，是否覆盖？（否则跳过此步骤）', true)
-    if (!overwrite) {
-      log('跳过服务端环境变量配置', 'info')
-      return true
-    }
-  }
-
-  // TCB config from in-memory tcbConfig (collected during setupCloudbaseConfig)
-  // This avoids persisting TCB credentials to root .env.local
+function createEnvResolvers(existingServerEnv, env) {
   const tcbKeyMap = {
     TCB_SECRET_ID: tcbConfig.secretId,
     TCB_SECRET_KEY: tcbConfig.secretKey,
@@ -1447,52 +1326,55 @@ async function setupServerEnv() {
     TCB_REGION: process.env.TCB_REGION || 'ap-shanghai',
     TCB_PROVISION_MODE: tcbConfig.provisionMode,
   }
-
-  // 常规 key：tcbConfig 内存值 > root .env.local > process.env > fallback
-  const get = (key, fallback = '') => (tcbKeyMap[key] !== undefined && tcbKeyMap[key] !== '') ? tcbKeyMap[key] : (env[key] || process.env[key] || fallback)
-
-  // 保留型 key：优先读已有 server/.env，没有再用静态默认值
+  const get = (key, fallback = '') =>
+    tcbKeyMap[key] !== undefined && tcbKeyMap[key] !== ''
+      ? tcbKeyMap[key]
+      : env[key] || process.env[key] || fallback
   const getPreserved = (key, fallback = '') => existingServerEnv[key] || fallback
+  return { get, getPreserved }
+}
 
-  const jweSecret = get('JWE_SECRET')
-  const encryptionKey = get('ENCRYPTION_KEY')
+function buildSharedEnvBody(get, getPreserved, { port, nodeEnv, askUserBaseUrl }) {
+  const jweSecret =
+    get('JWE_SECRET') || crypto.randomBytes(32).toString('base64')
+  const encryptionKey =
+    get('ENCRYPTION_KEY') || crypto.randomBytes(32).toString('hex')
 
-  if (!jweSecret || !encryptionKey) {
-    log('.env.local 中缺少加密密钥', 'warn')
-    return false
-  }
+  const askUserBlock =
+    askUserBaseUrl === undefined
+      ? ''
+      : `\n# 云托管公网根 URL（本地 dev 用 http://127.0.0.1:3001；部署后填控制台域名）\nASK_USER_BASE_URL=${askUserBaseUrl}\n`
 
-  const serverEnv = `# Server Environment Configuration
-# Generated by init script
+  return `# Generated by init — do not commit (see .env.example for field docs)
 
-# ==================== Required ====================
+# ==================== Session / at-rest encryption (server only) ====================
+# JWE_SECRET: login session cookies
+# ENCRYPTION_KEY: MCP connector secrets in DB (openssl rand -hex 32)
 
 JWE_SECRET=${jweSecret}
 ENCRYPTION_KEY=${encryptionKey}
 
-# ==================== Server Configuration ====================
+# ==================== Server ====================
 
-PORT=3001
-NODE_ENV=development
-DATABASE_PATH=.data/app.db
+PORT=${port}
+NODE_ENV=${nodeEnv}
+DATABASE_PATH=${getPreserved('DATABASE_PATH', '.data/app.db')}
 
-# ==================== Database Provider ====================
+# ==================== Database ====================
 
 DB_PROVIDER=${getPreserved('DB_PROVIDER', 'cloudbase')}
 DB_COLLECTION_PREFIX=${getPreserved('DB_COLLECTION_PREFIX', 'vibe_agent_')}
 
-# ==================== Rate Limiting ====================
+# ==================== Rate limiting ====================
 
-MAX_MESSAGES_PER_DAY=${get('MAX_MESSAGES_PER_DAY', '50')}
 MAX_SANDBOX_DURATION=${get('MAX_SANDBOX_DURATION', '300')}
 
-# ==================== Auth ====================
+# ==================== Auth (runtime reads /api/auth/auth-config; kept for parity) ====================
 
 NEXT_PUBLIC_AUTH_PROVIDERS=${get('NEXT_PUBLIC_AUTH_PROVIDERS', 'local')}
-# GitHub login approach: 'direct' (self-managed OAuth) or 'cloudbase' (CloudBase identity source)
-AUTH_GITHUB_MODE=${get('AUTH_GITHUB_MODE', 'direct')}
-
-# ==================== CloudBase ====================
+AUTH_GITHUB_MODE=${getPreserved('AUTH_GITHUB_MODE', 'direct')}
+${askUserBlock}
+# ==================== CloudBase (platform / provision) ====================
 
 TCB_ENV_ID=${get('TCB_ENV_ID')}
 TCB_REGION=${get('TCB_REGION', 'ap-shanghai')}
@@ -1501,47 +1383,100 @@ TCB_SECRET_KEY=${get('TCB_SECRET_KEY')}
 TCB_TOKEN=${get('TCB_TOKEN')}
 TCB_PROVISION_MODE=${get('TCB_PROVISION_MODE', 'shared')}
 
-# ==================== CodeBuddy Auth ====================
-# 认证方式: API Key（优先）或 OAuth（企业旗舰版）
-# 设置 CODEBUDDY_API_KEY 后将跳过 OAuth 认证
+# ==================== CodeBuddy ====================
+# API Key 优先；OAuth 仅企业旗舰版
 ${codebuddyConfig.authMode === 'apikey'
-      ? `CODEBUDDY_API_KEY=${codebuddyConfig.apiKey}`
-      : `# CODEBUDDY_API_KEY=`
-    }${codebuddyConfig.internetEnv
-      ? `\nCODEBUDDY_INTERNET_ENVIRONMENT=${codebuddyConfig.internetEnv}`
-      : `\n# CODEBUDDY_INTERNET_ENVIRONMENT=internal   # 国内版填 internal, iOA 填 ioa`
-    }
+    ? `CODEBUDDY_API_KEY=${codebuddyConfig.apiKey}`
+    : `# CODEBUDDY_API_KEY=`
+  }${codebuddyConfig.internetEnv
+    ? `\nCODEBUDDY_INTERNET_ENVIRONMENT=${codebuddyConfig.internetEnv}`
+    : `\n# CODEBUDDY_INTERNET_ENVIRONMENT=internal`
+  }
 ${codebuddyConfig.authMode === 'oauth'
-      ? `\n# --- OAuth 配置（当前已配置 API Key，OAuth 不生效）---\nCODEBUDDY_CLIENT_ID=${codebuddyConfig.clientId}\nCODEBUDDY_CLIENT_SECRET=${codebuddyConfig.clientSecret}\nCODEBUDDY_OAUTH_ENDPOINT=${codebuddyConfig.oauthEndpoint}`
-      : `\n# --- OAuth 配置（企业旗舰版，API Key 优先时此项不生效）---\n# CODEBUDDY_CLIENT_ID=\n# CODEBUDDY_CLIENT_SECRET=\n# CODEBUDDY_OAUTH_ENDPOINT=https://copilot.tencent.com/oauth2/token`
-    }
+    ? `\nCODEBUDDY_CLIENT_ID=${codebuddyConfig.clientId}\nCODEBUDDY_CLIENT_SECRET=${codebuddyConfig.clientSecret}\nCODEBUDDY_OAUTH_ENDPOINT=${codebuddyConfig.oauthEndpoint}`
+    : `\n# CODEBUDDY_CLIENT_ID=\n# CODEBUDDY_CLIENT_SECRET=\n# CODEBUDDY_OAUTH_ENDPOINT=https://copilot.tencent.com/oauth2/token`
+  }
 
 GIT_ARCHIVE_REPO=${getPreserved('GIT_ARCHIVE_REPO')}
 GIT_ARCHIVE_USER=${getPreserved('GIT_ARCHIVE_USER')}
 GIT_ARCHIVE_TOKEN=${getPreserved('GIT_ARCHIVE_TOKEN')}
 
-# ==================== Sandbox ====================
+# ==================== Stateful sandbox ====================
+# TCB_API_KEY: 控制台 → 沙箱 API Key；gateway 由 TCB_ENV_ID 推导
 
-SANDBOX_IMAGE_TYPE=${get('SANDBOX_IMAGE_TYPE') || get('SCF_SANDBOX_IMAGE_TYPE', 'personal')}
-SANDBOX_IMAGE_URI=${get('SANDBOX_IMAGE_URI') || get('SCF_SANDBOX_IMAGE_URI') || get('TCR_IMAGE')}
-SANDBOX_IMAGE_REGISTRY_ID=${get('SANDBOX_IMAGE_REGISTRY_ID')}
-SANDBOX_IMAGE_ACCELERATE=${get('SANDBOX_IMAGE_ACCELERATE') || get('SCF_SANDBOX_IMAGE_ACCELERATE', 'false')}
-SANDBOX_IMAGE_PORT=${get('SANDBOX_IMAGE_PORT') || get('SCF_SANDBOX_IMAGE_PORT', '9000')}
-SANDBOX_TEST_URL=${get('SANDBOX_TEST_URL') || get('SCF_SANDBOX_TEST_URL')}
-WORKSPACE_ISOLATION=${get('WORKSPACE_ISOLATION', 'isolated')}
+TCB_API_KEY=${getPreserved('TCB_API_KEY', get('TCB_API_KEY'))}
+${getPreserved('ENABLE_AUTH_MODE') === 'true'
+    ? `ENABLE_AUTH_MODE=true\nTCB_ACCESS_TOKEN=${getPreserved('TCB_ACCESS_TOKEN')}`
+    : '# ENABLE_AUTH_MODE=false\n# TCB_ACCESS_TOKEN='}
+${getPreserved('STATEFUL_SANDBOX_IMAGE') ? `STATEFUL_SANDBOX_IMAGE=${getPreserved('STATEFUL_SANDBOX_IMAGE')}` : '# STATEFUL_SANDBOX_IMAGE='}
+WORKSPACE_ISOLATION=${get('WORKSPACE_ISOLATION', 'shared')}
+SANDBOX_TTL_SECONDS=${getPreserved('SANDBOX_TTL_SECONDS', '1800')}
 
-# ==================== GitHub OAuth (Optional) ====================
+# ==================== Optional ====================
 
 # GITHUB_CLIENT_ID=
 # GITHUB_CLIENT_SECRET=
-
-# ==================== Proxy (Optional) ====================
-
 # http_proxy=
 `
+}
 
-  writeFileSync(serverEnvFile, serverEnv)
-  log('服务端配置已写入 packages/server/.env', 'success')
+async function setupApplicationEnv() {
+  const isLocal = envWriteTarget === ENV_LOCAL
+  const targetLabel = isLocal ? '.env.local' : '.env.cloud'
+  logSection(`写入 ${targetLabel}`)
+
+  const existingServerEnv = loadEnvFile(envWriteTarget)
+  const env = loadEnvFile(envWriteTarget)
+
+  if (existsSync(envWriteTarget)) {
+    const overwrite = await askYesNo(`${targetLabel} 已存在，是否覆盖？`, false)
+    if (!overwrite) {
+      log(`跳过 ${targetLabel} 生成`, 'info')
+      return true
+    }
+  }
+
+  const { get, getPreserved } = createEnvResolvers(existingServerEnv, env)
+
+  if (isLocal) {
+    const header = `# OpenVibeCoding — local development
+# Load: packages/server/package.json → pnpm dev (--env-file=../../.env.local)
+`
+    writeFileSync(
+      ENV_LOCAL,
+      header +
+        buildSharedEnvBody(get, getPreserved, {
+          port: '3001',
+          nodeEnv: 'development',
+          askUserBaseUrl: getPreserved('ASK_USER_BASE_URL', 'http://127.0.0.1:3001'),
+        }),
+    )
+    log('已写入 .env.local', 'success')
+    return true
+  }
+
+  console.log('')
+  console.log('  ASK_USER_BASE_URL：Agent 向用户提问时拼接链接用的云托管公网根 URL')
+  console.log('  首次部署前控制台往往还没有默认域名，可直接回车用占位。')
+  console.log(`  占位：${ASK_USER_BASE_URL_PLACEHOLDER}`)
+  console.log('  首次 pnpm deploy:cloud 成功后会尝试从云托管读取域名并写回 .env.cloud')
+  const cloudUrl =
+    (await promptInput('  ASK_USER_BASE_URL（回车=占位，部署后自动/手动改）')) ||
+    getPreserved('ASK_USER_BASE_URL', '')
+
+  const header = `# OpenVibeCoding — CloudRun runtime
+# Sync: pnpm deploy:cloud → UpdateCloudRunServer EnvParams (not baked into Docker image)
+`
+  writeFileSync(
+    ENV_CLOUD,
+    header +
+      buildSharedEnvBody(get, getPreserved, {
+        port: '80',
+        nodeEnv: 'production',
+        askUserBaseUrl: cloudUrl || ASK_USER_BASE_URL_PLACEHOLDER,
+      }),
+  )
+  log('已写入 .env.cloud', 'success')
   return true
 }
 
@@ -1602,53 +1537,43 @@ async function main() {
     process.exit(1)
   }
 
-  // Step 3: Setup environment (.env.local)
-  if (!(await setupEnv())) {
-    process.exit(1)
-  }
+  await promptEnvGenerationTarget()
 
-  // Step 4: CloudBase configuration (TCB_ENV_ID + token)
+  // CloudBase configuration (TCB_ENV_ID + token)
   if (!(await setupCloudbaseConfig())) {
     process.exit(1)
   }
 
-  // Step 5: CodeBuddy auth configuration
-  // 必须在 setupServerEnv 之前执行，因为 setupServerEnv 会将 codebuddyConfig 写入 .env
+  // CodeBuddy before env file — values are written into envWriteTarget
   await setupCodebuddy()
 
-  // Step 6: Setup Server Environment (writes packages/server/.env including CodeBuddy config)
-  if (!(await setupServerEnv())) {
+  await setupStatefulSandbox()
+
+  if (!(await setupApplicationEnv())) {
     process.exit(1)
   }
 
-  // Step 7: Install dependencies (selectTcrType needs tencentcloud-sdk-nodejs)
   if (!(await installDependencies())) {
     process.exit(1)
   }
 
-  // Step 8: Select TCR type (personal / enterprise + RegistryId via DescribeInstances)
-  if (!(await selectTcrType())) {
-    process.exit(1)
-  }
+  // --- TCR（Stateful 默认跳过；维护自建沙箱镜像时可取消注释）---
+  // if (!checkDocker()) {
+  //   process.exit(1)
+  // }
+  // logSection('TCR 配置')
+  // if (!(await setupTcr())) {
+  //   process.exit(1)
+  // }
+  // const rootEnvAfterTcr = loadEnvFile(ENV_LOCAL)
+  // if (rootEnvAfterTcr['TCR_IMAGE']) {
+  //   saveEnvVar(ENV_LOCAL, 'STATEFUL_SANDBOX_IMAGE', rootEnvAfterTcr['TCR_IMAGE'])
+  //   log('TCR_IMAGE 已写入 STATEFUL_SANDBOX_IMAGE', 'success')
+  // }
 
-  // Step 9: Setup sandbox image via CloudRun CD (deploy + poll + write to server/.env)
-  if (!(await setupSandboxImage())) {
-    process.exit(1)
-  }
-
-  // Step 10: Initialize database
+  // Initialize database
   logSection('初始化数据库')
-  const serverEnvPath = resolve(process.cwd(), 'packages/server/.env')
-  const serverEnvVars = existsSync(serverEnvPath)
-    ? readFileSync(serverEnvPath, 'utf-8').split('\n').reduce((acc, line) => {
-      const trimmed = line.trim()
-      if (trimmed && !trimmed.startsWith('#')) {
-        const [key, ...rest] = trimmed.split('=')
-        if (key) acc[key.trim()] = rest.join('=').trim()
-      }
-      return acc
-    }, {})
-    : {}
+  const serverEnvVars = loadEnvFile(envWriteTarget)
 
   const dbProvider = serverEnvVars['DB_PROVIDER'] || 'cloudbase'
 
@@ -1686,29 +1611,24 @@ async function main() {
   console.log('    2. 该仓库的访问令牌（需读写权限）')
   console.log('')
 
-  const configGitArchive = await askYesNo('是否现在配置 Git 归档？', true)
+  const gitArchiveDefaultYes = envWriteTarget !== ENV_LOCAL
+  const configGitArchive = await askYesNo('是否现在配置 Git 归档？', gitArchiveDefaultYes)
   if (configGitArchive) {
     const gitRepo = await promptInput('  Git 仓库地址（如 https://cnb.cool/org/repo）')
     const gitUser = await promptInput('  用户名')
     const gitToken = await promptInput('  访问令牌', true)
 
     if (gitRepo && gitToken) {
-      // 写入 server/.env
-      const sEnvFile = resolve(process.cwd(), 'packages/server/.env')
-      if (existsSync(sEnvFile)) {
-        let content = readFileSync(sEnvFile, 'utf-8')
-        content = content.replace(/GIT_ARCHIVE_REPO=.*/, `GIT_ARCHIVE_REPO=${gitRepo}`)
-        content = content.replace(/GIT_ARCHIVE_USER=.*/, `GIT_ARCHIVE_USER=${gitUser || ''}`)
-        content = content.replace(/GIT_ARCHIVE_TOKEN=.*/, `GIT_ARCHIVE_TOKEN=${gitToken}`)
-        writeFileSync(sEnvFile, content)
-        log('Git 归档已配置', 'success')
-      }
+      saveTargetEnvVar('GIT_ARCHIVE_REPO', gitRepo)
+      saveTargetEnvVar('GIT_ARCHIVE_USER', gitUser || '')
+      saveTargetEnvVar('GIT_ARCHIVE_TOKEN', gitToken)
+      log('Git 归档已写入当前 env 文件', 'success')
     } else {
       log('信息不完整，跳过 Git 归档配置', 'warn')
     }
   } else {
     console.log('')
-    log('已跳过。沙箱重启后工作区内容将不保留，后续可在 packages/server/.env 中手动配置', 'info')
+    log('已跳过。沙箱重启后工作区内容将不保留，后续可在 env 文件中手动配置', 'info')
     console.log('')
   }
 
@@ -1736,52 +1656,40 @@ async function main() {
   console.log(`${colors.bright}${colors.green}╚══════════════════════════════════════════════╝${colors.reset}`)
   console.log('')
 
+  const envFileName = envWriteTarget === ENV_CLOUD ? '.env.cloud' : '.env.local'
+
   if (codebuddyConfig.authMode) {
     console.log(`${colors.green}✓${colors.reset} CodeBuddy 认证已配置（${codebuddyConfig.authMode === 'apikey' ? 'API Key' : 'OAuth'}）`)
   } else {
-    console.log(`${colors.yellow}!${colors.reset} CodeBuddy 认证未配置，启动前请编辑 ${colors.bright}packages/server/.env${colors.reset}`)
+    console.log(`${colors.yellow}!${colors.reset} CodeBuddy 认证未配置，请编辑 ${colors.bright}${envFileName}${colors.reset}`)
   }
 
   console.log('')
-  console.log(`${colors.bright}${colors.yellow}━━━ 启动前请确认 ━━━${colors.reset}`)
+  console.log(`${colors.bright}${colors.yellow}━━━ 下一步 ━━━${colors.reset}`)
   console.log('')
-  console.log(`打开 ${colors.bright}packages/server/.env${colors.reset} 确认以下配置：`)
+  console.log(`本次已生成/更新：${colors.bright}${envFileName}${colors.reset}`)
   console.log('')
-  console.log(`  ${colors.bright}CodeBuddy 认证${colors.reset} — API Key 或 OAuth 二选一`)
-  console.log(`  ${colors.dim}CODEBUDDY_API_KEY=              # API Key（设置后优先，推荐）${colors.reset}`)
-  console.log(`  ${colors.dim}CODEBUDDY_INTERNET_ENVIRONMENT= # 国内版填 internal, iOA 填 ioa${colors.reset}`)
-  console.log(`  ${colors.dim}CODEBUDDY_CLIENT_ID=            # OAuth Client ID（企业旗舰版）${colors.reset}`)
-  console.log(`  ${colors.dim}CODEBUDDY_CLIENT_SECRET=        # OAuth Client Secret${colors.reset}`)
-  console.log('')
-  console.log(`${colors.cyan}━━━ 开发模式 ━━━${colors.reset}`)
-  console.log('')
-  console.log(`  ${colors.bright}pnpm dev${colors.reset}`)
-  console.log('')
-  console.log(`${colors.dim}同时启动前端（端口 5174）和服务端（端口 3001）${colors.reset}`)
-  console.log(`${colors.dim}在浏览器中打开 http://localhost:5174${colors.reset}`)
-  console.log('')
-  console.log(`${colors.cyan}━━━ 生产模式 ━━━${colors.reset}`)
-  console.log('')
-  console.log(`  ${colors.bright}pnpm build${colors.reset}   ${colors.dim}# 构建前端和服务端${colors.reset}`)
-  console.log(
-    `  ${colors.bright}pnpm start${colors.reset}   ${colors.dim}# 启动服务端（同时托管静态文件）${colors.reset}`,
-  )
-  console.log('')
-  console.log(`${colors.dim}服务端运行在端口 3001，提供 API 及静态文件服务${colors.reset}`)
-  console.log('')
-  console.log(`${colors.cyan}━━━ 其他命令 ━━━${colors.reset}`)
-  console.log('')
-  console.log(`${colors.dim}  pnpm dev:web     - 仅启动前端${colors.reset}`)
-  console.log(`${colors.dim}  pnpm dev:server  - 仅启动服务端${colors.reset}`)
-  console.log(`${colors.dim}  pnpm lint        - 运行代码检查${colors.reset}`)
-  console.log(`${colors.dim}  pnpm type-check  - 检查 TypeScript 类型${colors.reset}`)
+
+  if (envWriteTarget === ENV_LOCAL) {
+    console.log(`${colors.cyan}本地开发${colors.reset}`)
+    console.log(`  ${colors.bright}pnpm dev${colors.reset}  → http://localhost:5174`)
+    console.log('')
+    console.log(`${colors.dim}需要云托管配置时，再运行 ./init.sh 并选择 2) .env.cloud${colors.reset}`)
+  } else {
+    console.log(`${colors.cyan}云托管部署${colors.reset}`)
+    console.log(`  ${colors.bright}pnpm deploy:cloud${colors.reset}  （ASK_USER_BASE_URL 占位可在首次部署后写回）`)
+    console.log(`  若仍为占位，到控制台复制默认域名后改 ${colors.bright}.env.cloud${colors.reset} 再部署一次`)
+    console.log('')
+    console.log(`${colors.dim}需要本地开发时，再运行 ./init.sh 并选择 1) .env.local${colors.reset}`)
+    console.log(`${colors.dim}deploy 只读 .env.cloud，与 .env.local 无关${colors.reset}`)
+  }
   console.log('')
 }
 
 main().then(() => {
-  if (_rl) _rl.close()
+  closeReadline()
 }).catch((error) => {
-  if (_rl) _rl.close()
+  closeReadline()
   console.error('初始化失败：', error)
   process.exit(1)
 })

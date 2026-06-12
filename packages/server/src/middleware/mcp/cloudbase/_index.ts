@@ -16,6 +16,12 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createPolicyLoader, runWithPolicy, runAugmentedTool, isToolHidden } from '../../../lib/mcp-middleware/index.js'
 import type { McpContext, McpPolicy as GenericMcpPolicy } from '../../../lib/mcp-middleware/index.js'
+import { policy as authPolicy } from './auth.js'
+import { policy as cronTaskPolicy } from './cronTask.js'
+import { policy as downloadTemplatePolicy } from './downloadTemplate.js'
+import { policy as getDeployJobStatusPolicy } from './getDeployJobStatus.js'
+import { policy as publishMiniprogramPolicy } from './publishMiniprogram.js'
+import { policy as uploadFilesPolicy } from './uploadFiles.js'
 
 /** CloudBase 特有的上下文扩展字段 */
 export interface CloudbaseExtra {
@@ -64,10 +70,24 @@ const parseList = (raw: string | undefined): string[] =>
     .map((s) => s.trim())
     .filter(Boolean)
 
-const loader = createPolicyLoader<CloudbaseExtra>(__dirname, 'cloudbase-mcp-policies', {
-  denyList: parseList(process.env.CLOUDBASE_MCP_DISABLE_TOOLS),
-  allowList: parseList(process.env.CLOUDBASE_MCP_ENABLE_TOOLS),
-})
+const CLOUDBASE_STATIC_POLICIES: Record<string, McpPolicy> = {
+  auth: authPolicy,
+  cronTask: cronTaskPolicy,
+  downloadTemplate: downloadTemplatePolicy,
+  getDeployJobStatus: getDeployJobStatusPolicy,
+  publishMiniprogram: publishMiniprogramPolicy,
+  uploadFiles: uploadFilesPolicy,
+}
+
+const loader = createPolicyLoader<CloudbaseExtra>(
+  __dirname,
+  'cloudbase-mcp-policies',
+  {
+    denyList: parseList(process.env.CLOUDBASE_MCP_DISABLE_TOOLS),
+    allowList: parseList(process.env.CLOUDBASE_MCP_ENABLE_TOOLS),
+  },
+  CLOUDBASE_STATIC_POLICIES,
+)
 
 export const loadAllPolicies = () => loader.loadAll()
 export const listPolicies = () => loader.listPolicies()

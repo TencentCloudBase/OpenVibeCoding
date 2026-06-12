@@ -133,9 +133,15 @@ async function buildMcpServer(
       tools = await discoverTools({
         bash: (cmd, t) => sandboxBash(sandboxUrl, sandboxAuth, cmd, t ?? 25_000),
         readJsonFile: async (p) => {
-          const res = await sandboxFetch(sandboxUrl, sandboxAuth, `/e2b-compatible/files?path=${encodeURIComponent(p)}`)
+          const res = await sandboxFetch(sandboxUrl, sandboxAuth, '/api/tools/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: p }),
+          })
           if (!res.ok) throw new Error(`Failed to read schema file: ${res.status}`)
-          return res.json()
+          const data = (await res.json()) as { success?: boolean; result?: { content?: string } }
+          if (!data.success || !data.result?.content) throw new Error('Empty schema file')
+          return JSON.parse(data.result.content)
         },
       })
       setCachedTools(sessionId, tools)

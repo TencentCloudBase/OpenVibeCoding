@@ -1,5 +1,9 @@
 #!/usr/bin/env tsx
 /**
+ * 【过时】上游 main 保留的 SCF 环境 e2e，feature/stateful-infra 分支请勿运行。
+ * 依赖 `scf-sandbox-manager`，仅适用于 SCF 沙箱；AGS + 沙箱业务镜像请用 verify-stateful-e2e.ts。
+ * Stateful: `npx tsx scripts/verify-stateful-e2e.ts` (loads ../../.env.local)
+ *
  * 沙箱隔离 e2e 测试（新架构 - tool override + env 注入）
  *
  * 验证链路：
@@ -14,7 +18,7 @@
  *   3. 本地文件系统未被污染
  *
  * 用法：
- *   npx tsx --env-file=.env scripts/test-opencode-sandbox-e2e.mts
+ *   npx tsx --env-file=../../.env.local scripts/test-opencode-sandbox-e2e.mts
  */
 
 import 'dotenv/config'

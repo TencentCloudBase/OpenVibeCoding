@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { TASK_LOG } from '@coder/shared'
 import { toast } from 'sonner'
+import { pushLiveTaskLog } from '@/lib/push-live-task-log'
 import Editor, { type OnMount } from '@monaco-editor/react'
 
 // Monaco types for editor and monaco instances
@@ -192,15 +194,19 @@ export function FileEditor({
 
       if (response.ok && data.success) {
         setSavedContent(currentContent)
+        toast.success('文件已保存')
+        pushLiveTaskLog(taskId, { type: 'success', message: TASK_LOG.WORKSPACE_FILE_SAVED }, { persist: false })
         // Notify parent component of successful save
         if (onSaveSuccessRef.current) {
           onSaveSuccessRef.current()
         }
       } else {
+        pushLiveTaskLog(taskId, { type: 'error', message: TASK_LOG.WORKSPACE_FILE_SAVE_FAILED }, { persist: false })
         toast.error(data.error || 'Failed to save file')
       }
     } catch (error) {
       console.error('Error saving file:', error)
+      pushLiveTaskLog(taskId, { type: 'error', message: TASK_LOG.WORKSPACE_FILE_SAVE_FAILED })
       toast.error('Failed to save file')
     } finally {
       setIsSaving(false)

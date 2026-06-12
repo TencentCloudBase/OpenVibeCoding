@@ -10,7 +10,7 @@
  *   同名 custom tool 覆盖 opencode builtin — read/write/bash/edit/grep/glob。
  *
  *   每次 chatStream：
- *     1. BaseAgentRuntime.setupSandbox() 创建/获取 SCF 沙箱（共享实例）
+ *     1. BaseAgentRuntime.setupSandbox() acquires shared stateful sandbox
  *     2. spawn opencode acp，通过 child env 注入：
  *          OPENCODE_CONFIG_DIR=<projectRoot>/.opencode  （隔离用户全局配置）
  *          SANDBOX_MODE=1
@@ -45,8 +45,13 @@ import { registerPending, resolvePending, rejectPendingForConversation } from '.
 import { resolvePendingQuestion, rejectPendingQuestionsForConversation } from './pending-question-registry.js'
 import { OpencodeMessageBuilder, findLastRecordIds, buildHistoryContextPrompt } from './opencode-message-builder.js'
 import { BaseAgentRuntime } from './base-runtime.js'
-import type { SandboxInstance } from '../../sandbox/scf-sandbox-manager.js'
+import type { SandboxInstance } from '../../sandbox/provider/types.js'
 import { archiveToGit } from '../../sandbox/git-archive.js'
+import { appendAllowedTaskLog } from '../../lib/append-task-log.js'
+import { TASK_LOG } from '@coder/shared'
+import { resolveAgentHostCwd } from '../../lib/sandbox-config.js'
+import { registerStdioMcpInSandbox, makeSandboxInstanceMcporterCli } from '../../sandbox/sandbox-stdio-mcp.js'
+import { invalidateStdioMcpToolsCache } from '../../routes/sandbox-stdio-mcp.js'
 import os from 'node:os'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -306,6 +311,8 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
     let sandbox: SandboxInstance | null = null
     let sandboxMcpClient: { close: () => Promise<void> } | null = null
     let sessionWorkingDir: string | null = null
+    /** stdio MCP 在沙箱内的 mcporter 注册句柄，finally 时统一释放（config remove + cache invalidate） */
+    const stdioMcpRegistrations: Array<{ close: () => Promise<void> }> = []
 
     try {
       // 0. 确保 opencode.json 已从 example 初始化（若不存在）
@@ -315,7 +322,6 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
       let sandboxResult: Awaited<ReturnType<typeof this.setupSandbox>> | null = null
 
       if (envId) {
-        await emit({ type: 'agent_phase', phase: 'preparing' })
         sandboxResult = await this.setupSandbox({
           conversationId,
           envId,
@@ -337,12 +343,15 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
       // 构建系统提示
       let systemPrompt = ''
       if (envId) {
+        const remoteCwd = sandboxResult?.sandboxCwd || null
         const promptResult = await this.buildSystemPrompt({
           envId,
           isCodingMode,
-          sandboxCwd: sandboxResult?.sandboxCwd || null,
+          sandboxCwd: remoteCwd,
           sandboxMode: sandboxResult?.sandboxMode || 'shared',
           conversationId,
+          remoteToolsActive: !!sandboxResult?.toolOverrideConfig,
+          localHostCwd: remoteCwd ? resolveAgentHostCwd(remoteCwd, conversationId) : undefined,
         })
         systemPrompt = promptResult.systemPrompt
       }
@@ -471,6 +480,11 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
 
       const taskRecord = await getDb().tasks.findById(conversationId)
       const taskMcpList = JSON.parse(taskRecord?.mcpServerList || '[]') || []
+      // stdio MCP 路由到沙箱所需的 sandbox 信息（当 sandbox 可用时）
+      const sandboxAuthHeaders = sandbox ? await sandbox.getAuthHeaders() : null
+      const sandboxBaseUrlForMcp = sandbox?.baseUrl ?? null
+      const serverPort = Number(process.env.PORT) || 3001
+
       for (const mcp of taskMcpList) {
         if (!mcp.name) continue
         const serverType = mcp.type?.toLowerCase()
@@ -484,12 +498,50 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
               : [],
           })
         } else if (serverType === 'stdio') {
-          mcpServers.push({
-            name: mcp.name,
-            command: mcp.command,
-            args: mcp.args ?? [],
-            env: mcp.env ? Object.entries(mcp.env).map(([name, value]) => ({ name, value: String(value) })) : [],
-          })
+          // 对齐 codebuddy-runtime：有沙箱时把 stdio MCP 注册到沙箱内 mcporter，
+          // 通过本地 /sandbox-stdio-mcp HTTP 代理路由让 opencode 走 http MCP 协议接入。
+          // 这样 stdio MCP 的子进程在沙箱里执行，与 cloudbase MCP 保持同一隔离边界。
+          const sessionJwe = sandboxResult?.sessionJwe
+          if (sandbox && sandboxBaseUrlForMcp && sandboxAuthHeaders && sessionJwe) {
+            try {
+              const cli = makeSandboxInstanceMcporterCli(sandbox)
+              const registration = await registerStdioMcpInSandbox(cli, {
+                name: mcp.name,
+                command: mcp.command,
+                args: mcp.args ?? [],
+                env: mcp.env,
+                overwrite: true,
+              })
+              stdioMcpRegistrations.push({
+                close: async () => {
+                  invalidateStdioMcpToolsCache(conversationId, mcp.name)
+                  await registration.close()
+                },
+              })
+              mcpServers.push({
+                type: 'http',
+                name: mcp.name,
+                url: `http://localhost:${serverPort}/sandbox-stdio-mcp`,
+                headers: [
+                  { name: 'X-Sandbox-Url', value: sandboxBaseUrlForMcp },
+                  { name: 'X-Sandbox-Auth', value: JSON.stringify(sandboxAuthHeaders) },
+                  { name: 'X-Stdio-Mcp-Name', value: mcp.name },
+                  { name: 'X-Session-Id', value: conversationId },
+                  { name: 'Cookie', value: `nex_session=${sessionJwe}` },
+                ],
+              })
+            } catch (e) {
+              console.error('[OpencodeAcpRuntime] register sandbox stdio MCP failed:', (e as Error).message)
+            }
+          } else {
+            // 没有沙箱：fallback 到本地 spawn（行为对齐 codebuddy-runtime 的 fallback 分支）
+            mcpServers.push({
+              name: mcp.name,
+              command: mcp.command,
+              args: mcp.args ?? [],
+              env: mcp.env ? Object.entries(mcp.env).map(([name, value]) => ({ name, value: String(value) })) : [],
+            })
+          }
         }
       }
 
@@ -553,7 +605,12 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
         content: JSON.stringify({
           stopReason: promptRes.stopReason,
           usage: (promptRes as { _meta?: { usage?: unknown } })._meta?.usage ?? null,
-          sandbox: sandbox ? { baseUrl: sandbox.baseUrl, conversationId: sandbox.conversationId } : null,
+          sandbox: sandbox
+            ? {
+                baseUrl: sandbox.baseUrl,
+                conversationId: String((sandbox.meta as { conversationId?: string }).conversationId || conversationId),
+              }
+            : null,
           workingDir: sessionWorkingDir,
         }),
       })
@@ -603,14 +660,24 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
       }
       // Archive to git（含 error/cancel 场景，保留最终工作状态）
       if (sandbox) {
-        archiveToGit(sandbox, conversationId, prompt).catch((err) => {
-          console.error('[OpencodeAcpRuntime] archiveToGit failed:', err)
+        void archiveToGit(sandbox, conversationId, prompt).then((result) => {
+          if (result === 'ok') void appendAllowedTaskLog(conversationId, 'info', TASK_LOG.PLATFORM_ARCHIVE_PUSH_OK)
+          else if (result === 'fail')
+            void appendAllowedTaskLog(conversationId, 'error', TASK_LOG.PLATFORM_ARCHIVE_PUSH_FAILED)
         })
       }
       // Close sandbox MCP client（同 CodeBuddy runtime 对齐）
       if (sandboxMcpClient) {
         try {
           await sandboxMcpClient.close()
+        } catch {
+          /* noop */
+        }
+      }
+      // Close all stdio MCP registrations in sandbox (config remove + cache invalidate)
+      for (const reg of stdioMcpRegistrations) {
+        try {
+          await reg.close()
         } catch {
           /* noop */
         }

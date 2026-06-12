@@ -14,14 +14,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ── Mock 依赖（vi.hoisted 确保变量在 vi.mock factory 之前已初始化） ─────
-const { findByUserIdMock, issueTempCredentialsMock } = vi.hoisted(() => ({
+const { findByUserIdMock, findByTaskIdMock, issueTempCredentialsMock } = vi.hoisted(() => ({
   findByUserIdMock: vi.fn(),
+  findByTaskIdMock: vi.fn(),
   issueTempCredentialsMock: vi.fn(),
 }))
 
 vi.mock('../../db/index.js', () => ({
   getDb: () => ({
-    userResources: { findByUserId: findByUserIdMock },
+    userResources: {
+      findByUserId: findByUserIdMock,
+      findByTaskId: findByTaskIdMock,
+    },
   }),
 }))
 
@@ -33,6 +37,8 @@ import { createInjectCredentials } from '../cloudbase-mcp.js'
 
 beforeEach(() => {
   findByUserIdMock.mockReset()
+  findByTaskIdMock.mockReset()
+  findByTaskIdMock.mockResolvedValue(null)
   issueTempCredentialsMock.mockReset()
 })
 
@@ -44,9 +50,27 @@ function makeOkResponse(body: unknown = { success: true }, status = 200): Respon
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
+/** Matches createInjectCredentials envId/userId guards on user_resources rows. */
+function mockUserResource(
+  overrides: {
+    userId?: string
+    envId?: string
+    camSecretId?: string | null
+    camSecretKey?: string | null
+  } = {},
+) {
+  return {
+    userId: 'u1',
+    envId: 'env-1',
+    camSecretId: null,
+    camSecretKey: null,
+    ...overrides,
+  }
+}
+
 describe('createInjectCredentials', () => {
   it('uses permanent credentials when camSecretId/camSecretKey present', async () => {
-    findByUserIdMock.mockResolvedValue({ camSecretId: 'AKID-PERM', camSecretKey: 'KEY-PERM' })
+    findByUserIdMock.mockResolvedValue(mockUserResource({ camSecretId: 'AKID-PERM', camSecretKey: 'KEY-PERM' }))
     const fetcher = makeFetch(async () => makeOkResponse())
 
     const fn = createInjectCredentials({
@@ -64,18 +88,18 @@ describe('createInjectCredentials', () => {
     // 沙箱请求体应含永久 secretId / secretKey
     expect(fetcher).toHaveBeenCalledTimes(1)
     const [path, init] = fetcher.mock.calls[0]
-    expect(path).toBe('/api/session/env')
+    expect(path).toBe('/api/workspace/env')
     expect(init?.method).toBe('PUT')
     const body = JSON.parse(init!.body as string)
     expect(body.CLOUDBASE_ENV_ID).toBe('env-1')
     expect(body.TENCENTCLOUD_SECRETID).toBe('AKID-PERM')
     expect(body.TENCENTCLOUD_SECRETKEY).toBe('KEY-PERM')
     expect(body.TENCENTCLOUD_SESSIONTOKEN).toBe('') // 永久密钥无 token
-    expect(body.conversationId).toBe('c1')
+    expect(body.conversationId).toBeUndefined()
   })
 
   it('falls back to issueTempCredentials when no permanent credentials', async () => {
-    findByUserIdMock.mockResolvedValue({ camSecretId: null, camSecretKey: null })
+    findByUserIdMock.mockResolvedValue(mockUserResource())
     issueTempCredentialsMock.mockResolvedValue({
       secretId: 'AKID-TEMP',
       secretKey: 'KEY-TEMP',
@@ -115,7 +139,7 @@ describe('createInjectCredentials', () => {
   })
 
   it('throws when sandbox returns success=false', async () => {
-    findByUserIdMock.mockResolvedValue({ camSecretId: 'AKID', camSecretKey: 'KEY' })
+    findByUserIdMock.mockResolvedValue(mockUserResource({ camSecretId: 'AKID', camSecretKey: 'KEY' }))
     const fetcher = makeFetch(async () => makeOkResponse({ success: false, error: 'env not ready' }))
 
     const fn = createInjectCredentials({
@@ -129,7 +153,7 @@ describe('createInjectCredentials', () => {
   })
 
   it('calls on401 callback when sandbox returns 401', async () => {
-    findByUserIdMock.mockResolvedValue({ camSecretId: 'AKID', camSecretKey: 'KEY' })
+    findByUserIdMock.mockResolvedValue(mockUserResource({ camSecretId: 'AKID', camSecretKey: 'KEY' }))
     const fetcher = makeFetch(async () => makeOkResponse({}, 401))
     const on401 = vi.fn((status: number) => {
       throw new Error(`AUTH_REQUIRED:${status}`)
@@ -148,7 +172,7 @@ describe('createInjectCredentials', () => {
   })
 
   it('includes WORKSPACE_FOLDER_PATHS only when provided', async () => {
-    findByUserIdMock.mockResolvedValue({ camSecretId: 'AKID', camSecretKey: 'KEY' })
+    findByUserIdMock.mockResolvedValue(mockUserResource({ camSecretId: 'AKID', camSecretKey: 'KEY' }))
     const fetcher = makeFetch(async () => makeOkResponse())
 
     // 1. 不传 workspaceFolderPaths

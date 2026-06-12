@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router'
-import { useTasks } from '@/hooks/use-tasks'
+import { useAtomValue } from 'jotai'
+import { useTasks } from '@/components/app-layout'
+import { taskListAtom, taskListLoadingAtom } from '@/lib/atoms/task-list'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -104,7 +106,9 @@ function getHumanFriendlyModelName(agent: string | null | undefined, model: stri
 
 export function TasksListPage() {
   const navigate = useNavigate()
-  const { tasks, isLoading, refreshTasks } = useTasks()
+  const { refreshTasks } = useTasks()
+  const tasks = useAtomValue(taskListAtom)
+  const isInitialLoading = useAtomValue(taskListLoadingAtom)
   const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -112,10 +116,12 @@ export function TasksListPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
 
+  const activeTasks = useMemo(() => tasks.filter((task: Task) => !task.deletedAt), [tasks])
+
   const filteredTasks = useMemo(() => {
-    if (statusFilter === 'all') return tasks
-    return tasks.filter((task: Task) => task.status === statusFilter)
-  }, [tasks, statusFilter])
+    if (statusFilter === 'all') return activeTasks
+    return activeTasks.filter((task: Task) => task.status === statusFilter)
+  }, [activeTasks, statusFilter])
 
   const handleSelectAll = () => {
     if (selectedTasks.size === filteredTasks.length) {
@@ -283,7 +289,7 @@ export function TasksListPage() {
           </div>
 
           {/* Tasks List */}
-          {isLoading ? (
+          {isInitialLoading ? (
             <div className="flex items-center justify-center h-64">
               <div className="text-muted-foreground">Loading tasks...</div>
             </div>

@@ -1,22 +1,28 @@
 /**
- * Sandbox Module
- *
- * Exports all sandbox-related utilities:
- * - SCF sandbox manager for creating/managing cloud function sandboxes
- * - Tool override for redirecting CLI tools to sandbox
- * - Sandbox MCP proxy for CloudBase tools
- * - Git archive for persisting workspace changes
+ * Sandbox module — stateful cloud sandbox (feature/stateful-infra).
  */
 
-export {
-  scfSandboxManager,
-  ScfSandboxManager,
+export { getSandboxProvider, __resetSandboxProviderCacheForTests } from './provider/factory.js'
+export type {
+  SandboxProvider,
   SandboxInstance,
-  type SandboxMode,
-  type SandboxProgressCallback,
-} from './scf-sandbox-manager.js'
-
-export { createSandboxMcpClient, type SandboxMcpDeps } from './sandbox-mcp-proxy.js'
+  SandboxProgressCallback,
+  SandboxProgressMessage,
+  SessionEnv,
+  McpClientBundle,
+  ToolOverrideConfig,
+} from './provider/types.js'
+export { statefulProvider } from './provider/stateful-provider.js'
+export { ensureStatefulTool, deleteStatefulToolForEnv, STATEFUL_TOOL_SETTINGS_KEY } from './ensure-stateful-tool.js'
+export {
+  getTaskSandbox,
+  runCommandInSandbox,
+  downloadFileFromSandbox,
+  readFileFromSandbox,
+  writeFileToSandbox,
+  detectPackageManager,
+  ensureDevServerStarted,
+} from './task-sandbox.js'
 
 export {
   archiveToGit,
@@ -29,4 +35,16 @@ export {
   type GitArchiveConfig,
 } from './git-archive.js'
 
-export { overrideTools, type ToolOverrideConfig, type ToolResult, type ToolContext } from './tool-override.js'
+export {
+  overrideTools,
+  type ToolOverrideConfig as LegacyToolOverrideConfig,
+  type ToolResult,
+  type ToolContext,
+} from './tool-override.js'
+
+export {
+  statefulReadTextFile,
+  statefulReadBinaryFile,
+  statefulWriteTextFile,
+  statefulRunCommand,
+} from './stateful/e2b-native-client.js'

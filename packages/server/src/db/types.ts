@@ -145,6 +145,7 @@ export interface UserResource {
   taskId: string | null // set when scope='task'
   status: string
   envId: string | null
+  statefulToolId: string | null
   envAlias: string | null
   envRegion: string | null
   cosTagValue: string | null
@@ -294,12 +295,28 @@ export type NewKey = Omit<Key, 'createdAt' | 'updatedAt'> & {
   updatedAt?: number
 }
 
-export type NewUserResource = Omit<UserResource, 'createdAt' | 'updatedAt' | 'scope' | 'taskId'> & {
-  scope?: string // defaults to 'user'
-  taskId?: string | null
-  createdAt?: number
-  updatedAt?: number
-}
+type UserResourceNullableFields =
+  | 'envId'
+  | 'statefulToolId'
+  | 'envAlias'
+  | 'envRegion'
+  | 'cosTagValue'
+  | 'policyHash'
+  | 'camUsername'
+  | 'camSecretId'
+  | 'camSecretKey'
+  | 'policyId'
+  | 'failStep'
+  | 'failReason'
+  | 'taskId'
+
+export type NewUserResource = Omit<UserResource, 'createdAt' | 'updatedAt' | 'scope' | UserResourceNullableFields> &
+  Partial<Pick<UserResource, UserResourceNullableFields>> & {
+    scope?: string // defaults to 'user'
+    taskId?: string | null
+    createdAt?: number
+    updatedAt?: number
+  }
 
 export type NewSetting = Omit<Setting, 'createdAt' | 'updatedAt'> & {
   createdAt?: number

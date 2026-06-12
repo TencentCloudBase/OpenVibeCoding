@@ -215,7 +215,7 @@ function withTaskDefaults(task: Record<string, unknown>): Task {
     status: doc.status || 'pending',
     selectedAgent: doc.selectedAgent ?? 'codebuddy',
     selectedRuntime: doc.selectedRuntime ?? null,
-    sandboxMode: doc.sandboxMode || 'isolated',
+    sandboxMode: doc.sandboxMode || 'shared',
     installDependencies: doc.installDependencies ?? false,
     maxDuration: doc.maxDuration ?? 300,
     keepAlive: doc.keepAlive ?? false,
@@ -750,9 +750,23 @@ class CloudBaseUserResourceRepository implements UserResourceRepository {
     const collection = await getCollection('user_resources')
     const ts = now()
     const doc: UserResource = {
-      ...resource,
+      id: resource.id,
+      userId: resource.userId,
+      status: resource.status,
       scope: resource.scope || 'user',
       taskId: resource.taskId ?? null,
+      envId: resource.envId ?? null,
+      statefulToolId: resource.statefulToolId ?? null,
+      envAlias: resource.envAlias ?? null,
+      envRegion: resource.envRegion ?? null,
+      cosTagValue: resource.cosTagValue ?? null,
+      policyHash: resource.policyHash ?? null,
+      camUsername: resource.camUsername ?? null,
+      camSecretId: resource.camSecretId ?? null,
+      camSecretKey: resource.camSecretKey ?? null,
+      policyId: resource.policyId ?? null,
+      failStep: resource.failStep ?? null,
+      failReason: resource.failReason ?? null,
       createdAt: resource.createdAt ?? ts,
       updatedAt: resource.updatedAt ?? ts,
     }

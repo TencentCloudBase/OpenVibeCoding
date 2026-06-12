@@ -7,6 +7,11 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import {
+  deleteSingleTaskDialogBody,
+  deleteSingleTaskMenuHint,
+  type SandboxInstanceMode,
+} from '@/lib/sandbox-instance-mode-copy'
+import {
   GitBranch,
   CheckCircle,
   AlertCircle,
@@ -47,6 +52,8 @@ import { setEditingConnectorActionAtom } from '@/lib/atoms/connector-dialog'
 import { toast } from 'sonner'
 import { Claude, CodeBuddy, Codex, Copilot, Cursor, Gemini, OpenCode } from '@/components/logos'
 import { useTasks } from '@/components/app-layout'
+import { TASK_LOG } from '@coder/shared'
+import { pushLiveTaskLog } from '@/lib/push-live-task-log'
 import {
   getShowFilesPane,
   setShowFilesPane as saveShowFilesPane,
@@ -120,6 +127,8 @@ interface TaskDetailsProps {
   task: Task
   maxSandboxDuration?: number
   onStreamComplete?: () => void
+  /** Refetch task row (previewUrl, sandboxId) without waiting for poll/stream end */
+  onTaskRefetch?: () => void
   initialPrompt?: string
   initialImages?: Array<{ data: string; mimeType: string }>
   onInitialPromptConsumed?: () => void
@@ -199,6 +208,7 @@ export function TaskDetails({
   task,
   maxSandboxDuration = 300,
   onStreamComplete,
+  onTaskRefetch,
   initialPrompt,
   initialImages,
   onInitialPromptConsumed,
@@ -257,6 +267,17 @@ export function TaskDetails({
 
   const chatStream = useChatStream(task.id, { onStreamComplete: wrappedOnStreamComplete })
 
+  // Sandbox ready in stream → refetch task so previewUrl/sandboxId reach UI immediately
+  const lastSandboxReadyRefetchRef = useRef(0)
+  useEffect(() => {
+    if (!isCodingModeForAutoFix || !onTaskRefetch) return
+    if (chatStream.agentPhase.sandbox.status !== 'success') return
+    const ts = chatStream.agentPhase.timestamp
+    if (ts <= lastSandboxReadyRefetchRef.current) return
+    lastSandboxReadyRefetchRef.current = ts
+    onTaskRefetch()
+  }, [chatStream.agentPhase.sandbox.status, chatStream.agentPhase.timestamp, isCodingModeForAutoFix, onTaskRefetch])
+
   // Handle initial prompt (once) at this level
   const initialTriggered = useRef(false)
   useEffect(() => {
@@ -278,6 +299,7 @@ export function TaskDetails({
   const [refreshKey, setRefreshKey] = useState(0)
   const previousStatusRef = useRef<Task['status']>(task.status)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [envSandboxInstanceMode, setEnvSandboxInstanceMode] = useState<SandboxInstanceMode>('shared')
   const [showTryAgainDialog, setShowTryAgainDialog] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isTryingAgain, setIsTryingAgain] = useState(false)
@@ -296,6 +318,15 @@ export function TaskDetails({
   const [tryAgainMaxDuration, setTryAgainMaxDuration] = useState(task.maxDuration || maxSandboxDuration)
   const [tryAgainKeepAlive, setTryAgainKeepAlive] = useState(task.keepAlive || false)
   const [tryAgainEnableBrowser, setTryAgainEnableBrowser] = useState(task.enableBrowser || false)
+
+  useEffect(() => {
+    void fetch('/api/tasks/sandbox-policy', { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { sandboxInstanceMode?: string } | null) => {
+        setEnvSandboxInstanceMode(data?.sandboxInstanceMode === 'isolated' ? 'isolated' : 'shared')
+      })
+      .catch(() => setEnvSandboxInstanceMode('shared'))
+  }, [])
   const [tryAgainAgentModels, setTryAgainAgentModels] = useState<Record<string, Array<{ id: string; name: string }>>>(
     {},
   )
@@ -350,6 +381,8 @@ export function TaskDetails({
   const [previewCurrentPath, setPreviewCurrentPath] = useState<string | undefined>(undefined)
   const previewIframeRef = useRef<HTMLIFrameElement | null>(null)
   const previewAbortRef = useRef<AbortController | null>(null)
+  const previewReadyLoggedRef = useRef(false)
+  const previewRestartLoggedRef = useRef(false)
 
   // ── 预览错误自动修复 ────────────────────────────────────────────
   // 两个触发源：
@@ -492,15 +525,13 @@ export function TaskDetails({
     }
   }, [])
 
-  // coding mode: preview pane 打开时加载 URL（若尚未加载）
-  // 注意: 必须检查 !previewGatewayError，否则出错后 loading=false+url=null
-  // 会导致 effect 再次触发 → 无限轮询
-  // 注意: 必须检查 task.previewUrl，等 agent 完成 initCodingProject + startDevServer 后才触发
+  // coding mode: preview pane 打开且沙箱已分配时拉 preview-url SSE（不依赖 15s 轮询拿到 previewUrl）
+  const codingPreviewCanLoad = !!(task.sandboxId || task.previewUrl)
   useEffect(() => {
     if (
       isCodingMode &&
       showPreviewPane &&
-      task.previewUrl &&
+      codingPreviewCanLoad &&
       !previewGatewayUrl &&
       !previewGatewayLoading &&
       !previewGatewayError
@@ -510,6 +541,8 @@ export function TaskDetails({
   }, [
     isCodingMode,
     showPreviewPane,
+    codingPreviewCanLoad,
+    task.sandboxId,
     task.previewUrl,
     previewGatewayUrl,
     previewGatewayLoading,
@@ -557,6 +590,11 @@ export function TaskDetails({
         const data = (await res.json()) as { status: string; vitePort?: number | null }
         if (data.status === 'stopped' && !cancelled) {
           console.log('[preview] Dev server stopped, restarting...')
+          if (!previewRestartLoggedRef.current) {
+            previewRestartLoggedRef.current = true
+            previewReadyLoggedRef.current = false
+            pushLiveTaskLog(task.id, { type: 'info', message: TASK_LOG.PLATFORM_PREVIEW_RESTARTING })
+          }
           if (interval) clearInterval(interval)
           setPreviewLoadingMessage('Dev server 已停止，正在重启...')
           void loadPreviewGatewayUrl()
@@ -572,6 +610,11 @@ export function TaskDetails({
           if (!res.ok) return
           const data = (await res.json()) as { status: string }
           if (data.status === 'stopped' && !cancelled) {
+            if (!previewRestartLoggedRef.current) {
+              previewRestartLoggedRef.current = true
+              previewReadyLoggedRef.current = false
+              pushLiveTaskLog(task.id, { type: 'info', message: TASK_LOG.PLATFORM_PREVIEW_RESTARTING })
+            }
             if (interval) clearInterval(interval)
             setPreviewLoadingMessage('Dev server 已停止，正在重启...')
             void loadPreviewGatewayUrl()
@@ -672,6 +715,17 @@ export function TaskDetails({
   const tabsContainerRef = useRef<HTMLDivElement>(null)
   const tabButtonRefs = useRef<{ [key: string]: HTMLButtonElement | null }>({})
   const navigate = useNavigate()
+
+  useEffect(() => {
+    if (!previewGatewayUrl) {
+      previewReadyLoggedRef.current = false
+      return
+    }
+    if (previewReadyLoggedRef.current) return
+    previewReadyLoggedRef.current = true
+    previewRestartLoggedRef.current = false
+    pushLiveTaskLog(task.id, { type: 'success', message: TASK_LOG.PLATFORM_PREVIEW_READY })
+  }, [previewGatewayUrl, task.id])
 
   // Tabs state for Code pane - each mode has its own tabs and selection
   const [openTabsByMode, setOpenTabsByMode] = useState<{
@@ -1271,7 +1325,7 @@ export function TaskDetails({
     }
 
     setLoadingMcpServers(true)
-    setMcpServers(task.mcpServerList as Connector[])
+    setMcpServers(task.mcpServerList as unknown as Connector[])
     setLoadingMcpServers(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [JSON.stringify(task.mcpServerList)])
@@ -1832,6 +1886,7 @@ export function TaskDetails({
     try {
       const response = await fetch(`/api/tasks/${task.id}`, {
         method: 'DELETE',
+        credentials: 'include',
       })
 
       if (response.ok) {
@@ -1885,8 +1940,7 @@ export function TaskDetails({
 
       if (response.ok) {
         toast.success('沙箱停止成功！')
-        // 刷新任务以更新 UI
-        await refreshTasks()
+        onTaskRefetch?.()
       } else {
         const error = await response.json()
         toast.error(error.error || '停止沙箱失败')
@@ -1908,8 +1962,8 @@ export function TaskDetails({
 
       if (response.ok) {
         toast.success('沙箱启动成功！')
-        // 刷新任务以更新 UI
-        await refreshTasks()
+        pushLiveTaskLog(task.id, { type: 'success', message: TASK_LOG.PLATFORM_SANDBOX_STARTED }, { persist: false })
+        onTaskRefetch?.()
       } else {
         const error = await response.json()
         toast.error(error.error || '启动沙箱失败')
@@ -2140,7 +2194,11 @@ export function TaskDetails({
                 <GitBranch className="h-4 w-4 mr-2" />
                 关联 Git 仓库
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowDeleteDialog(true)} className="text-red-600">
+              <DropdownMenuItem
+                onClick={() => setShowDeleteDialog(true)}
+                className="text-red-600"
+                title={deleteSingleTaskMenuHint(task.sandboxMode, envSandboxInstanceMode)}
+              >
                 <Trash2 className="h-4 w-4 mr-2" />
                 删除任务
               </DropdownMenuItem>
@@ -2529,7 +2587,10 @@ export function TaskDetails({
                     {/* 工具栏:BrowserControls + 刷新 + 全屏 */}
                     <div className="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/20 px-2">
                       <BrowserControls
-                        previewUrl={previewGatewayUrl || 'http://localhost:5173'}
+                        previewUrl={
+                          previewGatewayUrl ||
+                          (codingPreviewCanLoad ? `/api/tasks/${task.id}/preview/5173/` : 'http://localhost:5173')
+                        }
                         bridge={previewBridge}
                         onHardRefresh={() => {
                           setPreviewKey((k) => k + 1)
@@ -2635,12 +2696,24 @@ export function TaskDetails({
                     </div>
                     {/* 内容区 */}
                     <div className="relative flex-1 min-h-0">
-                      {/* 项目未初始化：等 agent 完成 initCodingProject + startDevServer */}
-                      {!task.previewUrl && !previewGatewayLoading && !previewGatewayUrl && !previewGatewayError && (
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground text-center">
+                      {/* 沙箱尚未分配 */}
+                      {!codingPreviewCanLoad &&
+                        !previewGatewayLoading &&
+                        !previewGatewayUrl &&
+                        !previewGatewayError && (
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground text-center">
+                              <Loader2 className="h-5 w-5 animate-spin" />
+                              <span>AI 正在初始化项目，请稍候...</span>
+                            </div>
+                          </div>
+                        )}
+                      {/* 沙箱已有但 preview-url 尚未返回（避免空白 + 地址栏假 /） */}
+                      {codingPreviewCanLoad && !previewGatewayLoading && !previewGatewayUrl && !previewGatewayError && (
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[5]">
+                          <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground bg-background/80 backdrop-blur rounded-md px-4 py-3 shadow text-center">
                             <Loader2 className="h-5 w-5 animate-spin" />
-                            <span>AI 正在初始化项目，请稍候...</span>
+                            <span>正在连接预览网关…</span>
                           </div>
                         </div>
                       )}
@@ -2710,7 +2783,10 @@ export function TaskDetails({
                             <div className="absolute inset-0 z-10">
                               <PreviewPlaceholder />
                               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/60" />
+                                <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground bg-background/80 backdrop-blur rounded-md px-4 py-3 shadow text-center">
+                                  <Loader2 className="h-5 w-5 animate-spin" />
+                                  <span>正在加载预览页面…</span>
+                                </div>
                               </div>
                             </div>
                           )}
@@ -3608,9 +3684,9 @@ export function TaskDetails({
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Task</AlertDialogTitle>
+            <AlertDialogTitle>删除任务</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this task? This action cannot be undone.
+              {deleteSingleTaskDialogBody(task.sandboxMode, envSandboxInstanceMode)}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

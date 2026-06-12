@@ -23,7 +23,7 @@
  *   - Turn 3 assistant 的 parts 含 tool_call(completed) + tool_result(completed)
  *
  * 用法：
- *   npx tsx --env-file=.env scripts/test-memory-flow-e2e.mts
+ *   npx tsx --env-file=../../.env.local scripts/test-memory-flow-e2e.mts
  */
 
 import 'dotenv/config'

@@ -30,7 +30,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files — only root .env.example is committed; all secrets live in .env.local / .env.cloud
 .env*
 !.env.example
 
@@ -70,6 +70,9 @@ data/*.db-wal
 packages/server/data/*.db
 packages/server/data/*.db-shm
 packages/server/data/*.db-wal
+packages/server/*.db
+packages/server/*.db-shm
+packages/server/*.db-wal
 packages/server/.data/*.db
 packages/server/.data/*.db-shm
 packages/server/.data/*.db-wal
@@ -90,6 +93,16 @@ CodeBuddy Code_decompiled
 CodeBuddy Code_files
 decompiled
 decompiled-ui
+.plans/
+.cursor/
+
+# CocoIndex Code (ccc)
+.cocoindex_code/
+/.cocoindex_code/
+
+# CodeGraph
+.codegraph/
+
 # opencode project-level config (auto-generated tool overrides)
 .opencode/tools/
 .opencode/opencode.json

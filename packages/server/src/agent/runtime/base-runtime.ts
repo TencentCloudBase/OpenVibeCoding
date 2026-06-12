@@ -2,8 +2,8 @@
  * BaseAgentRuntime
  *
  * 抽象基类：提供所有 runtime 共享的基础设施：
- * - 沙箱生命周期（SCF 创建 + 健康检查 + workspace init）
- * - MCP Server（sandbox-mcp-proxy）
+ * - Stateful sandbox lifecycle (provider acquire + workspace init)
+ * - MCP client (stateful-mcp-client)
  * - System Prompt（buildAppendPrompt + getCodingSystemPrompt）
  * - PublishableKey 获取
  *
@@ -16,16 +16,22 @@
  */
 
 import type { AgentCallback, AgentCallbackMessage, AgentOptions } from '@coder/shared'
+import { sandboxLogMessageForTool } from '@coder/shared'
+import { createTaskLogger } from '../../lib/task-logger.js'
 import type { ChatStreamResult, IAgentRuntime } from './types.js'
 import type { ModelInfo } from '../cloudbase-agent.service.js'
-import {
-  scfSandboxManager,
-  type SandboxInstance,
-  type SandboxProgressCallback,
-} from '../../sandbox/scf-sandbox-manager.js'
-import { createSandboxMcpClient, type SandboxMcpDeps } from '../../sandbox/sandbox-mcp-proxy.js'
+import { buildStatefulAcquireContext } from '../../sandbox/acquire-context.js'
+import { formatAgsManagerError, formatAgsUserFacingError } from '../../sandbox/ags-error.js'
+import { getSandboxProvider } from '../../sandbox/index.js'
+import type {
+  SandboxInstance,
+  SandboxProgressCallback,
+  McpClientBundle,
+  ToolOverrideConfig,
+} from '../../sandbox/provider/types.js'
 import { getDb } from '../../db/index.js'
-import { resolveSandboxConfig, backfillSandboxConfig } from '../../lib/sandbox-config.js'
+import type { Task } from '../../db/types.js'
+import { STATEFUL_WORKSPACE_ROOT, resolveSandboxConfig, backfillSandboxConfig } from '../../lib/sandbox-config.js'
 import { getCodingSystemPrompt } from '../coding-mode.js'
 import { decrypt } from '../../lib/crypto.js'
 import { encryptJWE } from '../../lib/session.js'
@@ -78,73 +84,41 @@ export async function waitForSandboxHealth(
 }
 
 /**
- * 初始化沙箱工作空间：POST /api/session/init 注入凭证和环境变量
- * 然后 poll /api/scope/info 获取工作目录
+ * @deprecated Use SandboxProvider.prepare() (沙箱业务镜像 POST /api/workspace/init).
+ * Kept for exports/tests; stateful path returns 沙箱业务镜像 workspace root immediately.
  */
 export async function initSandboxWorkspace(
   sandbox: SandboxInstance,
   secret: { envId: string; secretId: string; secretKey: string; token?: string },
-  conversationId: string,
+  _conversationId: string,
   preferredCwd?: string,
   onProgress?: SandboxProgressCallback,
 ): Promise<{ workspace: string; vitePort?: number }> {
-  const fallbackWorkspace = preferredCwd || `/tmp/workspace/${secret.envId}/${conversationId}`
-
+  const fallbackWorkspace = preferredCwd || STATEFUL_WORKSPACE_ROOT
   onProgress?.({ phase: 'init_mcp', message: '初始化工作空间...\n' })
 
-  // Fire session/init in background — injects credentials into the sandbox session.
-  sandbox
-    .request('/api/session/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        env: {
-          CLOUDBASE_ENV_ID: secret.envId,
-          TENCENTCLOUD_SECRETID: secret.secretId,
-          TENCENTCLOUD_SECRETKEY: secret.secretKey,
-          ...(secret.token ? { TENCENTCLOUD_SESSIONTOKEN: secret.token } : {}),
+  try {
+    const provider = getSandboxProvider()
+    const prepared = await provider.prepare(
+      sandbox,
+      {
+        credentials: {
+          envId: secret.envId,
+          secretId: secret.secretId,
+          secretKey: secret.secretKey,
+          sessionToken: secret.token,
         },
-      }),
-      signal: AbortSignal.timeout(300_000),
-    })
-    .then((res) => {
-      if (!res.ok) {
-        console.warn('[BaseRuntime] session/init returned status:', res.status)
-      }
-    })
-    .catch((e) => {
-      console.warn('[BaseRuntime] session/init background error:', (e as Error).message)
-    })
-
-  // Poll /api/scope/info to get the workspace path
-  const maxWaitMs = 120_000
-  const pollInterval = 2000
-  const startTime = Date.now()
-
-  while (Date.now() - startTime < maxWaitMs) {
-    try {
-      const res = await sandbox.request('/api/scope/info', {
-        signal: AbortSignal.timeout(10_000),
-      })
-      if (res.ok) {
-        const data = (await res.json()) as {
-          success?: boolean
-          workspace?: string
-          vitePort?: number | null
-        }
-        if (data.success && data.workspace) {
-          onProgress?.({ phase: 'ready', message: '沙箱已就绪\n' })
-          return { workspace: data.workspace, vitePort: data.vitePort ?? undefined }
-        }
-      }
-    } catch {
-      // scope/info not available yet
-    }
-    await new Promise((r) => setTimeout(r, pollInterval))
+        workspaceHint: fallbackWorkspace,
+        backendOptions: { backend: 'stateful' },
+      },
+      onProgress,
+    )
+    onProgress?.({ phase: 'ready', message: '沙箱已就绪\n' })
+    return { workspace: prepared.workspace || STATEFUL_WORKSPACE_ROOT }
+  } catch (e) {
+    console.warn('[BaseRuntime] initSandboxWorkspace via workspace/init failed:', (e as Error).message)
+    return { workspace: fallbackWorkspace }
   }
-
-  console.warn(`[BaseRuntime] initSandboxWorkspace timeout after ${maxWaitMs / 1000}s`)
-  return { workspace: fallbackWorkspace }
 }
 
 // ─── System Prompt ─────────────────────────────────────────────────────────
@@ -183,6 +157,44 @@ export async function getPublishableKey(envId: string): Promise<string> {
   }
 }
 
+export interface BuildAppendPromptOptions {
+  /** CodeBuddy SDK session dir on the OpenVibeCoding 服务端主机 (not the user workspace). */
+  localHostCwd?: string
+  /** Bash/Read/Write/Glob/Grep are routed to the remote 沙箱业务镜像 sandbox. */
+  remoteToolsActive?: boolean
+}
+
+function buildRemoteWorkspaceSection(
+  sandboxCwd: string,
+  conversationId: string | undefined,
+  options?: BuildAppendPromptOptions,
+): string {
+  const localHostCwd = options?.localHostCwd?.trim()
+  const remoteActive = options?.remoteToolsActive === true
+
+  if (remoteActive) {
+    const localLine = localHostCwd
+      ? `- **本机 SDK 会话目录** \`${localHostCwd}\`：仅用于 CodeBuddy 落盘 JSONL，**不是**用户工作区。禁止把该路径、\`/tmp\`、\`/var/folders\`、\`openvibecoding-agent\` 说成「当前工作目录」。`
+      : `- **本机 SDK 会话目录**：仅用于 CodeBuddy 落盘，**不是**用户工作区。禁止把 \`/tmp\`、\`/var/folders\`、\`openvibecoding-agent\` 说成「当前工作目录」。`
+    return `
+<remote-workspace priority="highest">
+你已连接 **CloudBase 远程沙箱**（Stateful 沙箱业务镜像）。用户项目只存在于沙箱 VM 内。
+
+- **远程工作区根目录**：\`${sandboxCwd}\` — 所有 Bash / Read / Write / Glob / Grep 在该 VM 上执行。
+${localLine}
+- 用户问 **pwd、当前目录、有哪些文件、统计文件数、目录结构、du/wc/find** 等：必须先调用 **Bash 或 Read/Glob** 在远程执行（例如 \`cd ${sandboxCwd} && pwd\`、\`cd ${sandboxCwd} && find . -type f | wc -l\`），**仅根据工具输出**回答。
+- **禁止**根据 SDK \`cwd\`、进程环境或未调用工具时的猜测回答工作区路径。
+- 若工具调用失败：说明沙箱/工具异常并请用户重试，**不要**编造本机临时目录。
+</remote-workspace>`
+  }
+
+  return `
+<remote-workspace>
+远程沙箱尚未连接或工具 override 未就绪。不要声称自己已在 \`/home/user\` 或本机临时目录中工作。
+若用户询问 pwd/文件列表：说明需等待沙箱就绪后再用 Bash 查询，勿用本机路径作答。
+</remote-workspace>`
+}
+
 /**
  * 构建通用 system prompt（任务分类 + CloudBase 指引 + 沙箱上下文）
  */
@@ -192,6 +204,7 @@ export function buildAppendPrompt(
   envId?: string,
   sandboxMode?: 'shared' | 'isolated',
   isCodingMode?: boolean,
+  promptOptions?: BuildAppendPromptOptions,
 ): string {
   const roleLine = isCodingMode
     ? '你是一个通用 AI 编程助手，同时具备腾讯云开发（CloudBase）能力。'
@@ -213,6 +226,9 @@ export function buildAppendPrompt(
 
 3) **自动化/定时类**（"每天…"、"每周…"、"定期…"）
    → 使用 cronTask 工具管理定时任务（见下面 cron-task 章节）。
+
+4) **工作区探查类**（pwd、当前目录、列文件、统计文件数、目录树、du/wc/find/ls）
+   → 必须使用 Bash / Read / Glob 在**远程沙箱**执行并据实回答；**禁止**用本机 SDK 临时目录或未调工具时的猜测作答。
 
 **不确定时优先问用户**："你希望我直接写文案给你，还是做一个可访问的网页？"，不要擅自升级为 2)。
 </task-classification>
@@ -252,11 +268,18 @@ Cron 表达式格式：分 时 日 月 周，例如 "0 20 * * *" 表示每天 20
 </tools-extra-info>`
 
   if (sandboxCwd) {
-    const homeDir = sandboxMode === 'isolated' ? sandboxCwd : sandboxCwd.substring(0, sandboxCwd.lastIndexOf('/'))
+    const homeDir =
+      sandboxCwd === STATEFUL_WORKSPACE_ROOT || sandboxCwd.startsWith('/home/user')
+        ? sandboxCwd
+        : sandboxMode === 'isolated'
+          ? sandboxCwd
+          : sandboxCwd.substring(0, sandboxCwd.lastIndexOf('/'))
     const sandboxPreamble = isCodingMode
       ? ''
-      : '（以下仅在你已判定任务属于"编程/工程类"、决定动手写文件或执行命令时适用；对话/创作类任务请忽略本节。）\n'
+      : '（以下仅在你已判定任务属于"编程/工程类"或"工作区探查类"、决定动手写文件或执行命令时适用；纯对话/创作类任务请忽略本节。）\n'
+    const remoteSection = buildRemoteWorkspaceSection(sandboxCwd, conversationId, promptOptions)
     return `${base}
+${remoteSection}
 
 <sandbox-context>
 ${sandboxPreamble}工具默认在 Home: ${homeDir} 下执行
@@ -287,7 +310,7 @@ export interface RuntimeContext {
   mode: 'default' | 'coding'
   isCodingMode: boolean
 
-  /** SCF 沙箱实例（null 表示沙箱不可用或禁用） */
+  /** Stateful sandbox instance (null when sandbox disabled or unavailable) */
   sandbox: SandboxInstance | null
   /** 沙箱内工作目录路径 */
   sandboxCwd: string | null
@@ -296,8 +319,8 @@ export interface RuntimeContext {
   /** sandbox session id */
   sandboxSessionId: string
 
-  /** MCP client (sandbox-mcp-proxy)，用于 CloudBase 工具调用 */
-  mcpClient: Awaited<ReturnType<typeof createSandboxMcpClient>> | null
+  /** MCP client (stateful in-process server) for CloudBase tools */
+  mcpClient: McpClientBundle | null
 
   /** 构建好的 system prompt（含沙箱上下文 + coding mode） */
   systemPrompt: string
@@ -319,7 +342,7 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
   // ─── 公共设施方法（子类可在 runAgent 中调用） ────────────────────
 
   /**
-   * 初始化完整的沙箱环境：创建 SCF → 健康检查 → workspace init → MCP client。
+   * Initialize sandbox: acquire stateful instance → workspace init → MCP client.
    *
    * @returns RuntimeContext 中与沙箱相关的字段
    */
@@ -337,16 +360,13 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     sandboxMode: 'shared' | 'isolated'
     sandboxSessionId: string
     toolOverrideConfig: { url: string; headers: Record<string, string> } | null
-    mcpClient: Awaited<ReturnType<typeof createSandboxMcpClient>> | null
+    mcpClient: McpClientBundle | null
     /** Short-lived JWE session cookie for authenticating localhost requests (e.g. /cloudbase-mcp) */
     sessionJwe: string | null
   }> {
     const { conversationId, envId, userId, userCredentials, isCodingMode, callback, model } = options
 
-    const sandboxEnabled = !!(
-      process.env.TCB_ENV_ID &&
-      (process.env.SANDBOX_IMAGE_URI || process.env.SCF_SANDBOX_IMAGE_URI)
-    )
+    const sandboxEnabled = !!(process.env.TCB_ENV_ID && process.env.TCB_API_KEY)
     if (!sandboxEnabled || !envId) {
       return {
         sandbox: null,
@@ -361,22 +381,19 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
 
     // Read sandbox config from task record
     let sandboxConfig = resolveSandboxConfig({ envId, taskId: conversationId })
+    let taskRecord: Task | null = null
     try {
-      const taskRecord = await getDb().tasks.findById(conversationId)
+      taskRecord = await getDb().tasks.findById(conversationId)
       await backfillSandboxConfig(
         conversationId,
-        {
-          sandboxMode: taskRecord?.sandboxMode,
-          sandboxSessionId: taskRecord?.sandboxSessionId,
-          sandboxCwd: taskRecord?.sandboxCwd,
-        },
+        { sandboxMode: taskRecord?.sandboxMode, sandboxCwd: taskRecord?.sandboxCwd },
         envId,
         getDb(),
       )
+      taskRecord = await getDb().tasks.findById(conversationId)
       sandboxConfig = resolveSandboxConfig({
-        sandboxMode: taskRecord?.sandboxMode,
-        sandboxSessionId: taskRecord?.sandboxSessionId,
         sandboxCwd: taskRecord?.sandboxCwd,
+        sandboxMode: taskRecord?.sandboxMode,
         envId,
         taskId: conversationId,
       })
@@ -384,37 +401,49 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
       // Non-critical
     }
 
-    const { sandboxMode, sandboxSessionId } = sandboxConfig
-
-    // Progress bridge
+    const taskLogger = createTaskLogger(conversationId)
+    if (callback) {
+      taskLogger.registerACPNotifier((update) => {
+        if (update.sessionUpdate !== 'log') return
+        callback({ type: 'log', content: update.message, logLevel: update.level })
+      })
+    }
+    let lastSandboxProgressTool: string | undefined
+    let lastSandboxPhaseEmitted: string | undefined
     const progressBridge: SandboxProgressCallback = ({ phase }) => {
+      const toolName = `sandbox:${phase}`
+      if (lastSandboxPhaseEmitted === toolName) return
+      lastSandboxPhaseEmitted = toolName
       if (callback) {
-        callback({ type: 'agent_phase', phase: 'preparing', phaseToolName: `sandbox:${phase}` })
+        callback({ type: 'agent_phase', phase: 'preparing', phaseToolName: toolName })
+      }
+      const message = sandboxLogMessageForTool(toolName, { previousPrepareTool: lastSandboxProgressTool })
+      if (message) void taskLogger.info(message)
+      if (toolName !== 'sandbox:ready' && toolName !== 'sandbox:error') {
+        lastSandboxProgressTool = toolName
       }
     }
 
+    const provider = getSandboxProvider()
     let sandboxInstance: SandboxInstance | null = null
-    let toolOverrideConfig: { url: string; headers: Record<string, string> } | null = null
-    let mcpClient: Awaited<ReturnType<typeof createSandboxMcpClient>> | null = null
+    let toolOverrideConfig: ToolOverrideConfig | null = null
+    let mcpClient: McpClientBundle | null = null
     let detectedCwd: string | null = null
     let capturedSessionJwe: string | null = null
 
     try {
-      sandboxInstance = await scfSandboxManager.getOrCreate(
-        conversationId,
-        envId,
-        {
-          mode: 'shared',
-          workspaceIsolation: sandboxMode,
-          sandboxSessionId,
-          isCodingMode,
-        },
+      sandboxInstance = await provider.acquire(
+        buildStatefulAcquireContext({
+          envId,
+          taskId: conversationId,
+          userId,
+          sandboxMode: sandboxConfig.sandboxMode,
+          sandboxId: taskRecord?.sandboxId,
+        }),
         progressBridge,
       )
 
-      toolOverrideConfig = await sandboxInstance.getToolOverrideConfig()
-
-      // Inject hosting presign config for ImageGen, and capture sessionJwe for /cloudbase-mcp auth
+      let hosting: ToolOverrideConfig['hosting'] | undefined
       try {
         const user = await getDb().users.findById(userId)
         if (user) {
@@ -429,56 +458,59 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
               name: user.name || undefined,
             },
           }
-          const sessionJwe = await encryptJWE(session, '2h')
-          capturedSessionJwe = sessionJwe
+          capturedSessionJwe = await encryptJWE(session, '2h')
           const serverPort = Number(process.env.PORT) || 3001
-          ;(toolOverrideConfig as any).hosting = {
+          hosting = {
             presignUrl: `http://localhost:${serverPort}/api/storage/presign?bucketType=static`,
-            sessionCookie: sessionJwe,
+            sessionCookie: capturedSessionJwe,
             sessionId: conversationId,
           }
         }
       } catch {
-        // hosting presign failure doesn't affect main flow
+        // optional
       }
 
-      // Health check
-      const sandboxReady = await waitForSandboxHealth(sandboxInstance, progressBridge)
-      if (!sandboxReady) {
+      toolOverrideConfig = await provider.getToolOverrideConfig(sandboxInstance, hosting)
+
+      let prepared: Awaited<ReturnType<typeof provider.prepare>> | null = null
+      try {
+        prepared = await provider.prepare(
+          sandboxInstance,
+          {
+            credentials: {
+              envId,
+              secretId: userCredentials?.secretId || '',
+              secretKey: userCredentials?.secretKey || '',
+              sessionToken: userCredentials?.sessionToken,
+            },
+            workspaceHint: sandboxConfig.sandboxCwd || STATEFUL_WORKSPACE_ROOT,
+            codingMode: isCodingMode,
+            backendOptions: { backend: 'stateful' },
+          },
+          progressBridge,
+        )
+      } catch {
         if (callback) {
           callback({ type: 'text', content: '沙箱启动超时，将使用受限模式继续对话。\n\n' })
         }
         sandboxInstance = null
-      } else {
-        // Init workspace
-        const initResult = await initSandboxWorkspace(
-          sandboxInstance,
-          {
-            envId,
+      }
+
+      if (sandboxInstance && prepared) {
+        if (prepared.workspace) detectedCwd = prepared.workspace
+
+        mcpClient = await provider.createMcpClient({
+          sandbox: sandboxInstance,
+          getCredentials: async () => ({
+            cloudbaseEnvId: envId,
             secretId: userCredentials?.secretId || '',
             secretKey: userCredentials?.secretKey || '',
-            token: userCredentials?.sessionToken,
-          },
-          conversationId,
-          sandboxConfig.sandboxCwd || undefined,
-          progressBridge,
-        )
-        if (initResult.workspace) {
-          detectedCwd = initResult.workspace
-        }
-
-        // Create MCP client
-        mcpClient = await createSandboxMcpClient({
-          sandbox: sandboxInstance,
-          userId,
-          envId,
+            sessionToken: userCredentials?.sessionToken,
+          }),
           workspaceFolderPaths: detectedCwd || sandboxConfig.sandboxCwd,
           log: (msg) => console.log(msg),
           onArtifact: (artifact) => {
-            if (callback) {
-              callback({ type: 'artifact', artifact })
-            }
-            // 持久化部署记录（所有 runtime 共用）
+            if (callback) callback({ type: 'artifact', artifact })
             persistDeploymentFromArtifact(conversationId, artifact).catch((err) => {
               console.error('[BaseRuntime] Failed to persist deployment:', err)
             })
@@ -492,21 +524,25 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
           currentModel: model,
         })
 
-        // Persist sandboxId to task record
         try {
           await getDb().tasks.update(conversationId, {
-            sandboxId: sandboxInstance.functionName,
+            sandboxId: sandboxInstance.id,
+            sandboxCwd: detectedCwd || sandboxConfig.sandboxCwd,
+            sandboxMode: sandboxConfig.sandboxMode,
+            updatedAt: Date.now(),
           })
         } catch {
-          // Non-critical
+          // non-critical
         }
       }
     } catch (err) {
-      console.error('[BaseRuntime] Sandbox creation failed:', (err as Error).message)
+      const detail = formatAgsManagerError(err, 'sandbox.acquire')
+      const userDetail = formatAgsUserFacingError(err)
+      console.error('[BaseRuntime] Sandbox creation failed:', detail)
       if (callback) {
         callback({
           type: 'text',
-          content: `【沙箱环境创建失败】${(err as Error).message}。将使用受限模式继续对话。\n\n`,
+          content: `【沙箱环境创建失败】\n${userDetail}\n\n将使用受限模式继续对话。\n\n`,
         })
       }
     }
@@ -514,8 +550,8 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     return {
       sandbox: sandboxInstance,
       sandboxCwd: detectedCwd,
-      sandboxMode,
-      sandboxSessionId,
+      sandboxMode: sandboxConfig.sandboxMode,
+      sandboxSessionId: envId,
       toolOverrideConfig,
       mcpClient,
       sessionJwe: capturedSessionJwe,
@@ -531,18 +567,25 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
     sandboxCwd: string | null
     sandboxMode: 'shared' | 'isolated'
     conversationId: string
+    remoteToolsActive?: boolean
+    localHostCwd?: string
   }): Promise<{ systemPrompt: string; publishableKey: string }> {
-    const { envId, isCodingMode, sandboxCwd, sandboxMode, conversationId } = options
+    const { envId, isCodingMode, sandboxCwd, sandboxMode, conversationId, remoteToolsActive, localHostCwd } = options
     const publishableKey = await getPublishableKey(envId)
+    const appendOpts: BuildAppendPromptOptions = {
+      remoteToolsActive,
+      localHostCwd,
+    }
+    const cwdForPrompt = sandboxCwd || undefined
 
     let systemPrompt: string
     if (isCodingMode) {
       systemPrompt =
         getCodingSystemPrompt(envId, publishableKey) +
         '\n\n' +
-        buildAppendPrompt(sandboxCwd || undefined, conversationId, envId, sandboxMode, true)
+        buildAppendPrompt(cwdForPrompt, conversationId, envId, sandboxMode, true, appendOpts)
     } else {
-      systemPrompt = buildAppendPrompt(sandboxCwd || undefined, conversationId, envId, sandboxMode, false)
+      systemPrompt = buildAppendPrompt(cwdForPrompt, conversationId, envId, sandboxMode, false, appendOpts)
     }
 
     return { systemPrompt, publishableKey }

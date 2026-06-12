@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { AlertCircle, Plus, Trash2, GitBranch, Loader2, Search, X, MoreVertical, Smartphone, Clock } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Link, useLocation } from 'react-router'
+import { Link, useLocation, useNavigate } from 'react-router'
 import { Claude, CodeBuddy, Codex, Copilot, Cursor, Gemini, OpenCode } from '@/components/logos'
 import {
   AlertDialog,
@@ -15,12 +15,20 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  deleteAllTasksDialogBody,
+  deleteAllTasksTooltip,
+  newTaskTooltip,
+  type SandboxInstanceMode,
+} from '@/lib/sandbox-instance-mode-copy'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { toast } from 'sonner'
 import { useTasks } from '@/components/app-layout'
+import { taskListAtom, taskListLoadingAtom } from '@/lib/atoms/task-list'
+import { clearTaskListNow, finishDeleteAll } from '@/lib/task-list-store'
 import { useAtomValue } from 'jotai'
 import { sessionAtom } from '@/lib/atoms/session'
 import { PRStatusIcon } from '@/components/pr-status-icon'
@@ -75,7 +83,6 @@ const AGENT_MODELS = {
 } as const
 
 interface TaskSidebarProps {
-  tasks: Task[]
   width?: number
 }
 
@@ -92,17 +99,18 @@ interface GitHubRepoInfo {
   language?: string
 }
 
-export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
+export function TaskSidebar({ width = 288 }: TaskSidebarProps) {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const { refreshTasks, toggleSidebar } = useTasks()
+  const tasks = useAtomValue(taskListAtom)
+  const isInitialLoading = useAtomValue(taskListLoadingAtom)
   const { clearConnectors } = useConnectors()
   const session = useAtomValue(sessionAtom)
   const githubConnection = useAtomValue(githubConnectionAtom)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
-  const [deleteCompleted, setDeleteCompleted] = useState(true)
-  const [deleteFailed, setDeleteFailed] = useState(true)
-  const [deleteStopped, setDeleteStopped] = useState(true)
+  const [sandboxInstanceMode, setSandboxInstanceMode] = useState<SandboxInstanceMode>('shared')
   const [activeTab, setActiveTab] = useState<TabType>('tasks')
 
   // State for repos from API
@@ -118,6 +126,19 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
   const [searchPage, setSearchPage] = useState(1)
   const [searchHasMore, setSearchHasMore] = useState(false)
   const loadMoreRef = useRef<HTMLDivElement>(null)
+
+  const visibleTasks = useMemo(() => tasks.filter((t) => !t.deletedAt), [tasks])
+  const activeTaskCount = visibleTasks.length
+
+  useEffect(() => {
+    if (!session.user) return
+    void fetch('/api/tasks/sandbox-policy', { credentials: 'include' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { sandboxInstanceMode?: string } | null) => {
+        setSandboxInstanceMode(data?.sandboxInstanceMode === 'isolated' ? 'isolated' : 'shared')
+      })
+      .catch(() => setSandboxInstanceMode('shared'))
+  }, [session.user])
 
   // Close sidebar on mobile when clicking any link
   const handleLinkClick = () => {
@@ -135,7 +156,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
   const taskCountByRepo = useMemo(() => {
     const counts = new Map<string, number>()
 
-    tasks.forEach((task) => {
+    visibleTasks.forEach((task) => {
       if (task.repoUrl) {
         try {
           const url = new URL(task.repoUrl)
@@ -153,7 +174,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
     })
 
     return counts
-  }, [tasks])
+  }, [visibleTasks])
 
   // Debounce search query
   useEffect(() => {
@@ -328,36 +349,41 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
     }
   }
 
-  const handleDeleteTasks = async () => {
-    if (!deleteCompleted && !deleteFailed && !deleteStopped) {
-      toast.error('Please select at least one task type to delete')
-      return
-    }
+  const handleDeleteAllTasks = async () => {
+    if (activeTaskCount === 0) return
 
+    const onTaskPage = pathname.startsWith('/tasks/')
+    setShowDeleteDialog(false)
+    clearTaskListNow()
     setIsDeleting(true)
-    try {
-      const actions = []
-      if (deleteCompleted) actions.push('completed')
-      if (deleteFailed) actions.push('failed')
-      if (deleteStopped) actions.push('stopped')
+    if (onTaskPage) navigate('/')
 
-      const response = await fetch(`/api/tasks?action=${actions.join(',')}`, {
+    let deleteSucceeded = false
+    try {
+      const response = await fetch('/api/tasks?action=all', {
         method: 'DELETE',
+        credentials: 'include',
       })
 
       if (response.ok) {
         const result = await response.json()
-        toast.success(result.message)
-        await refreshTasks()
-        setShowDeleteDialog(false)
+        const failed = Array.isArray(result.failed) ? result.failed.length : 0
+        const deleted = Number(result.deleted) || 0
+        deleteSucceeded = deleted > 0
+        if (failed > 0) {
+          toast.warning(`${result.message ?? '已删除'}（${failed} 项警告/失败）`)
+        } else {
+          toast.success(result.message ?? '已删除全部任务')
+        }
       } else {
-        const error = await response.json()
-        toast.error(error.error || 'Failed to delete tasks')
+        const error = await response.json().catch(() => ({}))
+        toast.error(error.error || '删除全部任务失败')
       }
     } catch (error) {
-      console.error('Error deleting tasks:', error)
-      toast.error('Failed to delete tasks')
+      console.error('Error deleting all tasks:', error)
+      toast.error('删除全部任务失败')
     } finally {
+      await finishDeleteAll(deleteSucceeded)
       setIsDeleting(false)
     }
   }
@@ -433,8 +459,8 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
           </Link>
         </div>
         <div className="border-t mb-2" />
-        <div className="mb-2">
-          <Link to="/" onClick={handleNewTaskClick}>
+        <div className="mb-2 flex gap-1.5">
+          <Link to="/" onClick={handleNewTaskClick} className="flex-1 min-w-0">
             <Button variant="outline" size="sm" className="w-full h-8 text-xs">
               <Plus className="h-3.5 w-3.5 mr-2" />
               新建任务
@@ -491,37 +517,54 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
 
       <div className="border-t mb-2" />
 
-      {/* New Task Button */}
-      <div className="mb-2">
-        <Link to="/" onClick={handleNewTaskClick}>
-          <Button variant="outline" size="sm" className="w-full h-8 text-xs">
-            <Plus className="h-3.5 w-3.5 mr-2" />
-            新建任务
-          </Button>
-        </Link>
-      </div>
-
-      {/* Tasks header with delete */}
-      {/* <div className="mb-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-muted-foreground px-1">任务列表</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-6 w-6 p-0"
-            onClick={() => setShowDeleteDialog(true)}
-            disabled={isDeleting || tasks.length === 0}
-            title="删除任务"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
+      {/* New task + delete all */}
+      <TooltipProvider delayDuration={300}>
+        <div className="mb-2 flex gap-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Link to="/" onClick={handleNewTaskClick} className="flex-1 min-w-0">
+                <Button variant="outline" size="sm" className="w-full h-8 text-xs">
+                  <Plus className="h-3.5 w-3.5 mr-2" />
+                  新建任务
+                </Button>
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-[260px]">
+              {newTaskTooltip(sandboxInstanceMode)}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-8 p-0 shrink-0"
+                disabled={isDeleting || activeTaskCount === 0}
+                onClick={() => setShowDeleteDialog(true)}
+                aria-label="删除全部任务"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-[260px]">
+              {deleteAllTasksTooltip(sandboxInstanceMode, activeTaskCount)}
+            </TooltipContent>
+          </Tooltip>
         </div>
-      </div> */}
+      </TooltipProvider>
 
       {/* Tasks Tab Content */}
       {activeTab === 'tasks' && (
         <div className="space-y-1">
-          {tasks.length === 0 ? (
+          {isInitialLoading && visibleTasks.length === 0 ? (
+            <>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Card key={i} className="animate-pulse h-[70px] rounded-lg">
+                  <CardContent className="px-3 py-2" />
+                </Card>
+              ))}
+            </>
+          ) : visibleTasks.length === 0 ? (
             <Card>
               <CardContent className="p-3 text-center text-xs text-muted-foreground">
                 No tasks yet. Create your first task!
@@ -529,7 +572,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
             </Card>
           ) : (
             <>
-              {tasks.slice(0, 10).map((task) => {
+              {visibleTasks.slice(0, 10).map((task) => {
                 const isActive = pathname === `/tasks/${task.id}`
 
                 return (
@@ -638,7 +681,7 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
                   </Link>
                 )
               })}
-              {tasks.length >= 1 && (
+              {visibleTasks.length >= 1 && (
                 <div className="pt-1">
                   <Link to="/tasks" onClick={handleLinkClick}>
                     <Button variant="ghost" size="sm" className="w-full justify-start h-7 px-2 text-xs">
@@ -766,62 +809,22 @@ export function TaskSidebar({ tasks, width = 288 }: TaskSidebarProps) {
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Tasks</AlertDialogTitle>
+            <AlertDialogTitle>删除全部任务</AlertDialogTitle>
             <AlertDialogDescription>
-              Select which types of tasks you want to delete. This action cannot be undone.
+              {deleteAllTasksDialogBody(sandboxInstanceMode, activeTaskCount)}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="py-4">
-            <div className="space-y-4">
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="delete-completed"
-                  checked={deleteCompleted}
-                  onCheckedChange={(checked) => setDeleteCompleted(checked === true)}
-                />
-                <label
-                  htmlFor="delete-completed"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Delete Completed Tasks
-                </label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="delete-failed"
-                  checked={deleteFailed}
-                  onCheckedChange={(checked) => setDeleteFailed(checked === true)}
-                />
-                <label
-                  htmlFor="delete-failed"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Delete Failed Tasks
-                </label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="delete-stopped"
-                  checked={deleteStopped}
-                  onCheckedChange={(checked) => setDeleteStopped(checked === true)}
-                />
-                <label
-                  htmlFor="delete-stopped"
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Delete Stopped Tasks
-                </label>
-              </div>
-            </div>
-          </div>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction
-              onClick={handleDeleteTasks}
-              disabled={isDeleting || (!deleteCompleted && !deleteFailed && !deleteStopped)}
+              onClick={(e) => {
+                e.preventDefault()
+                void handleDeleteAllTasks()
+              }}
+              disabled={isDeleting || activeTaskCount === 0}
               className="bg-red-600 hover:bg-red-700"
             >
-              {isDeleting ? 'Deleting...' : 'Delete Tasks'}
+              {isDeleting ? '正在删除…' : '删除全部'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

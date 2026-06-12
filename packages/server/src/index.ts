@@ -1,4 +1,6 @@
 import { serve } from '@hono/node-server'
+import type { Server } from 'node:http'
+import { attachPreviewWebSocketProxy } from './sandbox/preview-ws-proxy.js'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { serveStatic } from '@hono/node-server/serve-static'
@@ -51,6 +53,7 @@ import miscRoutes from './routes/misc'
 import reposRoutes from './routes/repos'
 import databaseRoutes from './routes/database.js'
 import mcpCloudbaseRoutes from './routes/cloudbase-mcp.js'
+import sandboxStdioMcpRoutes from './routes/sandbox-stdio-mcp.js'
 import storageRoutes from './routes/storage.js'
 import functionsRoutes from './routes/functions.js'
 import sqlRoutes from './routes/sql.js'
@@ -73,6 +76,8 @@ app.use('*', authMiddleware)
 
 // CloudBase MCP HTTP server (for OpenCode ACP runtime — self-authenticates via X-Sandbox-Auth)
 app.route('/cloudbase-mcp', mcpCloudbaseRoutes)
+// Sandbox stdio MCP HTTP proxy (for OpenCode ACP runtime — proxies stdio MCP calls into the sandbox)
+app.route('/sandbox-stdio-mcp', sandboxStdioMcpRoutes)
 
 app.get('/health', (c) => c.json({ status: 'ok' }))
 app.route('/api/auth', authRoutes)
@@ -156,7 +161,7 @@ if (!process.env.ASK_USER_BASE_URL) {
   process.env.ASK_USER_BASE_URL = `http://127.0.0.1:${PORT}`
 }
 
-serve({ fetch: app.fetch, port: PORT }, () => {
+const server = serve({ fetch: app.fetch, port: PORT }, () => {
   console.log(`Server running on http://localhost:${PORT}`)
   if (serveStaticFiles) {
     console.log(`Open http://localhost:${PORT} in your browser`)
@@ -179,6 +184,8 @@ serve({ fetch: app.fetch, port: PORT }, () => {
 
   // Backfill API keys for existing users
   backfillApiKeys()
-})
+}) as Server
+
+attachPreviewWebSocketProxy(server)
 
 export default app

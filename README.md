@@ -54,7 +54,7 @@ An open-source alternative to [OpenAI Codex Sites](https://developers.openai.com
 
 According to Codex Sites' public materials: users invoke it via `@Sites` inside the Codex app to turn a natural-language description into a deployable website, web app, or game, hosted by OpenAI on a Cloudflare Workers-compatible runtime; D1 (database), R2 (object storage), and workspace-authenticated identity are available as optional bindings; the workflow is create → save a reviewable version → deploy to production; environment variables and access modes (`admins_only` / `workspace_all` / `custom`) are managed through the Sites panel in the sidebar.
 
-This project implements: CodeBuddy / OpenCode dual agent runtimes, with CloudBase providing the database, object storage, Functions, domain, and CDN; MCP wires up tool calls; the sandbox runs on SCF + TCR container images (a stronger Agent Sandbox variant lives on the [`feature/stateful-infra`](https://github.com/TencentCloudBase/OpenVibeCoding/tree/feature/stateful-infra) branch); the main loop is create → live preview → one-click deploy, all running inside your own Tencent Cloud account.
+This project implements: CodeBuddy / OpenCode dual agent runtimes, with CloudBase providing the database, object storage, Functions, domain, and CDN; MCP wires up tool calls; the sandbox runs on CloudBase AGS Stateful + TRW vibecoding images (gateway data plane); the main loop is create → live preview → one-click deploy, all running inside your own Tencent Cloud account.
 
 ---
 
@@ -97,8 +97,11 @@ These are closed SaaS products; the comparison below is at the level of **how th
 | Cost model            | Usage-based / subscription | You pay your cloud bill directly                                  |
 | Infrastructure        | Vendor's own cloud         | Tencent CloudBase (DB / Storage / Functions / CDN)                |
 | Agent engine          | Single built-in            | CodeBuddy + OpenCode, swap from the UI                            |
-| Sandbox               | Platform-managed           | CloudBase SCF + TCR container images, customize the runtime image |
+| Environment isolation | User-level only            | shared / isolated / task three-tier isolation, multi-tenant ready |
+| Sandbox               | Platform-managed           | CloudBase AGS Stateful + TRW vibecoding images, gateway data plane |
+| Cloud resource ops    | None / limited             | MCP tools operate DB, Storage, Functions, domains directly          |
 | Deploy targets        | Vendor-hosted only         | Web CDN / WeChat Mini Program / custom domain                     |
+| Human-in-the-loop     | Basic chat                 | Plan mode + four-value ToolConfirm + inline AskUser form          |
 | Extensibility         | UI-only                    | Monorepo, decoupled FE/BE, MCP for tools                          |
 
 > We're not claiming our UX is better than these — they've had years and a lot of polish. The point is **shape**: same conversational create → preview → deploy loop, but in a form you can read, fork, and run yourself.
@@ -107,25 +110,25 @@ These are closed SaaS products; the comparison below is at the level of **how th
 
 ## Feature highlights
 
-| Capability               | Highlights                                                                                                           |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------- |
-| **Dual Agent engines**   | Choose between CodeBuddy and OpenCode, each with its own model list, one-click switch from the UI                    |
-| **Three-tier isolation** | shared / isolated (per user) / task (per-task subaccount), hot-switchable from Admin without restart                 |
-| **Environment pool**     | Pre-created CloudBase env + CAM + Policy; acquisition latency drops from minutes to milliseconds; fallback on miss   |
-| **Coding sandbox**       | SCF container cold start → PTY terminal → Vite dev server with dynamic port; progress split into pull / ready / init |
-| **Live preview**         | Embedded browser toolbar (address bar / nav / refresh); HMR; auto-feedback loop on preview errors                    |
-| **Sub-workspaces**       | Multiple isolated scopes per session, independent dev servers, ports 5173–5199 dynamically allocated                 |
-| **CloudBase MCP**        | 50+ tools covering DB, Storage, Functions, domains, security rules — Agent operates cloud resources directly         |
-| **Human-in-Loop**        | Four-value tool confirmation (allow / always / deny / exit); inline AskUser form without breaking chat context       |
-| **Plan mode**            | Auto-intercepts write operations; three-button decision (execute / refine / reject); cross-component state sharing   |
-| **Tool rendering**       | 10 dedicated renderers (Bash / Read / Write / Edit / Grep / Glob, etc.); Edit ships with built-in git-diff view      |
-| **One-click deploy**     | Web static hosting → CDN; async WeChat Mini Program deploy; unified artifact aggregated in Deployments tab           |
-| **Image generation**     | AI-generated images auto-uploaded to CloudBase hosting; CDN URL returned; rendered inline as Markdown                |
-| **Git archive**          | Auto-push to remote on task end; branch by envId + directory by conversationId; in-memory credentials, no token leak |
-| **Resource dashboard**   | Embedded DB / Storage / SQL / Functions management inside the task detail page                                       |
-| **Admin console**        | User management, env pool monitoring, provision mode config, audit logs                                              |
-| **Scheduled tasks**      | Cron scheduling + distributed lock to prevent re-entry                                                               |
-| **Credential security**  | AES-256-CBC encrypted storage; STS scoped temporary credentials; logs restricted to static strings only              |
+| Capability                  | Highlights                                                                                                            |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **Dual Agent engines**      | Choose between CodeBuddy and OpenCode, each with its own model list, one-click switch from the UI                     |
+| **Three-tier isolation**    | shared / isolated (per user) / task (per-task subaccount), hot-switchable from Admin without restart                  |
+| **Environment pool**        | Pre-created CloudBase env + CAM + Policy; acquisition latency drops from minutes to milliseconds; fallback on miss   |
+| **Coding sandbox**          | AGS tool/instance per env; 沙箱业务镜像 at `/home/user`; preview `/preview/5173`, terminal ttyd `/preview/7681` via OpenVibeCoding proxy |
+| **Live preview**            | Embedded browser toolbar (address bar / nav / refresh); HMR; auto-feedback loop on preview errors                    |
+| **Sub-workspaces**          | Multiple isolated scopes per session, independent dev servers, ports 5173–5199 dynamically allocated                 |
+| **CloudBase MCP**           | 50+ tools covering DB, Storage, Functions, domains, security rules — Agent operates cloud resources directly         |
+| **Human-in-Loop**           | Four-value tool confirmation (allow / always / deny / exit); inline AskUser form without breaking chat context        |
+| **Plan mode**               | Auto-intercepts write operations; three-button decision (execute / refine / reject); cross-component state sharing    |
+| **Tool rendering**          | 10 dedicated renderers (Bash / Read / Write / Edit / Grep / Glob, etc.); Edit ships with built-in git-diff view       |
+| **One-click deploy**        | Web static hosting → CDN; async WeChat Mini Program deploy; unified artifact aggregated in Deployments tab            |
+| **Image generation**        | AI-generated images auto-uploaded to CloudBase hosting; CDN URL returned; rendered inline as Markdown                 |
+| **Git archive**             | Auto-push to remote on task end; branch by envId + directory by conversationId; in-memory credentials, no token leak  |
+| **Resource dashboard**      | Embedded DB / Storage / SQL / Functions management inside the task detail page                                        |
+| **Admin console**           | User management, env pool monitoring, provision mode config, audit logs                                               |
+| **Scheduled tasks**         | Cron scheduling + distributed lock to prevent re-entry                                                                |
+| **Credential security**     | AES-256-CBC encrypted storage; STS scoped temporary credentials; logs restricted to static strings only               |
 
 ---
 
@@ -167,72 +170,66 @@ These are closed SaaS products; the comparison below is at the level of **how th
 
 ## Quick Start
 
-**Prerequisites**
+Env files are **split on purpose** — do not use `.env.cloud` for `pnpm dev` or bake `.env.local` into the cloud image.
 
-- Node.js >= 18
-- Docker
-- A Tencent Cloud account (CloudBase environment + API credentials)
-- A CodeBuddy API Key or OAuth config
+| | Local development | Deploy to CloudRun |
+| --- | --- | --- |
+| **Init** | `./init.sh` → **1** → `.env.local` | `./init.sh` → **2** → `.env.cloud` |
+| **Command** | `pnpm dev` | `pnpm deploy:cloud` |
+| **URL** | Web `http://localhost:5174`, API `:3001` | Default domain `https://*.sh.run.tcloudbase.com` |
+| **Port** | `PORT=3001` | Container listens on **80** (not 9000; 9000 is sandbox TRW only) |
+| **Docs** | [docs/setup.md](docs/setup.md) | [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md) |
 
-**One-shot init**
+Need both paths: run `./init.sh` twice (option 1, then option 2). Template: [.env.example](.env.example).
 
 ```bash
 git clone https://github.com/TencentCloudBase/OpenVibeCoding.git
 cd OpenVibeCoding
-
-# macOS / Linux / Git Bash / WSL
 ./init.sh
 
-# Windows (make sure Node.js >= 18 and pnpm are installed first)
-node scripts/init.mjs
+# macOS / Linux / Git Bash / WSL — or: node scripts/init.mjs (Windows)
+
+pnpm dev            # local
+pnpm deploy:cloud   # cloud (requires @cloudbase/cli)
 ```
-
-The init script runs: Node.js check → pnpm install → `.env.local` generation → Docker check → CloudBase setup → dependency install → CodeBuddy auth → TCR setup → database init.
-
-For detailed steps and troubleshooting, see [docs/setup.md](docs/setup.md).
 
 ---
 
 ## Development
 
+**Uses `.env.local` only.** Coding sandboxes run in CloudBase Stateful + 沙箱业务镜像, not in local Docker for normal tasks.
+
 ```bash
-pnpm dev          # Start web (localhost:5174) and server (localhost:3001) together
+pnpm dev          # Web :5174 + API :3001
 pnpm dev:web      # Frontend only
 pnpm dev:server   # Backend only
-```
-
-## Production
-
-```bash
-pnpm build        # Build all packages
-pnpm start        # Start prod server (port 3001, serves API and static files)
+pnpm build && pnpm start   # Local prod-shaped run (not CloudRun)
 ```
 
 ## Deploy to CloudRun
 
-This project supports one-click deployment to CloudBase CloudRun (container service). No local Docker required — the script uploads source code and Dockerfile to the cloud for building.
+**Separate from local dev.** Reads **`.env.cloud`**, uploads source via CloudBase CLI, builds `Dockerfile` in the cloud.
 
 **Prerequisites**
 
-- Completed `./init.sh` initialization (`TCB_ENV_ID`, `TCB_SECRET_ID`, `TCB_SECRET_KEY` configured)
-- CloudBase CLI installed: `npm i -g @cloudbase/cli`
+- `./init.sh` option **2** → `.env.cloud` with `TCB_SECRET_*`, `TCB_ENV_ID`
+- `npm i -g @cloudbase/cli` and `cloudbase login`
+- `ASK_USER_BASE_URL` may be a placeholder first; deploy writes back `https://…sh.run.tcloudbase.com` when available
 
-**One-click deploy**
+**Run in a real terminal** (upload can take minutes; IDE agents may time out).
 
 ```bash
 pnpm deploy:cloud
 ```
 
-The script will:
-1. Upload source + Dockerfile to CloudBase for cloud-side image building
-2. Deploy as a CloudRun container service (service name: `vibecoding-platform`, port: 80)
-3. Query and display the service access URL
+The script: prints the console link immediately → uploads source (15s heartbeat) → polls until the release settles → may write back `ASK_USER_BASE_URL` → tries to sync env to the service (`--skip-env-sync` to skip).
 
-**After deployment**
+| Flag | Meaning |
+| --- | --- |
+| `--no-wait` | Submit only, no status polling |
+| `--skip-env-sync` | Do not push `.env.cloud` to CloudRun env |
 
-- Access URL format: `https://{serviceName}-{id}.{region}.run.tcloudbase.com`
-- Build progress can be viewed in [CloudBase Console](https://tcb.cloud.tencent.com) → CloudRun → Service Details → Deploy Records
-- Environment variables should be configured in the console's service settings
+Service **`vibecoding-platform`**, public port **80**. Details: [docs/cloudrun-deploy.md](docs/cloudrun-deploy.md).
 
 ## Common commands
 
@@ -263,7 +260,9 @@ pnpm opencode:setup   # Configure OpenCode provider and models
 ├── docs/
 │   ├── setup.md                  # Setup walkthrough & troubleshooting
 │   ├── architecture.md           # System architecture
-│   └── scf-session-sharing.md    # SCF session sharing design
+│   ├── cloudrun-deploy.md        # CloudRun deploy & env
+│   ├── upstream-fork.md          # Fork baseline & sync
+│   └── scf-session-sharing.md    # (legacy) SCF session sharing
 ├── packages/
 │   ├── web/                      # React 19 + Vite frontend
 │   ├── server/                   # Hono backend: Auth, Agent orchestration, Sandbox
@@ -271,6 +270,7 @@ pnpm opencode:setup   # Configure OpenCode provider and models
 │   └── shared/                   # ACP protocol types, task / message schemas
 ├── scripts/
 │   ├── init.mjs                  # Interactive init script
+│   ├── deploy.mjs                # CloudRun one-click deploy
 │   └── setup-tcr.mjs             # TCR image registry setup
 └── init.sh                       # Quick entry
 ```
@@ -285,7 +285,7 @@ pnpm opencode:setup   # Configure OpenCode provider and models
 | Backend  | Hono, Node.js, Drizzle ORM                             |
 | Database | CloudBase DB (primary), SQLite (local fallback)        |
 | AI       | `@tencent-ai/agent-sdk` (CodeBuddy), OpenCode ACP      |
-| Sandbox  | CloudBase SCF, TCR container images                    |
+| Sandbox  | CloudBase AGS Stateful + 沙箱业务镜像, TCR images               |
 | Auth     | JWE session, bcrypt, Arctic (OAuth)                    |
 | Storage  | CloudBase DB, local .jsonl, Git archive                |
 | Protocol | ACP (JSON-RPC 2.0 + SSE), MCP (Model Context Protocol) |
@@ -324,7 +324,6 @@ MAX_SANDBOX_DURATION=300
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
 GEMINI_API_KEY=
-GIT_PERSONAL_AUTH=
 ```
 
 ---
@@ -352,7 +351,7 @@ The command will:
 1. Call the Tencent CloudBase AI+ endpoint [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) to fetch models
 2. Walk you through configuring the Tencent CloudBase API Key
 3. Take the complete config from the catalog and write it to `.opencode/opencode.json` (including npm / baseURL / models)
-4. Append the API Key to `packages/server/.env`
+4. Append the API Key to `.env.local`
 
 ### Example output
 
@@ -378,7 +377,7 @@ The command will:
 ```
 
 ```bash
-# packages/server/.env gets the API Key appended
+# .env.local gets the API Key appended
 CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 ```
 
@@ -418,7 +417,7 @@ pnpm codebuddy:setup
 The command will:
 
 1. Call the Tencent CloudBase AI+ endpoint [DescribeAIModels](https://cloud.tencent.com/document/product/876/131318) to fetch models enabled in the current environment
-2. Check for `CLOUDBASE_API_KEY`; if missing, prompt for input and write it to `packages/server/.env`
+2. Check for `CLOUDBASE_API_KEY`; if missing, prompt for input and write it to `.env.local`
 3. Also set `CODEBUDDY_USE_CUSTOM_MODELS=true`
 4. Generate `packages/server/.config/.codebuddy/models.json` for the SDK to read
 
@@ -443,7 +442,7 @@ The command will:
 ```
 
 ```bash
-# packages/server/.env gets auto-appended
+# .env.local gets auto-appended
 CLOUDBASE_API_KEY=eyJhbGciOiJS.xxxxxxxx
 CODEBUDDY_USE_CUSTOM_MODELS=true
 ```
@@ -479,7 +478,7 @@ Append a custom entry to the `models` array (note: do **not** set `vendor` to `c
 }
 ```
 
-Make sure the matching env variable is defined in `packages/server/.env`, and set:
+Make sure the matching env variable is defined in `.env.local`, and set:
 
 ```bash
 CODEBUDDY_USE_CUSTOM_MODELS=true

@@ -470,7 +470,10 @@ export interface AgentCallbackMessage {
     | 'ask_user'
     | 'artifact'
     | 'agent_phase'
+    | 'log'
   content?: string
+  /** log: severity (static message in content) */
+  logLevel?: 'info' | 'error' | 'success' | 'command'
   name?: string
   input?: unknown
   /** tool_call id 或 assistant message id (取决于消息类型) */

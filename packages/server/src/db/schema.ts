@@ -220,6 +220,7 @@ export const userResources = sqliteTable('user_resources', {
   taskId: text('task_id').references(() => tasks.id, { onDelete: 'set null' }),
   status: text('status').notNull().default('pending'),
   envId: text('env_id'),
+  statefulToolId: text('stateful_tool_id'),
   envAlias: text('env_alias'),
   envRegion: text('env_region'),
   cosTagValue: text('cos_tag_value'),

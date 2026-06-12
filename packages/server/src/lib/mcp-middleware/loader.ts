@@ -47,6 +47,14 @@ export interface PolicyLoaderOptions {
   allowList?: string[]
 }
 
+/** tsup bundles server into dist/*.js; avoid scanning chunk/hash artifacts as policies. */
+export function isBundledServerArtifact(fileName: string): boolean {
+  if (fileName === 'index.js') return true
+  if (fileName.startsWith('chunk-')) return true
+  if (/^[a-z0-9_.-]+-[A-Z0-9]{6,}\.(js|mjs)$/.test(fileName)) return true
+  return false
+}
+
 export function createPolicyLoader<Extra = Record<string, unknown>>(
   /** 扫描目录的绝对路径（一般是 path.dirname(fileURLToPath(import.meta.url))） */
   dir: string,
@@ -54,6 +62,8 @@ export function createPolicyLoader<Extra = Record<string, unknown>>(
   logTag: string = 'mcp-policies',
   /** 全局过滤配置 */
   options: PolicyLoaderOptions = {},
+  /** When set (recommended for bundled production), skip filesystem scan entirely. */
+  staticPolicies?: Record<string, McpPolicy<Extra>>,
 ): PolicyLoader<Extra> {
   const policyMap = new Map<string, McpPolicy<Extra>>()
   let loaded = false
@@ -92,6 +102,14 @@ export function createPolicyLoader<Extra = Record<string, unknown>>(
       if (loaded) return
       loaded = true
 
+      if (staticPolicies) {
+        for (const [toolName, policy] of Object.entries(staticPolicies)) {
+          policyMap.set(toolName, policy)
+          console.log(`[${logTag}] loaded:`, toolName)
+        }
+        return
+      }
+
       let entries: string[]
       try {
         entries = fs.readdirSync(dir)
@@ -102,6 +120,7 @@ export function createPolicyLoader<Extra = Record<string, unknown>>(
 
       const candidates = entries.filter((name) => {
         if (name.startsWith('_')) return false
+        if (isBundledServerArtifact(name)) return false
         return name.endsWith('.ts') || name.endsWith('.js') || name.endsWith('.mjs')
       })
 

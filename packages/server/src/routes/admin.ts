@@ -4,6 +4,7 @@ import { requireAdmin, type AppEnv } from '../middleware/admin'
 import { issueTempCredentials } from '../middleware/auth.js'
 import { provisionUserResources, destroyProvisionedResources } from '../cloudbase/provision.js'
 import { getProvisionMode, isValidProvisionMode, resolveProvisionMode } from '../lib/provision-config.js'
+import { isValidSandboxInstanceMode, resolveSandboxInstanceMode } from '../lib/sandbox-config.js'
 import { persistenceService } from '../agent/persistence.service.js'
 import { nanoid } from 'nanoid'
 import bcrypt from 'bcryptjs'
@@ -959,12 +960,19 @@ admin.get('/system-settings', async (c) => {
     const pm = await resolveProvisionMode()
     settingsMap['provision_mode'] = pm.value
 
+    const sim = await resolveSandboxInstanceMode()
+    settingsMap['sandbox_instance_mode'] = sim.value
+
     return c.json({
       settings: settingsMap,
       meta: {
         provision_mode: {
           source: pm.source, // 'db' | 'env' | 'default'
           envDefault: pm.envDefault, // 用户重置后会回落到的值
+        },
+        sandbox_instance_mode: {
+          source: sim.source,
+          envDefault: sim.envDefault,
         },
       },
     })
@@ -987,6 +995,11 @@ admin.put('/system-settings/:key', async (c) => {
     if (key === 'provision_mode') {
       if (!isValidProvisionMode(value)) {
         return c.json({ error: 'Invalid provision mode. Must be: shared, isolated, or task' }, 400)
+      }
+    }
+    if (key === 'sandbox_instance_mode') {
+      if (!isValidSandboxInstanceMode(value)) {
+        return c.json({ error: 'Invalid sandbox instance mode. Must be: shared or isolated' }, 400)
       }
     }
 

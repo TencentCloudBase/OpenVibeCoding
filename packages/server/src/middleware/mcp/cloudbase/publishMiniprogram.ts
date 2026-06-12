@@ -1,13 +1,13 @@
 /**
  * Augmented tool: publishMiniprogram
  *
- * 完全新增的工具（原 mcporter 没有）。负责调用沙箱 /api/miniprogram/deploy 接口
- * 完成小程序预览/上传，并触发 artifact 给前端展示二维码。
- *
- * 历史背景：原本在 sandbox-mcp-proxy.ts 中硬编码（line 374-505 PUBLISH_MP_*）。
+ * Calls 沙箱业务镜像 vibecoding jobs API:
+ *   POST /api/jobs/miniprogram-deploy
+ * Poll via getDeployJobStatus → GET /api/jobs/:jobId
  */
 
 import type { McpPolicy } from './_index.js'
+import { miniprogramStartToJson, startTrwMiniprogramDeploy } from '../../../sandbox/trw-miniprogram-client.js'
 
 export const policy: McpPolicy = {
   description: 'Deploy WeChat miniprogram (preview / upload)',
@@ -55,71 +55,54 @@ export const policy: McpPolicy = {
     }
 
     try {
-      const res = await ctx.extra.sandboxFetch('/api/miniprogram/deploy', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          appid: args.appId,
-          privateKey: creds.privateKey,
-          action: args.action,
-          projectPath: args.projectPath,
-          version: args.version,
-          description: args.description,
-          robot: args.robot,
-        }),
-        signal: AbortSignal.timeout(120_000),
+      const outcome = await startTrwMiniprogramDeploy(ctx.extra.sandboxFetch, {
+        appid: args.appId,
+        privateKey: creds.privateKey,
+        action: args.action,
+        projectPath: args.projectPath,
+        version: args.version,
+        description: args.description,
+        robot: args.robot,
       })
 
-      const body = (await res.json().catch(() => null)) as any
-
-      if (!res.ok || !body) {
-        return JSON.stringify({
-          error: true,
-          status: res.status,
-          message: body?.error || body?.message || `HTTP ${res.status}`,
-        })
+      if (!outcome.ok) {
+        return miniprogramStartToJson(outcome)
       }
 
-      if (body.async) {
-        return JSON.stringify({
-          async: true,
-          jobId: body.jobId,
-          message: '部署仍在进行中，请稍后使用 getDeployJobStatus 工具查询结果',
-        })
+      const envelope = outcome.envelope
+      if (envelope.async) {
+        return miniprogramStartToJson(outcome)
       }
 
-      if (!body.success) {
-        return JSON.stringify({
-          error: true,
-          message: body.error || body.result?.errMsg || 'Deploy failed',
-          result: body.result,
-        })
+      if (!envelope.success) {
+        return miniprogramStartToJson(outcome)
       }
 
-      // 成功 → artifact
       const onArtifact = ctx.extra.onArtifact
+      const result = envelope.result as { qrcode?: { mimeType?: string; base64?: string } } | undefined
       if (onArtifact) {
-        if (body.result?.qrcode) {
-          const qrcode = `data:${body.result.qrcode.mimeType || 'image/png'};base64,${body.result.qrcode.base64}`
+        if (result?.qrcode?.base64) {
+          const qrcode = `data:${result.qrcode.mimeType || 'image/png'};base64,${result.qrcode.base64}`
           onArtifact({
             title: '小程序预览二维码',
             contentType: 'image',
             data: qrcode,
-            metadata: { deploymentType: 'miniprogram', ...body },
+            metadata: { deploymentType: 'miniprogram', result: envelope.result },
           })
         } else if (args.action === 'upload') {
           onArtifact({
             title: '小程序上传成功',
             contentType: 'json',
-            data: JSON.stringify(body),
+            data: JSON.stringify(envelope),
             metadata: { deploymentType: 'miniprogram', appId: args.appId },
           })
         }
       }
 
-      return JSON.stringify(body)
-    } catch (e: any) {
-      return JSON.stringify({ error: true, message: e.message })
+      return JSON.stringify(envelope)
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      return JSON.stringify({ error: true, message })
     }
   },
 }

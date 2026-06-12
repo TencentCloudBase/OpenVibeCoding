@@ -99,7 +99,8 @@ export function usePreviewBridge(options: UsePreviewBridgeOptions): PreviewBridg
 
     let iframeOrigin: string | null = null
     try {
-      iframeOrigin = new URL(previewUrl).origin
+      const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost'
+      iframeOrigin = new URL(previewUrl, base).origin
     } catch {
       iframeOrigin = null
     }

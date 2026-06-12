@@ -94,7 +94,7 @@ exports.main = async (event, context) => {
 | 更新环境变量 | `updateFunctionConfig` |
 | 删除云函数 | 通过 SDK 删除 |
 
-这些 API 在沙箱 MCP 工具中已有封装（`sandbox-mcp-proxy.ts`），可复用。
+这些 API 在 `stateful-mcp-client` / CloudBase MCP 中间件中封装，可复用。
 
 ### 服务端新增接口
 

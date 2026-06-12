@@ -16,11 +16,14 @@ import { toast } from 'sonner'
 import type { ExtendedSessionUpdate, PermissionAction, AgentPermissionMode } from '@coder/shared'
 import type { TaskMessage, AskUserQuestionData, ToolConfirmData, DeploymentInfo, ArtifactInfo } from '@/types/task-chat'
 import { planModeAtomFamily } from '@/lib/atoms/plan-mode'
+import { streamLogsAtomFamily } from '@/lib/atoms/stream-logs'
+import type { LogEntry } from '@coder/shared'
+import { pushLiveTaskLog } from '@/lib/push-live-task-log'
 import { AcpClient } from '@/lib/acp'
-import { applySessionUpdate, type AgentPhaseInfo } from './apply-session-update'
+import { applySessionUpdate, IDLE_AGENT_PHASE, type AgentPhaseInfo } from './apply-session-update'
 
 /** Agent 执行阶段的空闲态;Hook 初始化与 turn 结束时复位用 */
-const IDLE_PHASE: AgentPhaseInfo = { phase: null, timestamp: 0 }
+const IDLE_PHASE: AgentPhaseInfo = IDLE_AGENT_PHASE
 
 // ─── Stream Phase ─────────────────────────────────────────────────────
 
@@ -76,6 +79,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
   //   · `planMode.active` 决定下一轮 prompt 的 permissionMode
   //   · planContent + toolCallId 用于回显审批卡片
   const [planMode, setPlanMode] = useAtom(planModeAtomFamily(taskId))
+  const [streamLogs, setStreamLogs] = useAtom(streamLogsAtomFamily(taskId))
 
   // ── Agent phase state (P4) ──
   //   · 服务端在关键边界推送 `sessionUpdate: 'agent_phase'` 事件
@@ -107,10 +111,11 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
     setManualInputsByTool({})
     setDeploymentNotifications([])
     setArtifacts([])
+    setStreamLogs([])
     phaseRef.current = 'idle'
     setIsSending(false)
     setIsStreamingResponse(false)
-  }, [taskId])
+  }, [setStreamLogs, taskId])
 
   // ════════════════════════════════════════════════════════════════════
   // AskUser / ToolConfirm cleanup helpers
@@ -140,7 +145,9 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
     phaseRef.current = 'streaming'
     setIsSending(true)
     setIsStreamingResponse(true)
-  }, [])
+    setAgentPhase(IDLE_PHASE)
+    setStreamLogs([])
+  }, [setStreamLogs])
 
   const exitStreaming = useCallback(async () => {
     const wasWaiting = phaseRef.current === 'waiting_for_interaction'
@@ -153,13 +160,24 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
     // 避免上一轮的 "执行 Bash" 之类的指示器残留到下一轮启动前。
     setAgentPhase(IDLE_PHASE)
     if (!wasWaiting) {
-      optionsRef.current.onStreamComplete?.()
+      const onDone = optionsRef.current.onStreamComplete?.()
+      if (onDone && typeof (onDone as Promise<unknown>).then === 'function') {
+        await onDone
+      }
     }
-  }, [])
+    setStreamLogs([])
+  }, [setStreamLogs])
 
   // ════════════════════════════════════════════════════════════════════
   // SSE stream processing
   // ════════════════════════════════════════════════════════════════════
+
+  const appendStreamLog = useCallback(
+    (entry: LogEntry) => {
+      pushLiveTaskLog(taskId, entry, { persist: false })
+    },
+    [taskId],
+  )
 
   /** Dispatch a single SSE sessionUpdate event to the appropriate state setter. */
   const applyStreamUpdate = useCallback(
@@ -179,9 +197,10 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
         clearQuestionState,
         setIsSending,
         setIsStreamingResponse,
+        appendStreamLog,
       })
     },
-    [clearQuestionState, setPlanMode, taskId],
+    [appendStreamLog, clearQuestionState, setPlanMode, taskId],
   )
 
   // ════════════════════════════════════════════════════════════════════
@@ -535,6 +554,9 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
     // Agent phase (P4)
     agentPhase,
     setAgentPhase,
+
+    // Live platform logs (SSE log → LogsPane)
+    streamLogs,
 
     // Phase (for fetchMessages guard)
     canFetchMessages,
