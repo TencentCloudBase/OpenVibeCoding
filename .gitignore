@@ -30,7 +30,7 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files — only root .env.example is committed; all secrets live in .env.local / .env.cloud
 .env*
 !.env.example
 
@@ -73,6 +73,9 @@ packages/server/data/*.db-wal
 packages/server/.data/*.db
 packages/server/.data/*.db-shm
 packages/server/.data/*.db-wal
+packages/server/*.db
+packages/server/*.db-shm
+packages/server/*.db-wal
 packages/dashboard/vite.config.d.ts
 packages/dashboard/vite.config.js
 dist
@@ -93,14 +96,18 @@ decompiled-ui
 # opencode project-level config (auto-generated tool overrides)
 .opencode/tools/
 .opencode/opencode.json
+.plans/
+.cursor/
+
+# CocoIndex Code (ccc)
+.cocoindex_code/
+/.cocoindex_code/
+
+# CodeGraph
+.codegraph/
 
 # codebuddy custom models (auto-generated from CloudBase)
 packages/server/.config/.codebuddy/models.json
 docs/marketing
 .deploy-function
 .claude
-
-# OAK example 19a/19b 跨进程 handoff (临时,不入库)
-packages/open-agent-kernel/examples/.last-userid
-packages/open-agent-kernel/examples/config.local.json
-examples/kernel-beta-quickstart/config.local.json
