@@ -15,7 +15,7 @@
  *   - 平台资产:skills/ / rules/ / commands/ / agents/ / output-styles/ / themes/ /
  *               plugins/ — 业务方在镜像/cwd 管理,不跨用户同步
  *   - SDK 内部状态:.claude.json(OAuth/IDE/MCP 状态)/ .last-cleanup / backups/ /
- *               cache/ / shell-snapshots/ / statsig/ / telemetry/ / debug/ / downloads/
+ *               cache/ / logs/ / shell-snapshots/ / statsig/ / telemetry/ / debug/ / downloads/
  *   - 进程级临时:ide/ / session-env/ / sessions/ / todos/
  *   - 配置文件:settings.json / settings.local.json / keybindings.json / history.jsonl
  *               (settings 故意不同步:OAK 启动时注入 autoMemoryEnabled 默认值,
@@ -66,6 +66,7 @@ export function matchesSyncRule(relPath: string): boolean {
   if (isUnderTopDir(relPath, 'plugins')) return false
 
   // ── 显式排除:SDK 内部状态 / 临时缓存 ────────────
+  if (isUnderTopDir(relPath, 'logs')) return false
   if (isUnderTopDir(relPath, 'backups')) return false
   if (isUnderTopDir(relPath, 'cache')) return false
   if (isUnderTopDir(relPath, 'shell-snapshots')) return false

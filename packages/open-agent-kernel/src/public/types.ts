@@ -71,7 +71,7 @@ export interface SandboxConfig {
    * 默认 AGS 数据面认证 JWT。
    *
    * 仅在 `enabled: true` 且未显式传 `runtime` 时用于构造默认 AgsStatefulSandbox。
-   * 不传时读取 `CLOUDBASE_APIKEY` 或 `OAK_SANDBOX_API_KEY`。
+   * 不传时读取 `CLOUDBASE_APIKEY`。
    */
   apiKey?: string
   /**
@@ -256,25 +256,25 @@ export type McpServerConfig = SdkMcpServerConfig
  */
 export type ApprovalDecision =
   | {
-      kind: 'allow'
-      /**
-       * 决策影响范围（默认 'once'）：
-       * - 'once'：仅本次工具调用
-       * - 'session'：本次 session 内同名工具自动放行（不再触发审批）
-       * - 'forever'：业务可自行解释为"用户偏好"长期记忆（PR #7.0 不保证持久化语义，
-       *              业务侧需自己实现跨 session 记忆）
-       */
-      scope?: 'once' | 'session' | 'forever'
-      /** 用户改写了工具参数（如修正路径） */
-      updatedInput?: Record<string, unknown>
-    }
+    kind: 'allow'
+    /**
+     * 决策影响范围（默认 'once'）：
+     * - 'once'：仅本次工具调用
+     * - 'session'：本次 session 内同名工具自动放行（不再触发审批）
+     * - 'forever'：业务可自行解释为"用户偏好"长期记忆（PR #7.0 不保证持久化语义，
+     *              业务侧需自己实现跨 session 记忆）
+     */
+    scope?: 'once' | 'session' | 'forever'
+    /** 用户改写了工具参数（如修正路径） */
+    updatedInput?: Record<string, unknown>
+  }
   | {
-      kind: 'deny'
-      scope?: 'once' | 'session'
-      reason?: string
-      /** true 时本轮 agent 运行直接结束，不让模型对这次 deny 继续思考 */
-      interrupt?: boolean
-    }
+    kind: 'deny'
+    scope?: 'once' | 'session'
+    reason?: string
+    /** true 时本轮 agent 运行直接结束，不让模型对这次 deny 继续思考 */
+    interrupt?: boolean
+  }
 
 /**
  * 暂存的待审批工具调用（写入 PermissionStore 的数据形态）。
@@ -380,13 +380,13 @@ export interface AgentHooks {
 export type UserMemoryConfig =
   | boolean
   | {
-      /**
-       * 是否启用用户级长期记忆。
-       *
-       * `userMemory: true` 是 `{ enabled: true }` 的简写。
-       */
-      enabled?: boolean
-    }
+    /**
+     * 是否启用用户级长期记忆。
+     *
+     * `userMemory: true` 是 `{ enabled: true }` 的简写。
+     */
+    enabled?: boolean
+  }
 
 export interface UserMessageContext {
   conversationId: string
@@ -810,93 +810,93 @@ export type SessionEvent =
   | { type: 'message_delta'; text: string }
   | { type: 'message_complete'; text: string }
   | {
-      type: 'tool_call'
-      toolUseId: string
-      toolName: string
-      input: unknown
-    }
+    type: 'tool_call'
+    toolUseId: string
+    toolName: string
+    input: unknown
+  }
   | {
-      type: 'tool_result'
-      toolUseId: string
-      toolName: string
-      output: unknown
-      isError: boolean
-    }
+    type: 'tool_result'
+    toolUseId: string
+    toolName: string
+    output: unknown
+    isError: boolean
+  }
   | {
-      /**
-       * 工具调用需要用户审批（PR #7.0）。
-       *
-       * 收到此事件后，本轮 SDK 运行会自然结束（紧跟 `session_idle.requires_action`）。
-       * 业务收集到决策后调 `session.respondApproval({ toolUseId, decision })` 继续。
-       *
-       * 协议无关字段：客户端协议（ACP/AG-UI/SSE）适配只需把这些字段映射到自家协议。
-       */
-      type: 'tool_approval_required'
-      toolUseId: string
-      toolName: string
-      input: unknown
-      /**
-       * 给客户端 UI 的辅助提示，**协议无关**。
-       * - displayName：UI 按钮 / 标题用的短名
-       * - description：长描述（"will read files in ~/Downloads"）
-       * - suggestedScopes：UI 可呈现的"作用范围"选项（once/session/forever）
-       */
-      hints?: {
-        displayName?: string
-        description?: string
-        suggestedScopes?: Array<'once' | 'session' | 'forever'>
-      }
-      /**
-       * Resume token（业务可不持久化，conversationId + toolUseId 就够 resumeApproval；
-       * 此字段留作未来跨进程 RunState 持久化的扩展点）。
-       */
-      runStateJson: string
+    /**
+     * 工具调用需要用户审批（PR #7.0）。
+     *
+     * 收到此事件后，本轮 SDK 运行会自然结束（紧跟 `session_idle.requires_action`）。
+     * 业务收集到决策后调 `session.respondApproval({ toolUseId, decision })` 继续。
+     *
+     * 协议无关字段：客户端协议（ACP/AG-UI/SSE）适配只需把这些字段映射到自家协议。
+     */
+    type: 'tool_approval_required'
+    toolUseId: string
+    toolName: string
+    input: unknown
+    /**
+     * 给客户端 UI 的辅助提示，**协议无关**。
+     * - displayName：UI 按钮 / 标题用的短名
+     * - description：长描述（"will read files in ~/Downloads"）
+     * - suggestedScopes：UI 可呈现的"作用范围"选项（once/session/forever）
+     */
+    hints?: {
+      displayName?: string
+      description?: string
+      suggestedScopes?: Array<'once' | 'session' | 'forever'>
     }
+    /**
+     * Resume token（业务可不持久化，conversationId + toolUseId 就够 resumeApproval；
+     * 此字段留作未来跨进程 RunState 持久化的扩展点）。
+     */
+    runStateJson: string
+  }
   | {
-      /**
-       * 客户端工具需要客户端执行（PR #7.1）。
-       *
-       * 当模型调用 AgentConfig.tools[] 中声明的"client-side custom tool"时，
-       * kernel 不会真的调 execute()，而是让 PreToolUse hook 拦截：
-       *   1. 写一个 pending entry 到内部 client-tool store
-       *   2. 用一个 sentinel deny 让 SDK 终止本轮
-       *   3. 翻译层识别 sentinel 后吐出本事件
-       *
-       * 业务侧收到本事件 → 在客户端实际执行工具 → 调
-       * `session.respondToolUse({ toolUseId, output, isError? })` 注入结果，
-       * kernel 会 resume 一轮 SDK 让模型重发同名工具，hook 这次会注入结果，
-       * 模型基于真实结果继续。
-       */
-      type: 'tool_use_required'
-      toolUseId: string
-      toolName: string
-      input: unknown
-    }
+    /**
+     * 客户端工具需要客户端执行（PR #7.1）。
+     *
+     * 当模型调用 AgentConfig.tools[] 中声明的"client-side custom tool"时，
+     * kernel 不会真的调 execute()，而是让 PreToolUse hook 拦截：
+     *   1. 写一个 pending entry 到内部 client-tool store
+     *   2. 用一个 sentinel deny 让 SDK 终止本轮
+     *   3. 翻译层识别 sentinel 后吐出本事件
+     *
+     * 业务侧收到本事件 → 在客户端实际执行工具 → 调
+     * `session.respondToolUse({ toolUseId, output, isError? })` 注入结果，
+     * kernel 会 resume 一轮 SDK 让模型重发同名工具，hook 这次会注入结果，
+     * 模型基于真实结果继续。
+     */
+    type: 'tool_use_required'
+    toolUseId: string
+    toolName: string
+    input: unknown
+  }
   | {
-      /**
-       * Agent 主动向用户提问。
-       *
-       * 当模型调用内置 askUser 工具时，kernel 用 sentinel 中断 turn，
-       * 翻译层识别后吐出本事件。业务侧收集用户回答后调
-       * `session.respondAskUser({ toolUseId, answer })` 注入回答并 resume。
-       *
-       * 与 codebuddy 的区别：codebuddy 的 AskUser hang 住进程；
-       * OAK 的 askUser 是流终止+resume，不阻塞、支持分布式。
-       */
-      type: 'ask_user_required'
-      toolUseId: string
-      question: string
-      options?: string[]
-    }
+    /**
+     * Agent 主动向用户提问。
+     *
+     * 当模型调用内置 askUser 工具时，kernel 用 sentinel 中断 turn，
+     * 翻译层识别后吐出本事件。业务侧收集用户回答后调
+     * `session.respondAskUser({ toolUseId, answer })` 注入回答并 resume。
+     *
+     * 与 codebuddy 的区别：codebuddy 的 AskUser hang 住进程；
+     * OAK 的 askUser 是流终止+resume，不阻塞、支持分布式。
+     */
+    type: 'ask_user_required'
+    toolUseId: string
+    question: string
+    options?: string[]
+  }
   | {
-      type: 'handoff'
-      fromAgent: string
-      toAgent: string
-    }
+    type: 'handoff'
+    fromAgent: string
+    toAgent: string
+  }
   | {
-      type: 'session_idle'
-      reason: 'completed' | 'requires_action' | 'aborted' | 'error'
-    }
+    type: 'session_idle'
+    reason: 'completed' | 'requires_action' | 'aborted' | 'error'
+  }
   | { type: 'error'; error: Error }
 
 // ============================================================
@@ -948,33 +948,33 @@ export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
   | {
-      type: 'image'
-      mimeType: string
-      /**
-       * 稳定引用：长期可解析为可访问 URL。
-       * - CloudBase 存储：`{ kind: 'cos', fileId: 'cloud://...' }`
-       * - 内联 base64：`{ kind: 'base64', dataUrl: 'data:image/png;base64,...' }`
-       * - 外部 URL：`{ kind: 'url', url: 'https://...' }`（kernel 不保证有效期）
-       */
-      ref: { kind: 'cos'; fileId: string } | { kind: 'base64'; dataUrl: string } | { kind: 'url'; url: string }
-    }
+    type: 'image'
+    mimeType: string
+    /**
+     * 稳定引用：长期可解析为可访问 URL。
+     * - CloudBase 存储：`{ kind: 'cos', fileId: 'cloud://...' }`
+     * - 内联 base64：`{ kind: 'base64', dataUrl: 'data:image/png;base64,...' }`
+     * - 外部 URL：`{ kind: 'url', url: 'https://...' }`（kernel 不保证有效期）
+     */
+    ref: { kind: 'cos'; fileId: string } | { kind: 'base64'; dataUrl: string } | { kind: 'url'; url: string }
+  }
   | {
-      type: 'tool_call'
-      toolUseId: string
-      toolName: string
-      input: unknown
-      status?: ToolStatus
-    }
+    type: 'tool_call'
+    toolUseId: string
+    toolName: string
+    input: unknown
+    status?: ToolStatus
+  }
   | {
-      type: 'tool_result'
-      toolUseId: string
-      output: unknown
-      isError: boolean
-      status?: ToolStatus
-    }
+    type: 'tool_result'
+    toolUseId: string
+    output: unknown
+    isError: boolean
+    status?: ToolStatus
+  }
   | {
-      type: 'tool_approval_required'
-      toolUseId: string
-      toolName: string
-      input: unknown
-    }
+    type: 'tool_approval_required'
+    toolUseId: string
+    toolName: string
+    input: unknown
+  }

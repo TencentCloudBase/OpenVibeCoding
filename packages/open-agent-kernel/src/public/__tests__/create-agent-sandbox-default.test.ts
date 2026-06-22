@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   agsStatefulSandbox: vi.fn(),
@@ -19,16 +19,24 @@ vi.mock('../../sandbox/index.js', () => {
 
   return {
     AgsStatefulSandbox: MockAgsStatefulSandbox,
+    validateDefaultSandboxRuntimeEnv: vi.fn(),
   }
 })
 
 const { createAgent } = await import('../create-agent.js')
+const { validateDefaultSandboxRuntimeEnv } = await import('../../sandbox/index.js')
 
 describe('createAgent — default sandbox runtime', () => {
   beforeEach(() => {
     mocks.agsStatefulSandbox.mockClear()
     delete process.env.CLOUDBASE_APIKEY
-    delete process.env.OAK_SANDBOX_API_KEY
+    process.env.OAK_SANDBOX_IMAGE = 'ccr.test.com/test/sandbox-image:tag'
+    process.env.OAK_SANDBOX_TOOL_ROLE_ARN = 'qcs::cam::uin/123456789:roleName/test-sandbox-role'
+  })
+
+  afterEach(() => {
+    delete process.env.OAK_SANDBOX_IMAGE
+    delete process.env.OAK_SANDBOX_TOOL_ROLE_ARN
   })
 
   it('creates default AgsStatefulSandbox when sandbox is enabled', () => {
@@ -68,6 +76,40 @@ describe('createAgent — default sandbox runtime', () => {
         },
       }),
     ).toThrow(/sandbox\.apiKey/)
+  })
+
+  it('requires sandbox image env when default sandbox runtime is enabled', () => {
+    vi.mocked(validateDefaultSandboxRuntimeEnv).mockImplementationOnce(() => {
+      throw new Error('Default sandbox requires process.env.OAK_SANDBOX_IMAGE')
+    })
+
+    expect(() =>
+      createAgent({
+        envId: 'env-test',
+        model: 'glm-5.1',
+        sandbox: {
+          enabled: true,
+          apiKey: 'sandbox-api-key',
+        },
+      }),
+    ).toThrow(/OAK_SANDBOX_IMAGE/)
+  })
+
+  it('requires sandbox tool role env when default sandbox runtime is enabled', () => {
+    vi.mocked(validateDefaultSandboxRuntimeEnv).mockImplementationOnce(() => {
+      throw new Error('Default sandbox requires process.env.OAK_SANDBOX_TOOL_ROLE_ARN')
+    })
+
+    expect(() =>
+      createAgent({
+        envId: 'env-test',
+        model: 'glm-5.1',
+        sandbox: {
+          enabled: true,
+          apiKey: 'sandbox-api-key',
+        },
+      }),
+    ).toThrow(/OAK_SANDBOX_TOOL_ROLE_ARN/)
   })
 
   it('keeps custom sandbox runtime untouched', () => {

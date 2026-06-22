@@ -57,30 +57,42 @@ function getToolWarmupPollMax(): number {
 const HEALTH_TIMEOUT_MS = 5000
 
 /**
- * 默认沙箱镜像（OpenVibeCoding 团队公开 TCR）。
+ * 读取 AGS 沙箱镜像地址（函数式读取 env，不在模块加载期固化）。
  *
- * 注意：函数式读取 env，不在模块加载期固化。
- * 原因：examples / SDK 调用方常先 import 本模块再 dotenv.config()，
- * 模块加载期固化会让 OAK_SANDBOX_IMAGE 永远拿不到 .env.local 的值。
- * 与 getToolWarmupPollMs() 同一模式。
- *
- * 镜像选型须知（cosMount 启用时尤其重要）：
- *   - vibecoding preset 镜像（自带 41MB node_modules.tar.gz + 349 个预装 node_modules）
- *     在 cosMount 模式下会让 trw runZstdList 撞 ENOBUFS（详见 docs/workspace-snapshot.md）。
- *   - 必须用 minimal preset 镜像。trw 一条龙 §3 命名规则：YYMMDD-HHMM-随机-<preset>。
- *   - TODO: 当前 fallback 临时指向 trw dev 仓库 (royhuang-test-cbe88d)，
- *           待公共仓库 (tcb-sandbox-public-cbe88d) 推出 minimal tag 后切换。
+ * 必须通过 `process.env.OAK_SANDBOX_IMAGE` 或 `AgsStatefulSandboxOptions.image` 提供；
+ * SDK 不提供个人/团队兜底镜像，避免与用户账号不匹配。
  */
-function getDefaultSandboxImage(): string {
-  return (
-    process.env.OAK_SANDBOX_IMAGE ??
-    'ccr.ccs.tencentyun.com/royhuang-test-cbe88d/tcb-sandbox-ags:260608-1044-b13842-minimal'
-  )
+function requireSandboxImageEnv(): string {
+  const image = process.env.OAK_SANDBOX_IMAGE?.trim()
+  if (!image) {
+    throw new InvalidConfigError(
+      'Default sandbox requires process.env.OAK_SANDBOX_IMAGE ' +
+        '(AGS sandbox container image URI, e.g. ccr.ccs.tencentyun.com/<namespace>/<repo>:<tag>).',
+    )
+  }
+  return image
 }
 
-/** 默认 Tool 角色 ARN —— 同样函数式读取，理由同上。 */
-function getDefaultToolRoleArn(): string {
-  return process.env.OAK_SANDBOX_TOOL_ROLE_ARN ?? 'qcs::cam::uin/691612481:roleName/agent-sandbox'
+/**
+ * 读取 AGS Tool 关联的 CAM RoleArn（函数式读取 env）。
+ *
+ * 必须通过 `process.env.OAK_SANDBOX_TOOL_ROLE_ARN` 或 `AgsStatefulSandboxOptions.toolRoleArn` 提供。
+ */
+function requireSandboxToolRoleArnEnv(): string {
+  const arn = process.env.OAK_SANDBOX_TOOL_ROLE_ARN?.trim()
+  if (!arn) {
+    throw new InvalidConfigError(
+      'Default sandbox requires process.env.OAK_SANDBOX_TOOL_ROLE_ARN ' +
+        '(CAM role ARN for AGS sandbox tool, e.g. qcs::cam::uin/<uin>:roleName/<role>).',
+    )
+  }
+  return arn
+}
+
+/** 在 createAgent 启用默认 sandbox 时前置校验（仅 env 层，不含 options 覆盖）。 */
+export function validateDefaultSandboxRuntimeEnv(): void {
+  requireSandboxImageEnv()
+  requireSandboxToolRoleArnEnv()
 }
 
 // ─── Configuration / Credentials ────────────────────────────────────────
@@ -198,8 +210,8 @@ function resolveCredentials(
     secretId,
     secretKey,
     sessionToken,
-    image: opts.image ?? getDefaultSandboxImage(),
-    toolRoleArn: opts.toolRoleArn ?? getDefaultToolRoleArn(),
+    image: opts.image ?? requireSandboxImageEnv(),
+    toolRoleArn: opts.toolRoleArn ?? requireSandboxToolRoleArnEnv(),
     defaultTimeout: opts.defaultTimeout ?? '30m',
     gatewayBaseUrl: opts.gatewayBaseUrl,
   }

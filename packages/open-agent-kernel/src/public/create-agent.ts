@@ -17,7 +17,7 @@ import { buildClaudeQueryOptions } from '../runtime/agent-builder.js'
 import { createTranslatorState, translateSdkMessage } from '../runtime/event-translator.js'
 import { buildPromptAsync } from '../runtime/prompt-builder.js'
 import { createCloudBaseMcpServer, type CloudBaseUserCredentials } from '../sandbox/cloudbase-mcp.js'
-import { AgsStatefulSandbox } from '../sandbox/index.js'
+import { AgsStatefulSandbox, validateDefaultSandboxRuntimeEnv } from '../sandbox/index.js'
 import type { SandboxInstance, SandboxRuntime } from '../sandbox/types.js'
 import type { WorkspaceSnapshotEngine } from '../sandbox/workspace-snapshot/index.js'
 import { CloudBaseDbDriver, CloudBaseSessionStore } from '../session-store/index.js'
@@ -68,7 +68,7 @@ export function createAgent(config: AgentConfig): Agent {
       if (typeof tool.execute !== 'function') {
         throw new InvalidConfigError(
           `Custom tool "${tool.name}" is missing 'execute'. ` +
-            `Client-side custom tools (events-based) will be supported in a later version.`,
+          `Client-side custom tools (events-based) will be supported in a later version.`,
         )
       }
     }
@@ -100,7 +100,7 @@ export function createAgent(config: AgentConfig): Agent {
       if (!config.session?.store) {
         throw new ResourceError(
           'agent.resumeSession requires AgentConfig.session.store. ' +
-            'Provide a CloudBaseSessionStore (or compatible) when creating the agent.',
+          'Provide a CloudBaseSessionStore (or compatible) when creating the agent.',
         )
       }
       const conversationId = stateJsonOrConversationId
@@ -154,18 +154,20 @@ function resolveSandboxConfig(config: AgentConfig): AgentConfig['sandbox'] {
   if (provider !== 'ags-stateful') {
     throw new InvalidConfigError(
       `AgentConfig.sandbox.provider="${provider}" is not supported yet. ` +
-        'The built-in sandbox currently supports provider="ags-stateful". ' +
-        'Pass a custom SandboxRuntime via AgentConfig.sandbox.runtime for advanced scenarios.',
+      'The built-in sandbox currently supports provider="ags-stateful". ' +
+      'Pass a custom SandboxRuntime via AgentConfig.sandbox.runtime for advanced scenarios.',
     )
   }
 
-  const apiKey = sandbox.apiKey ?? process.env.CLOUDBASE_APIKEY ?? process.env.OAK_SANDBOX_API_KEY
+  const apiKey = sandbox.apiKey ?? process.env.CLOUDBASE_APIKEY
   if (!apiKey) {
     throw new InvalidConfigError(
-      'AgentConfig.sandbox.enabled=true requires sandbox.apiKey, CLOUDBASE_APIKEY, or OAK_SANDBOX_API_KEY ' +
-        'for the default AgsStatefulSandbox runtime.',
+      'AgentConfig.sandbox.enabled=true requires sandbox.apiKey or TCB_API_KEY ' +
+      'for the default AgsStatefulSandbox runtime.',
     )
   }
+
+  validateDefaultSandboxRuntimeEnv()
 
   return {
     ...sandbox,
@@ -212,8 +214,8 @@ function resolveStorageConfig(config: AgentConfig): StorageProvider | undefined 
   if (provider !== 'cloudbase') {
     throw new InvalidConfigError(
       `AgentConfig.storage.provider="${provider}" is not supported yet. ` +
-        'The built-in storage currently supports provider="cloudbase". ' +
-        'Pass a custom StorageProvider instance for advanced scenarios.',
+      'The built-in storage currently supports provider="cloudbase". ' +
+      'Pass a custom StorageProvider instance for advanced scenarios.',
     )
   }
 
@@ -245,15 +247,15 @@ function resolveSessionConfig(config: AgentConfig): AgentConfig['session'] {
   if (provider !== 'cloudbase') {
     throw new InvalidConfigError(
       `AgentConfig.session.provider="${provider}" is not supported yet. ` +
-        'The built-in session store currently supports CloudBase resources only. ' +
-        'Pass a custom SessionStore via AgentConfig.session.store for advanced scenarios.',
+      'The built-in session store currently supports CloudBase resources only. ' +
+      'Pass a custom SessionStore via AgentConfig.session.store for advanced scenarios.',
     )
   }
   const database = session?.database ?? 'flexdb'
   if (database !== 'flexdb') {
     throw new InvalidConfigError(
       `AgentConfig.session.database="${database}" is reserved for future CloudBase support. ` +
-        'The built-in session store currently supports database="flexdb".',
+      'The built-in session store currently supports database="flexdb".',
     )
   }
   const credentials = resolvePlatformCredentials(config)
@@ -390,7 +392,7 @@ function createSession(deps: SessionDeps): Session {
             // eslint-disable-next-line no-console
             console.error(
               `[oak][cloudbase-mcp] toolCount=${bundle.toolCount}` +
-                (bundle.degradedReason ? ` reason=${bundle.degradedReason}` : ''),
+              (bundle.degradedReason ? ` reason=${bundle.degradedReason}` : ''),
             )
           }
           return bundle.server as SdkMcpServerConfig
@@ -1078,11 +1080,11 @@ async function* runClaudeQuery(args: RunClaudeQueryArgs): AsyncGenerator<Session
       // debugFile 内容在 query 结束后由下方逻辑读取打日志。
       ...(debug
         ? {
-            stderr: (data: string) => {
-              // eslint-disable-next-line no-console
-              console.error('[oak][claude-cli stderr]', data.trimEnd())
-            },
-          }
+          stderr: (data: string) => {
+            // eslint-disable-next-line no-console
+            console.error('[oak][claude-cli stderr]', data.trimEnd())
+          },
+        }
         : {}),
     }
 
@@ -1184,7 +1186,7 @@ async function* runApprovalResume(args: RunApprovalResumeArgs): AsyncGenerator<S
       type: 'error',
       error: new InvalidConfigError(
         'session.respondApproval requires AgentConfig.permissions.requireApproval to be configured. ' +
-          'Without permissions config, no approval flow exists to resume.',
+        'Without permissions config, no approval flow exists to resume.',
       ),
     }
     yield { type: 'session_idle', reason: 'error' }
@@ -1281,7 +1283,7 @@ async function* runClientToolResume(args: RunClientToolResumeArgs): AsyncGenerat
       type: 'error',
       error: new InvalidConfigError(
         'session.respondToolUse requires AgentConfig.tools[] to be configured. ' +
-          'Without client-side tool definitions, no client-tool flow exists to resume.',
+        'Without client-side tool definitions, no client-tool flow exists to resume.',
       ),
     }
     yield { type: 'session_idle', reason: 'error' }
@@ -1464,7 +1466,7 @@ function extractStorageProvider(config: AgentConfig): StorageProvider | undefine
   if (typeof candidate.resolveAttachment !== 'function') {
     throw new InvalidConfigError(
       'AgentConfig.storage does not implement StorageProvider (resolveAttachment missing). ' +
-        'Use InMemoryStorage or CloudBaseStorage from @cloudbase/open-agent-kernel.',
+      'Use InMemoryStorage or CloudBaseStorage from @cloudbase/open-agent-kernel.',
     )
   }
   return raw as StorageProvider
@@ -1480,7 +1482,7 @@ function extractSandboxRuntime(config: AgentConfig): SandboxRuntime | undefined 
   if (typeof candidate.acquire !== 'function') {
     throw new InvalidConfigError(
       'AgentConfig.sandbox.runtime does not implement SandboxRuntime (acquire missing). ' +
-        'Use AgsStatefulSandbox from @cloudbase/open-agent-kernel.',
+      'Use AgsStatefulSandbox from @cloudbase/open-agent-kernel.',
     )
   }
   return raw as SandboxRuntime
@@ -1515,9 +1517,9 @@ async function resolveUserCredentials(config: AgentConfig): Promise<CloudBaseUse
   if (!platformCreds?.secretId || !platformCreds.secretKey) {
     throw new InvalidConfigError(
       'CloudBase MCP tools require user credentials. ' +
-        'Either set AgentConfig.sandbox.userCredentials, ' +
-        'or pass AgentConfig.credentials. ' +
-        'To disable cloudbase tools entirely, pass `sandbox: { cloudbaseTools: false }`.',
+      'Either set AgentConfig.sandbox.userCredentials, ' +
+      'or pass AgentConfig.credentials. ' +
+      'To disable cloudbase tools entirely, pass `sandbox: { cloudbaseTools: false }`.',
     )
   }
 
@@ -1534,8 +1536,8 @@ function createSessionsManagement(config: AgentConfig): Agent['sessions'] {
     async list(opts): Promise<SessionSummary[]> {
       const store = config.session?.store as
         | {
-            listSessions?: (k: string) => Promise<Array<{ sessionId: string; mtime: number; userId?: string }>>
-          }
+          listSessions?: (k: string) => Promise<Array<{ sessionId: string; mtime: number; userId?: string }>>
+        }
         | undefined
       if (!store?.listSessions) return []
       const projectKey = config.session?.projectKey ?? config.envId
@@ -1552,11 +1554,11 @@ function createSessionsManagement(config: AgentConfig): Agent['sessions'] {
     async get(conversationId): Promise<SessionSummary | null> {
       const store = config.session?.store as
         | {
-            getSession?: (
-              k: string,
-              sid: string,
-            ) => Promise<{ sessionId: string; mtime: number; userId?: string } | null>
-          }
+          getSession?: (
+            k: string,
+            sid: string,
+          ) => Promise<{ sessionId: string; mtime: number; userId?: string } | null>
+        }
         | undefined
       if (!store?.getSession) return null
       const projectKey = config.session?.projectKey ?? config.envId
@@ -1611,7 +1613,7 @@ async function dumpClaudeDebugFile(debugFilePath: string | undefined): Promise<v
       // eslint-disable-next-line no-console
       console.error(
         `[oak][claude-debug] debug-file empty or missing at ${debugFilePath} ` +
-          `(size=${st?.size ?? 'n/a'}). 子进程可能在写 debug-file 之前就退出,或该路径不可写。`,
+        `(size=${st?.size ?? 'n/a'}). 子进程可能在写 debug-file 之前就退出,或该路径不可写。`,
       )
       return
     }

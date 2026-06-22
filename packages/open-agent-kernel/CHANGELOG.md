@@ -20,5 +20,5 @@
 
 - 要求 Node.js >= 22
 - 安装包已内置 `@cloudbase/node-sdk`、`@cloudbase/manager-node`、`zod`
-- Sandbox 默认镜像可通过 `OAK_SANDBOX_IMAGE` 覆盖；beta 内置 fallback 为开发镜像
+- Sandbox 默认镜像与 RoleArn **必须**通过 `OAK_SANDBOX_IMAGE` / `OAK_SANDBOX_TOOL_ROLE_ARN` 配置（无内置兜底）
 - 部分 API 仍为预留或 stub：`handoffs`、`AgentConfig.metadata`、`agent.sessions.get()` 等，见 README

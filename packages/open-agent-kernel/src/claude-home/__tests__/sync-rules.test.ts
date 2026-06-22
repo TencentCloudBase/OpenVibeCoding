@@ -64,6 +64,8 @@ describe('matchesSyncRule — 黑名单(不应同步)', () => {
 
   it('rejects SDK internal state and caches', () => {
     expect(matchesSyncRule('.last-cleanup')).toBe(false)
+    expect(matchesSyncRule('logs/app.log')).toBe(false)
+    expect(matchesSyncRule('logs/nested/trace.md')).toBe(false)
     expect(matchesSyncRule('backups/anything.md')).toBe(false)
     expect(matchesSyncRule('cache/foo.md')).toBe(false)
     expect(matchesSyncRule('shell-snapshots/foo.md')).toBe(false)

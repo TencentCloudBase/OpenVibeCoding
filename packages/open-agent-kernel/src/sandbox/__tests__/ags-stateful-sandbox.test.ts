@@ -46,12 +46,14 @@ vi.mock('@cloudbase/manager-node/lib/utils', () => {
   return { CloudService }
 })
 
-import { AgsStatefulSandbox, __clearToolIdCacheForTests } from '../ags-stateful-sandbox.js'
+import { AgsStatefulSandbox, __clearToolIdCacheForTests, validateDefaultSandboxRuntimeEnv } from '../ags-stateful-sandbox.js'
 
 const credentials = { envId: 'test-env', secretId: 'fake-secret-id', secretKey: 'fake-secret-key' }
 
 beforeEach(() => {
   delete process.env.OAK_SECRET_MASTER_KEY
+  process.env.OAK_SANDBOX_IMAGE = 'ccr.test.com/test/sandbox-image:tag'
+  process.env.OAK_SANDBOX_TOOL_ROLE_ARN = 'qcs::cam::uin/123456789:roleName/test-sandbox-role'
 
   __clearToolIdCacheForTests() // 防止跨测试 tool cache 污染
 
@@ -524,10 +526,42 @@ describe('AgsStatefulSandbox existing tool BucketPath mismatch', () => {
   })
 })
 
+describe('validateDefaultSandboxRuntimeEnv', () => {
+  it('passes when both env vars are set', () => {
+    expect(() => validateDefaultSandboxRuntimeEnv()).not.toThrow()
+  })
+
+  it('throws when OAK_SANDBOX_IMAGE is missing', () => {
+    delete process.env.OAK_SANDBOX_IMAGE
+    expect(() => validateDefaultSandboxRuntimeEnv()).toThrow(/OAK_SANDBOX_IMAGE/)
+  })
+
+  it('throws when OAK_SANDBOX_TOOL_ROLE_ARN is missing', () => {
+    delete process.env.OAK_SANDBOX_TOOL_ROLE_ARN
+    expect(() => validateDefaultSandboxRuntimeEnv()).toThrow(/OAK_SANDBOX_TOOL_ROLE_ARN/)
+  })
+})
+
 describe('AgsStatefulSandbox env-driven defaults (deferred read)', () => {
   // 回归测试:DEFAULT_SANDBOX_IMAGE / DEFAULT_TOOL_ROLE_ARN 必须保持函数式,
   // 不能退化回模块加载期 const —— examples / SDK 调用方常 import 后再 dotenv.config(),
   // 模块加载期固化会让 .env.local 永远拿不到。
+
+  it('throws when OAK_SANDBOX_IMAGE is unset and opts.image missing', async () => {
+    delete process.env.OAK_SANDBOX_IMAGE
+    const runtime = newTestRuntime({ cosMount: 'disabled' })
+    await expect(
+      runtime.acquire({ envId: 'test-env', conversationId: 'c', userId: 'alice', scope: 'session' }),
+    ).rejects.toThrow(/OAK_SANDBOX_IMAGE/)
+  })
+
+  it('throws when OAK_SANDBOX_TOOL_ROLE_ARN is unset and opts.toolRoleArn missing', async () => {
+    delete process.env.OAK_SANDBOX_TOOL_ROLE_ARN
+    const runtime = newTestRuntime({ cosMount: 'disabled' })
+    await expect(
+      runtime.acquire({ envId: 'test-env', conversationId: 'c', userId: 'alice', scope: 'session' }),
+    ).rejects.toThrow(/OAK_SANDBOX_TOOL_ROLE_ARN/)
+  })
 
   it('reads OAK_SANDBOX_IMAGE set AFTER module import', async () => {
     const lateValue = 'ccr.example.com/some-org/late-bound:test-tag'

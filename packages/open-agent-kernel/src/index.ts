@@ -96,6 +96,7 @@ export {
 export {
   AgsStatefulSandbox,
   type AgsStatefulSandboxOptions,
+  validateDefaultSandboxRuntimeEnv,
   type SandboxRuntime,
   type SandboxInstance,
   type SandboxAcquireContext,

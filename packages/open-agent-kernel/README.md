@@ -348,9 +348,18 @@ const agent = createAgent({
 
 - provider 为 `ags-stateful`。
 - `scope` 默认为 `shared`。
-- `apiKey` 不传时读取 `TCB_API_KEY`，也可用 `OAK_SANDBOX_API_KEY` 单独覆盖。
+- `apiKey` 不传时读取 `TCB_API_KEY`。
 - `cloudbaseTools` 默认 `true`，镜像支持时自动暴露 `mcp__cloudbase__*`。
-- 默认 sandbox 镜像可通过环境变量 `OAK_SANDBOX_IMAGE` 覆盖；未设置时使用 SDK 内置 fallback（beta 阶段为开发镜像，生产环境请务必显式配置）。
+- **必须**在进程环境中配置 `OAK_SANDBOX_IMAGE` 和 `OAK_SANDBOX_TOOL_ROLE_ARN`（或通过 `AgsStatefulSandboxOptions.image` / `toolRoleArn` 显式传入）。SDK **不提供**内置兜底镜像或角色 ARN，避免与用户账号不匹配导致创建失败。
+
+启用 sandbox 前请准备：
+
+| 环境变量 | 是否必需 | 用途 |
+|----------|----------|------|
+| `TCB_API_KEY` | 是（或 `sandbox.apiKey`） | AGS 数据面 JWT |
+| `OAK_SANDBOX_IMAGE` | 是 | AGS 沙箱容器镜像 URI |
+| `OAK_SANDBOX_TOOL_ROLE_ARN` | 是 | AGS Tool 关联的 CAM RoleArn |
+| `OAK_SECRET_MASTER_KEY` | 否 | 启用 workspace cosMount 时注入沙箱，用于 workspace snapshot 加密 |
 
 Agent 会获得这些 sandbox 工具：
 
@@ -370,6 +379,22 @@ await session.abort()
 ```
 
 对应示例：`examples/08-sandbox.ts`、`examples/09-sandbox-shared.ts`。
+
+#### `cwd` 与 sandbox 文件操作的关系
+
+`AgentConfig.cwd` 指定 **Claude Agent SDK 子进程在宿主机上的工作目录**，主要用于：
+
+- 发现 `<cwd>/.claude/skills/`（启用 `skills` 时）
+- 读取项目级 `CLAUDE.md` / rules 等平台资产
+- 派生 SDK 内部 `projects/<cwd-hash>/` 路径（userMemory / session 持久化相关）
+
+**sandbox 文件操作与 `cwd` 无关。** OAK 默认禁用 SDK 内置 Read/Write/Bash 等 host 文件工具；Agent 通过 `mcp__sandbox__read/write/edit/bash/glob/grep` 操作远程沙箱。这些工具的路径相对于 **沙箱 workspace root**（镜像约定通常为 `/home/user/`，shared scope 下跨 session 接续），不会映射到 host 的 `cwd`。
+
+| 操作类型 | 实际作用目录 |
+|----------|--------------|
+| `cwd` + skills / 项目 CLAUDE.md | 宿主机 `cwd` |
+| `mcp__sandbox__*` 文件/Shell | 沙箱 `/home/user/`（或 cosMount 挂载的 workspace） |
+| userMemory 同步 | 宿主机 `CLAUDE_CONFIG_DIR`（与 sandbox 分离） |
 
 ### Sandbox 内 CloudBase 工具
 
@@ -501,8 +526,16 @@ await deleteUserMemoryFiles({
 同步范围：
 
 - `<CLAUDE_CONFIG_DIR>/CLAUDE.md`
-- `<CLAUDE_CONFIG_DIR>/projects/*/memory/`
-- `<CLAUDE_CONFIG_DIR>/agent-memory/`
+- `<CLAUDE_CONFIG_DIR>/projects/*/memory/**/*.md`
+- `<CLAUDE_CONFIG_DIR>/agent-memory/**/*.md`
+
+**不同步**（黑名单）：`skills/`、`rules/`、`logs/`、`cache/`、`debug/`、所有 `.json` / `.jsonl` 等 SDK 内部状态。
+
+#### 关于 `.jsonl` session transcript
+
+启用 `sessionStore`（传 `credentials` 后默认启用）时，OAK 会将 `CLAUDE_CONFIG_DIR` 重定向到进程临时目录，SDK 仍可能在本地 `projects/<cwd-hash>/*.jsonl` 双写 session transcript。这些 `.jsonl` 是 Claude Agent SDK 的原始对话日志，内容与 CloudBase FlexDB `SessionStore` 持久化的消息高度重复。
+
+因此 userMemory 同步**故意排除**所有 `.jsonl`，避免与 SessionStore 重复占用 COS、也避免同步 OAuth/MCP 等敏感运行时状态。若需要完整对话历史，请使用 `session.getHistory()` 或 SessionStore API，而非同步 jsonl。
 
 不建议并发处理同一 `userId` 的多个请求。允许跨节点，但上游需要保证同一用户请求串行。
 
@@ -648,7 +681,9 @@ permissions: {
 |------|------|--------|------|
 | `enabled` | `boolean` | `false` | `true` 时使用默认 `AgsStatefulSandbox`。 |
 | `provider` | `'ags-stateful'` | `'ags-stateful'` | 当前内置 sandbox provider。 |
-| `apiKey` | `string` | `TCB_API_KEY` / `OAK_SANDBOX_API_KEY` | AGS 数据面 JWT。 |
+| `apiKey` | `string` | `TCB_API_KEY` | AGS 数据面 JWT。 |
+| `image` | `string` | `OAK_SANDBOX_IMAGE` | 沙箱镜像 URI（默认 runtime 必需）。 |
+| `toolRoleArn` | `string` | `OAK_SANDBOX_TOOL_ROLE_ARN` | AGS Tool CAM RoleArn（默认 runtime 必需）。 |
 | `runtime` | `unknown` | 自动创建 | 高级自定义 `SandboxRuntime`。 |
 | `scope` | `'session' \| 'shared'` | `'shared'` | AGS 实例粒度。 |
 | `ttl` | `number` | runtime 默认 | 沙箱生命周期秒数。 |
@@ -865,6 +900,30 @@ type SessionEvent =
 ```
 
 OAK 只提供协议中立的 `AsyncIterable<SessionEvent>`；接入 SSE / ACP / AG-UI 时由业务层做事件映射。
+
+#### Claude Agent SDK 原始消息 ↔ OAK `SessionEvent`
+
+OAK 在 `event-translator.ts` 中将 Claude Agent SDK 的 `SDKMessage` 翻译为上层 `SessionEvent`。SDK 内部消息（`system`、`status`、`hook_*` 等）**不暴露**。
+
+| SDK `SDKMessage.type` | SDK 关键字段 | OAK `SessionEvent` | 说明 |
+|----------------------|--------------|-------------------|------|
+| `assistant` | `message.content[]` 含 `text` | `message_delta` + `message_complete` | 同一 text block 会先 delta 再 complete |
+| `assistant` | `message.content[]` 含 `tool_use` | `tool_call` | `toolUseId` / `toolName` / `input` |
+| `assistant` | `thinking` 等 block | — | 暂不映射 |
+| `user` | `tool_result`（正常） | `tool_result` | `output` / `isError` |
+| `user` | `tool_result`（含 HITL sentinel） | `tool_approval_required` | 不再 yield `tool_result` |
+| `result` | `subtype: success` | `session_idle` `reason: completed` | 本轮正常结束 |
+| `result` | `is_error: true` | `session_idle` `reason: error` | |
+| `result` | 本轮曾触发审批 | `session_idle` `reason: requires_action` | 等待 `respondApproval()` |
+| `result` | 其他 | `session_idle` `reason: aborted` | |
+| `stream_event` | `content_block_delta.text_delta` | `message_delta` | 需 SDK `includePartialMessages: true` |
+
+`tool_approval_required` 额外字段：
+
+- `runStateJson`：JSON 字符串，含 `conversationId`、`toolUseId`、`schema: 'oak/v1/approvalRef'`
+- `hints`：可选 UI 提示
+
+调试原始 SDK 消息流可设置 `OAK_DEBUG=1`，或参考 `examples/02-debug.ts`。
 
 ## 常见问题
 
