@@ -46,7 +46,11 @@ vi.mock('@cloudbase/manager-node/lib/utils', () => {
   return { CloudService }
 })
 
-import { AgsStatefulSandbox, __clearToolIdCacheForTests, validateDefaultSandboxRuntimeEnv } from '../ags-stateful-sandbox.js'
+import {
+  AgsStatefulSandbox,
+  __clearToolIdCacheForTests,
+  validateDefaultSandboxRuntimeEnv,
+} from '../ags-stateful-sandbox.js'
 
 const credentials = { envId: 'test-env', secretId: 'fake-secret-id', secretKey: 'fake-secret-key' }
 
