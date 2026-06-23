@@ -488,7 +488,6 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
             if (!app) return null
             return { appId: app.appId, privateKey: decrypt(app.privateKey) }
           },
-          userId,
           currentModel: model,
         })
 

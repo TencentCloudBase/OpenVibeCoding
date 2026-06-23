@@ -1112,6 +1112,12 @@ export class CloudbaseAgentService {
       if (process.env.CODEBUDDY_INTERNET_ENVIRONMENT) {
         envVars.CODEBUDDY_INTERNET_ENVIRONMENT = process.env.CODEBUDDY_INTERNET_ENVIRONMENT
       }
+    } else if (useCustomModels()) {
+      // 自定义模型模式 - DeepSeek 等第三方模型自带 url + apiKey (见 .config/.codebuddy/models.json)，
+      // 实际 chat completions 请求用 model.apiKey，不需要 codebuddy 的 access token。
+      // 但 codebuddy-headless 的 prepareRequest() 硬性检查 accessToken 非空（否则抛
+      // AuthenticationRequiredError），这里塞个占位 token 绕过该检查。
+      envVars.CODEBUDDY_AUTH_TOKEN = 'dummy-token-for-custom-models'
     } else {
       // OAuth 模式 - 通过 client_credentials 获取 token
       const authToken = await getOAuthToken()
