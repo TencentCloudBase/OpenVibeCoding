@@ -55,18 +55,23 @@ export interface SandboxConfig {
   /**
    * 是否启用默认 sandbox。
    *
-   * - `true`：使用内置默认 provider（当前为 `ags-stateful`），并补齐默认 runtime/scope
+   * - `true`：使用内置默认 provider（当前为 `local`），并补齐默认 runtime
    * - `false` / 未配置 sandbox：不启用 sandbox
    *
    * 如果显式传了 `runtime`，即使不传 `enabled` 也会启用 sandbox。
    */
   enabled?: boolean
   /**
-   * 默认 sandbox 产品类型。当前仅内置 `ags-stateful`。
+   * 默认 sandbox 产品类型。当前内置 `local` 和 `ags-stateful`。
    *
    * 未来可扩展到其他 CloudBase/第三方 sandbox 产品；高级用户也可直接传 `runtime`。
    */
-  provider?: 'ags-stateful'
+  provider?: 'local' | 'ags-stateful'
+  /**
+   * local provider 的工作区根目录。未设置时按 session 上下文推导：
+   * OAK_WORKSPACE_ROOT 或 os.tmpdir()/oak-workspaces/{envId}/{userId}/{conversationId}。
+   */
+  workspaceRoot?: string
   /**
    * 默认 AGS 数据面认证 JWT。
    *
@@ -77,7 +82,7 @@ export interface SandboxConfig {
   /**
    * Sandbox 后端实例（由用户从 `@cloudbase/open-agent-kernel/sandbox` 子模块构造，
    * 例如 `new AgsStatefulSandbox()`）。
-   * 不传 `runtime` 但 `enabled: true` 时，默认使用 AgsStatefulSandbox。
+   * 不传 `runtime` 但 `enabled: true` 时，默认使用 LocalRuntimeSandbox。
    *
    * 类型故意宽泛（unknown），避免公共类型层依赖底层实现。
    */
@@ -105,7 +110,7 @@ export interface SandboxConfig {
    * - `true`（默认）：sandbox acquire 之后，自动调 `mcporter list cloudbase --schema`
    *   发现 cloudbase 工具集（DB / COS / 云函数 / 静态托管 / …），
    *   注入沙箱内 `/api/workspace/env` 凭证，然后封装为 `mcp__cloudbase__*` 工具暴露给 agent。
-   * - `false`：完全不暴露 cloudbase 工具，agent 只能用 `mcp__sandbox__*` 文件系统/shell 工具。
+   * - `false`：完全不暴露 cloudbase 工具，agent 只能使用当前 sandbox provider 提供的文件系统/shell 工具。
    *
    * 仅在镜像内置 mcporter + cloudbase-mcp 时生效（默认 OpenVibeCoding 公开 vibecoding 镜像）。
    * 镜像不带这两个工具时会自动 degrade（warning，不阻塞 session 启动）。
@@ -129,8 +134,8 @@ export interface SandboxConfig {
 
   /**
    * Spec B 新增。控制 cwd 是否在 send 边界自动快照到 COS。
-   * - 'auto'(默认):runtime.backend === 'ags-stateful' 时启用,其他 runtime 关闭
-   * - 'enabled':强制启用 — 若 runtime 不支持则 startSession 抛 ConfigError
+   * - 'auto'(默认):runtime.backend === 'ags-stateful' 时启用,local/其他 runtime 关闭
+   * - 'enabled':强制启用 — local runtime 需配置 workspaceSyncStore,其他不支持 runtime 抛 ConfigError
    * - 'disabled':显式关闭
    * @default 'auto'
    * @注意 启用时要求 sandbox.scope === 'shared'(详 Spec B §1.3)

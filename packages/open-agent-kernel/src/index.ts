@@ -92,10 +92,20 @@ export {
   type DeleteUserMemoryFilesOptions,
 } from './user-memory/index.js'
 
-// Sandbox：可选用于让 agent 在远程容器里跑文件系统/shell（PR #6A）
+// Sandbox：可选用于让 agent 通过 local/AGS runtime 跑文件系统/shell
 export {
   AgsStatefulSandbox,
   type AgsStatefulSandboxOptions,
+  LocalRuntimeSandbox,
+  type LocalRuntimeSandboxOptions,
+  LocalWorkspaceSyncEngine,
+  FileSystemLocalWorkspaceStore,
+  CloudBaseCosLocalWorkspaceStore,
+  type LocalWorkspaceSyncContext,
+  type LocalWorkspaceSyncStore,
+  type LocalWorkspaceSyncEngineOptions,
+  type FileSystemLocalWorkspaceStoreOptions,
+  type CloudBaseCosLocalWorkspaceStoreOptions,
   type SandboxRuntime,
   type SandboxInstance,
   type SandboxAcquireContext,

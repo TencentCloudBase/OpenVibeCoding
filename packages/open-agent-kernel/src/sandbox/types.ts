@@ -20,6 +20,10 @@ import type { PlatformCredentials } from '../public/types.js'
 export interface SandboxInstance {
   /** 实例唯一 ID（例：AGS InstanceId） */
   readonly id: string
+  /** 实例后端类型（local / ags-stateful 等）。未提供时由 runtime.backend 判定。 */
+  readonly backend?: string
+  /** local runtime 的实际工作目录。AGS 等远程 runtime 不需要提供。 */
+  readonly workspaceRoot?: string
 
   /**
    * 在沙箱内调用一次 HTTP 接口（数据面）。

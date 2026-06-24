@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { SandboxInstance } from '../types.js'
 
 /** restored 取值,直接对应 tcb-remote-workspace cos-sync.ts:135 SyncStatus */
 export const restoredEnum = z.enum(['full', 'partial', 'fresh', 'failed'])
@@ -30,6 +31,12 @@ export const healthResponseSchema = z
   })
   .passthrough()
 export type HealthResponse = z.infer<typeof healthResponseSchema>
+
+export interface WorkspaceSnapshotRuntime {
+  bootstrap(inst: SandboxInstance, args: { credentials: Record<string, string> }): Promise<SyncStatus | null>
+  snapshot(inst: SandboxInstance): Promise<{ ms: number }>
+  getRestoreStatus(inst: SandboxInstance): Promise<Restored | null>
+}
 
 /**
  * `POST /api/workspace/init` 真实成功响应(见 routes/api.ts:240-300)。

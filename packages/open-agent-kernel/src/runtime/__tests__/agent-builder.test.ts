@@ -32,12 +32,10 @@ beforeEach(() => {
 })
 
 describe('buildClaudeQueryOptions — cwd / settingSources', () => {
-  it('no cwd → ephemeral cwd + settingSources=[]', () => {
+  it('no cwd → process cwd + settingSources=[]', () => {
     const { options } = buildClaudeQueryOptions(baseConfig)
-    expect(options.cwd).toMatch(/oak-ephemeral-/)
-    expect(options.cwd?.startsWith(os.tmpdir())).toBe(true)
+    expect(options.cwd).toBe(process.cwd())
     expect(options.settingSources).toEqual([])
-    // C1 fix verification:ephemeral dir 实际被创建
     expect(existsSync(options.cwd!)).toBe(true)
   })
 
@@ -152,15 +150,9 @@ describe('buildClaudeQueryOptions — userMemory', () => {
     expect(options.settingSources).toContain('user')
   })
 
-  // userMemory 启用且无 cwd → effectiveCwd 应该用 per-user 稳定路径
-  // (而非 ephemeral 随机),让 SDK projects/<cwd-hash>/ 跨节点稳定
-  it('userMemory.enabled + userId without cwd → effectiveCwd is stable per-user (not ephemeral)', () => {
+  it('userMemory.enabled + userId without cwd → effectiveCwd remains process cwd', () => {
     const { options } = buildClaudeQueryOptions({ ...baseConfig, userMemory: { enabled: true } }, { userId: 'alice' })
-    expect(options.cwd).not.toMatch(/oak-ephemeral-/)
-    expect(options.cwd).toContain('alice')
-    // cwd 应是 claudeConfigDir 的上一级(去掉末尾 .claude)
-    expect(options.cwd?.endsWith('/.claude')).toBe(false)
-    // 跨调用应稳定(同 envId+userId 永远一致)
+    expect(options.cwd).toBe(process.cwd())
     const second = buildClaudeQueryOptions({ ...baseConfig, userMemory: { enabled: true } }, { userId: 'alice' })
     expect(second.options.cwd).toBe(options.cwd)
   })
@@ -202,22 +194,22 @@ describe('buildClaudeQueryOptions — userMemory', () => {
     expect(options.persistSession).toBe(false)
   })
 
-  it('userMemory.enabled but no userId → no syncEngine, no CLAUDE_CONFIG_DIR', () => {
+  it('userMemory.enabled but no userId → no syncEngine, fallback CLAUDE_CONFIG_DIR', () => {
     const { options, syncEngine } = buildClaudeQueryOptions(
       { ...baseConfig, userMemory: { enabled: true } },
       {}, // no userId
     )
     expect(syncEngine).toBeUndefined()
-    expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(options.env?.CLAUDE_CONFIG_DIR).toContain('.oak')
   })
 
-  it('userMemory disabled → no syncEngine even with userId', () => {
+  it('userMemory disabled → no syncEngine even with userId, fallback CLAUDE_CONFIG_DIR', () => {
     const { options, syncEngine } = buildClaudeQueryOptions(
       { ...baseConfig, userMemory: { enabled: false } },
       { userId: 'alice' },
     )
     expect(syncEngine).toBeUndefined()
-    expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(options.env?.CLAUDE_CONFIG_DIR).toContain('.oak')
   })
 
   it('userMemory + missing credentials → graceful degrade (no syncEngine, no throw)', () => {
@@ -229,8 +221,7 @@ describe('buildClaudeQueryOptions — userMemory', () => {
         { userId: 'alice' },
       )
       expect(syncEngine).toBeUndefined()
-      // CLAUDE_CONFIG_DIR 也跟着清空(graceful degrade 全套不留半截状态)
-      expect(options.env?.CLAUDE_CONFIG_DIR).toBeUndefined()
+      expect(options.env?.CLAUDE_CONFIG_DIR).toContain('.oak')
     }).not.toThrow()
   })
 })
@@ -247,6 +238,21 @@ describe('buildClaudeQueryOptions — workspaceSnapshot', () => {
   const otherRuntime: SandboxRuntime = {
     backend: 'docker-local',
     acquire: vi.fn(),
+  }
+  const localRuntime: SandboxRuntime = {
+    backend: 'local',
+    acquire: vi.fn(),
+  }
+  const localRuntimeWithSync = {
+    backend: 'local',
+    acquire: vi.fn(),
+    createWorkspaceSyncEngine: vi.fn(() => ({
+      bootstrap: vi.fn(),
+      snapshot: vi.fn(),
+      getRestoreStatus: vi.fn(),
+    })),
+  } satisfies SandboxRuntime & {
+    createWorkspaceSyncEngine: Function
   }
 
   it('returns snapshotEngine when sandbox.runtime is ags-stateful and scope=shared (auto)', () => {
@@ -282,6 +288,47 @@ describe('buildClaudeQueryOptions — workspaceSnapshot', () => {
     ).toThrow(/does not support snapshot/)
   })
 
+  it('returns no snapshotEngine for local mode when workspaceSnapshot=auto', () => {
+    const result = buildClaudeQueryOptions({
+      ...baseConfig,
+      sandbox: { runtime: localRuntime, workspaceSnapshot: 'auto' },
+    })
+    expect(result.snapshotEngine).toBeUndefined()
+  })
+
+  it('throws ConfigError when local workspaceSnapshot is enabled without a sync engine', () => {
+    expect(() =>
+      buildClaudeQueryOptions(
+        {
+          ...baseConfig,
+          sandbox: { runtime: localRuntime, workspaceSnapshot: 'enabled' },
+          // buildClaudeQueryOptions gets these from createAgent.startSession.
+        },
+        { userId: 'alice', conversationId: 'conv-1' },
+      ),
+    ).toThrow(/workspaceSyncStore|createWorkspaceSyncEngine/)
+  })
+
+  it('returns snapshotEngine when local workspaceSnapshot is enabled with a sync engine', () => {
+    const result = buildClaudeQueryOptions(
+      {
+        ...baseConfig,
+        sandbox: { runtime: localRuntimeWithSync, workspaceSnapshot: 'enabled' },
+      },
+      { userId: 'alice', conversationId: 'conv-1' },
+    )
+    expect(result.snapshotEngine).toBeDefined()
+  })
+
+  it('throws ConfigError when local workspaceSnapshot is enabled without session context', () => {
+    expect(() =>
+      buildClaudeQueryOptions({
+        ...baseConfig,
+        sandbox: { runtime: localRuntimeWithSync, workspaceSnapshot: 'enabled' },
+      }),
+    ).toThrow(/userId and conversationId/)
+  })
+
   it('throws ConfigError when snapshot enabled but scope=session', () => {
     expect(() =>
       buildClaudeQueryOptions({
@@ -312,5 +359,55 @@ describe('buildClaudeQueryOptions — workspaceSnapshot', () => {
       },
     })
     expect(result.snapshotEngine).toBeDefined()
+  })
+})
+
+describe('buildClaudeQueryOptions — sandbox mode tools', () => {
+  const sandboxInstance = {
+    id: 'sandbox-test',
+    async request(): Promise<Response> {
+      throw new Error('not used in this test')
+    },
+    async release(): Promise<void> {},
+  }
+
+  it('local mode enables SDK built-in tools and does not inject sandbox MCP', () => {
+    const workspaceRoot = os.tmpdir()
+    const { options } = buildClaudeQueryOptions(
+      {
+        ...baseConfig,
+        sandbox: {
+          runtime: { backend: 'local', acquire: vi.fn() },
+        },
+      },
+      {
+        sandboxInstance: { ...sandboxInstance, id: 'local:conv', backend: 'local', workspaceRoot },
+        sandboxMode: 'local',
+        workspaceRoot,
+      },
+    )
+
+    expect(options.cwd).toBe(workspaceRoot)
+    expect(options.tools).toEqual(['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'])
+    expect(options.mcpServers).toBeUndefined()
+  })
+
+  it('local mode keeps Skill when skills are enabled', () => {
+    const { options } = buildClaudeQueryOptions(
+      { ...baseConfig, cwd: os.tmpdir(), skills: { enabled: 'all' } },
+      { sandboxMode: 'local', workspaceRoot: os.tmpdir() },
+    )
+
+    expect(options.tools).toEqual(['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Skill'])
+  })
+
+  it('remote mode injects sandbox MCP and keeps SDK built-in tools disabled', () => {
+    const { options } = buildClaudeQueryOptions(baseConfig, {
+      sandboxInstance,
+      sandboxMode: 'remote',
+    })
+
+    expect(options.tools).toEqual([])
+    expect(options.mcpServers).toHaveProperty('sandbox')
   })
 })
