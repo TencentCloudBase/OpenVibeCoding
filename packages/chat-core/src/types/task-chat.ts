@@ -85,6 +85,8 @@ export interface TaskChatProps {
    * 由父层 TaskDetails 用来重置 useAutoFix 的自动修复计数。
    */
   onManualUserSend?: () => void
+  /** Skills 列表，用于 "/" 前缀命令补全 */
+  skillsList?: Array<{ name: string; description: string }>
 }
 
 // ─── Tab Data Types ───────────────────────────────────────────────────

@@ -15,7 +15,16 @@ import { sign } from '@cloudbase/signature-nodejs'
 export type SandboxMode = 'per-conversation' | 'shared'
 
 export type SandboxProgressCallback = (message: {
-  phase: 'reuse' | 'create' | 'wait_creating' | 'pull_image' | 'wait_ready' | 'init_mcp' | 'ready' | 'error'
+  phase:
+    | 'reuse'
+    | 'create'
+    | 'wait_creating'
+    | 'pull_image'
+    | 'wait_ready'
+    | 'init_mcp'
+    | 'init_skills'
+    | 'ready'
+    | 'error'
   message: string
 }) => void
 

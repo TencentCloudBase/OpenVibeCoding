@@ -89,6 +89,7 @@ export const tasks = sqliteTable(
     prStatus: text('pr_status'),
     prMergeCommitSha: text('pr_merge_commit_sha'),
     mcpServerList: text('mcp_server_list'), // JSON string of Connector[]
+    skillSettings: text('skill_settings'), // JSON string of { initialized: boolean; skillList: string[] }
     createdAt: integer('created_at').notNull().$defaultFn(now),
     updatedAt: integer('updated_at').notNull().$defaultFn(now),
     completedAt: integer('completed_at'),

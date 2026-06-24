@@ -61,6 +61,7 @@ export interface Task {
   prStatus: string | null
   prMergeCommitSha: string | null
   mcpServerList: string | null
+  skillSettings: string | null // JSON string of { initialized: boolean; skillList: string[] }
   createdAt: number
   updatedAt: number
   completedAt: number | null
@@ -249,6 +250,7 @@ type TaskNullableFields =
   | 'prStatus'
   | 'prMergeCommitSha'
   | 'mcpServerList'
+  | 'skillSettings'
 
 export type NewTask = Omit<Task, 'createdAt' | 'updatedAt' | 'completedAt' | 'deletedAt' | TaskNullableFields> &
   Partial<Pick<Task, TaskNullableFields>> & {

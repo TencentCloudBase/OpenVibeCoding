@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/CloudDashboard.tsx",
     "./CloudDashboard": "./src/CloudDashboard.tsx",
+    "./storage": "./src/services/storage.ts",
     "./styles": "./src/styles/globals.css"
   },
   "scripts": {

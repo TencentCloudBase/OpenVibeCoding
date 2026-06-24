@@ -40,7 +40,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 # without this the /api/agent/runtimes endpoint reports OpenCode as unavailable
 # and the frontend agent picker greys it out as「不可用」.
 # Version pinned to match root package.json devDependencies; bump both together.
-RUN npm install -g opencode-ai@1.15.11 \
+RUN npm install -g opencode-ai@1.17.10 \
     && opencode --version
 
 # Copy workspace config and server + shared manifests only

@@ -296,6 +296,7 @@ tasksRouter.get('/', async (c) => {
     ...t,
     logs: t.logs ? JSON.parse(t.logs) : [],
     mcpServerList: t.mcpServerList ? JSON.parse(t.mcpServerList) : null,
+    skillSettings: t.skillSettings ? JSON.parse(t.skillSettings) : null,
   }))
   return c.json({ tasks: parsedTasks })
 })
@@ -318,11 +319,13 @@ tasksRouter.post('/', async (c) => {
     keepAlive = false,
     enableBrowser = false,
     mcpServerList,
+    skillList,
   } = body
   if (!prompt || typeof prompt !== 'string') return c.json({ error: 'prompt is required' }, 400)
 
   const taskId = body.id || nanoid(12)
   const now = Date.now()
+  const skillSettings = Array.isArray(skillList) && skillList.length > 0 ? { initialized: false, skillList } : null
 
   // 解析 envId：根据 provision_mode 决定 task.envId 怎么来
   //   - shared:   直接用 TCB_ENV_ID（不写 user_resources）
@@ -480,13 +483,21 @@ tasksRouter.post('/', async (c) => {
     prStatus: null,
     prMergeCommitSha: null,
     mcpServerList: mcpServerList ? JSON.stringify(mcpServerList) : null,
+    skillSettings: skillSettings ? JSON.stringify(skillSettings) : null,
     personalGitInfo: null,
     createdAt: now,
     updatedAt: now,
   })
 
   const newTask = await getDb().tasks.findById(taskId)
-  return c.json({ task: { ...newTask, logs: [], mcpServerList: null } })
+  return c.json({
+    task: {
+      ...newTask,
+      logs: [],
+      mcpServerList: null,
+      skillSettings: newTask?.skillSettings ? JSON.parse(newTask.skillSettings) : null,
+    },
+  })
 })
 
 // Get single task
@@ -502,6 +513,7 @@ tasksRouter.get('/:taskId', async (c) => {
       ...task,
       logs: task.logs ? JSON.parse(task.logs) : [],
       mcpServerList: task.mcpServerList ? JSON.parse(task.mcpServerList) : null,
+      skillSettings: task.skillSettings ? JSON.parse(task.skillSettings) : null,
     },
   })
 })

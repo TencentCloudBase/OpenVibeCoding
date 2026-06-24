@@ -12,6 +12,9 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
       // 让 web 直接引用 dashboard 源码，vite 一起打包处理
+      // 注意：子路径需要排在包名前面，否则会被包名前缀匹配吞掉
+      '@coder/dashboard/storage': path.resolve(__dirname, '../dashboard/src/services/storage.ts'),
+      '@coder/dashboard/CloudDashboard': path.resolve(__dirname, '../dashboard/src/CloudDashboard.tsx'),
       '@coder/dashboard': path.resolve(__dirname, '../dashboard/src'),
       // chat-core 直接引用源码，跟 dashboard 一致；workspace deps 也能解析，但显式 alias 更稳
       '@coder/chat-core': path.resolve(__dirname, '../chat-core/src/index.ts'),

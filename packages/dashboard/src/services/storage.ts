@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 
+import COS from 'cos-js-sdk-v5'
 import { useMemo } from 'react'
 import { getApiBase } from './config'
 import { tdFetch, type ApiContext } from './http'
@@ -24,6 +25,22 @@ export interface FileInfo {
   isDir: boolean
   fileId?: string // 云存储: cloud://envId/xxx
   publicUrl?: string // 静态托管: https://cdnDomain/xxx
+}
+
+export interface UploadOptions {
+  /** 要上传的文件列表（来自 input.files） */
+  files: File[]
+  /** 目标存储桶信息 */
+  bucket: BucketInfo
+  /** 上传的目标前缀路径（如 "skills/"） */
+  prefix?: string
+  /** 每上传完一个文件的回调，返回当前已完成数 */
+  onProgress?: (completed: number, total: number) => void
+}
+
+export interface UploadResult {
+  successCount: number
+  errors: string[]
 }
 
 export class StorageAPI {
@@ -80,16 +97,79 @@ export class StorageAPI {
     expiredTime: number
     envId: string
   }> {
-    const r = await tdFetch(this.ctx, `${this.base}/storage/upload-credential`, {
+    const url = `${this.base}/storage/upload-credential`
+
+    const r = await tdFetch(this.ctx, url, {
       method: 'POST',
     })
+
+    // 打印响应 headers
+    const respHeaders: Record<string, string> = {}
+    r.headers.forEach((v, k) => {
+      respHeaders[k] = v
+    })
+
     const data = await r.json()
+
     if (!r.ok || data.error) {
       const reqId = data.requestId ? ` (RequestId: ${data.requestId})` : ''
       const code = data.code ? ` [${data.code}]` : ''
       throw new Error(`${data.error || '签发失败'}${code}${reqId}`)
     }
     return data
+  }
+
+  /**
+   * 上传文件列表到 COS 存储桶。
+   * 同时兼容"上传文件"和"上传文件夹"两种场景：
+   *   - 上传文件时 webkitRelativePath 为空，fallback 到 file.name
+   *   - 上传文件夹时 webkitRelativePath 保留目录结构（如 "folder/sub/file.txt"）
+   */
+  async uploadFiles({ files, bucket, prefix = '', onProgress }: UploadOptions): Promise<UploadResult> {
+    const cred = await this.getUploadCredential()
+    const cos = new COS({
+      getAuthorization: (_: any, callback: any) => {
+        callback({
+          TmpSecretId: cred.tmpSecretId,
+          TmpSecretKey: cred.tmpSecretKey,
+          SecurityToken: cred.sessionToken,
+          ExpiredTime: cred.expiredTime,
+        })
+      },
+    })
+
+    let successCount = 0
+    const errors: string[] = []
+
+    for (const file of files) {
+      const relPath = file.webkitRelativePath || file.name
+      const key = (prefix + relPath).replace(/^\//, '')
+      try {
+        await new Promise<void>((resolve, reject) => {
+          cos.putObject(
+            {
+              Bucket: bucket.bucket,
+              Region: bucket.region,
+              Key: key,
+              Body: file,
+            },
+            (err: any, data: any) => {
+              if (err) {
+                reject(new Error(err.message || '上传失败'))
+              } else {
+                resolve()
+              }
+            },
+          )
+        })
+        successCount++
+      } catch {
+        errors.push(relPath)
+      }
+      onProgress?.(successCount + errors.length, files.length)
+    }
+
+    return { successCount, errors }
   }
 }
 
