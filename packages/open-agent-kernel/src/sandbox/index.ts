@@ -38,3 +38,7 @@ export {
   type CloudBaseMcpBundle,
   type CloudBaseUserCredentials,
 } from './cloudbase-mcp.js'
+export {
+  createCloudBaseMcpServerInProcess,
+  type CreateCloudBaseMcpInProcessOptions,
+} from './cloudbase-mcp-inprocess.js'

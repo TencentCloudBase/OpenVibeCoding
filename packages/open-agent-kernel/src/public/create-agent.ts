@@ -16,6 +16,7 @@ import {
 import { buildClaudeQueryOptions } from '../runtime/agent-builder.js'
 import { createTranslatorState, translateSdkMessage } from '../runtime/event-translator.js'
 import { buildPromptAsync } from '../runtime/prompt-builder.js'
+import { createCloudBaseMcpServerInProcess } from '../sandbox/cloudbase-mcp-inprocess.js'
 import { createCloudBaseMcpServer, type CloudBaseUserCredentials } from '../sandbox/cloudbase-mcp.js'
 import { AgsStatefulSandbox, CloudBaseCosLocalWorkspaceStore, LocalRuntimeSandbox } from '../sandbox/index.js'
 import type { SandboxInstance, SandboxRuntime } from '../sandbox/types.js'
@@ -149,7 +150,6 @@ function resolveSandboxConfig(config: AgentConfig): AgentConfig['sandbox'] {
   if (!sandbox || sandbox.enabled === false) return undefined
 
   if (sandbox.runtime) {
-    validateLocalSandboxPhase0(sandbox)
     const runtime = sandbox.runtime as SandboxRuntime
     return {
       ...sandbox,
@@ -168,13 +168,11 @@ function resolveSandboxConfig(config: AgentConfig): AgentConfig['sandbox'] {
   }
 
   if (provider === 'local') {
-    validateLocalSandboxPhase0(sandbox, provider)
     const credentials = resolvePlatformCredentials(config)
     return {
       ...sandbox,
       enabled: true,
       provider,
-      cloudbaseTools: false,
       workspaceSnapshot: sandbox.workspaceSnapshot ?? 'disabled',
       runtime: new LocalRuntimeSandbox({
         cwd: config.cwd,
@@ -202,21 +200,6 @@ function resolveSandboxConfig(config: AgentConfig): AgentConfig['sandbox'] {
     provider,
     runtime: new AgsStatefulSandbox({ apiKey }),
     scope: sandbox.scope ?? 'shared',
-  }
-}
-
-function validateLocalSandboxPhase0(
-  sandbox: NonNullable<AgentConfig['sandbox']>,
-  resolvedProvider?: 'local' | 'ags-stateful',
-): void {
-  const runtime = sandbox.runtime as SandboxRuntime | undefined
-  const provider = resolvedProvider ?? sandbox.provider ?? (runtime?.backend === 'local' ? 'local' : undefined)
-  if (provider !== 'local') return
-
-  if (sandbox.cloudbaseTools === true) {
-    throw new ConfigError(
-      'sandbox.cloudbaseTools=true is not supported with provider="local" in Phase 0. Set cloudbaseTools=false or use provider="ags-stateful".',
-    )
   }
 }
 
@@ -426,10 +409,17 @@ function createSession(deps: SessionDeps): Session {
     if (!cloudbaseMcpPromise) {
       cloudbaseMcpPromise = (async (): Promise<SdkMcpServerConfig | undefined> => {
         try {
-          const bundle = await createCloudBaseMcpServer({
-            sandbox,
-            getCredentials: () => resolveUserCredentials(config),
-          })
+          const getCredentials = () => resolveUserCredentials(config)
+          const bundle =
+            resolveSandboxMode(sandbox) === 'local'
+              ? await createCloudBaseMcpServerInProcess({
+                  getCredentials,
+                  workspaceFolderPaths: sandbox.workspaceRoot,
+                })
+              : await createCloudBaseMcpServer({
+                  sandbox,
+                  getCredentials,
+                })
           if (process.env.OAK_DEBUG === '1') {
             // eslint-disable-next-line no-console
             console.error(
@@ -1535,7 +1525,6 @@ function extractSandboxRuntime(config: AgentConfig): SandboxRuntime | undefined 
 function isCloudbaseToolsEnabled(config: AgentConfig): boolean {
   const runtime = config.sandbox?.runtime as SandboxRuntime | undefined
   if (!runtime) return false
-  if (runtime.backend !== 'ags-stateful') return false
   return config.sandbox?.cloudbaseTools !== false
 }
 

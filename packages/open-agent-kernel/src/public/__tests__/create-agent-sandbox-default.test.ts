@@ -123,7 +123,7 @@ describe('createAgent — default sandbox runtime', () => {
     ).toThrow(/sandbox\.apiKey/)
   })
 
-  it('throws when local mode explicitly enables cloudbaseTools', () => {
+  it('allows local mode to explicitly enable cloudbaseTools', () => {
     expect(() =>
       createAgent({
         envId: 'env-test',
@@ -133,7 +133,7 @@ describe('createAgent — default sandbox runtime', () => {
           cloudbaseTools: true,
         },
       }),
-    ).toThrow(/cloudbaseTools=true/)
+    ).not.toThrow()
   })
 
   it('configures a CloudBase workspace sync store when local workspaceSnapshot is enabled', () => {

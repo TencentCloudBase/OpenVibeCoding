@@ -1,7 +1,7 @@
 
 const eslintConfig = [
   {
-    ignores: ['node_modules/**', 'out/**', 'build/**'],
+    ignores: ['node_modules/**', 'out/**', 'build/**', 'dist/**', '**/dist/**'],
   },
 ]
 
