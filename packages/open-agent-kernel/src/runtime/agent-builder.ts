@@ -45,9 +45,10 @@ import {
 } from '../claude-home/index.js'
 import { ConfigError, InvalidConfigError } from '../internal/errors.js'
 import type { AgentConfig, SandboxConfig, ToolDefinition, UserMemoryConfig } from '../public/types.js'
+import type { LocalWorkspaceSyncEngine } from '../sandbox/local-workspace-sync/index.js'
 import { createSandboxMcpServer } from '../sandbox/sandbox-tools.js'
 import type { SandboxInstance, SandboxRuntime } from '../sandbox/types.js'
-import { WorkspaceSnapshotEngine } from '../sandbox/workspace-snapshot/index.js'
+import { WorkspaceSnapshotEngine, type WorkspaceSnapshotRuntime } from '../sandbox/workspace-snapshot/index.js'
 import { PACKAGE_VERSION } from '../version.js'
 import { resolveCredential, type ResolvedCredential } from './credential-factory.js'
 
@@ -77,7 +78,7 @@ export interface BuiltClaudeQueryParams {
    *   - send-end 后调用 engine.snapshot(inst)
    *   - session.snapshotWorkspace() / getRestoreStatus() 转发到 engine
    */
-  snapshotEngine?: WorkspaceSnapshotEngine
+  snapshotEngine?: WorkspaceSnapshotRuntime
   /**
    * OAK_DEBUG=1 时返回:我们指定给 SDK 的 claude CLI debug-file 绝对路径。
    * SDK 把子进程 --debug 的详细输出写到这个文件(而非 stderr),调用方(create-agent)
@@ -85,6 +86,8 @@ export interface BuiltClaudeQueryParams {
    */
   debugFilePath?: string
 }
+
+type SandboxMode = 'none' | 'local' | 'remote'
 
 /**
  * 把 kernel 的 AgentConfig 翻译为 Claude Agent SDK query() 的 options。
@@ -104,6 +107,8 @@ export function buildClaudeQueryOptions(
   config: AgentConfig,
   extra: {
     sandboxInstance?: SandboxInstance
+    sandboxMode?: SandboxMode
+    workspaceRoot?: string
     extraMcpServers?: Record<string, SdkMcpServerConfig>
     conversationId?: string
     hookLocalState?: PreToolUseHookLocalState
@@ -135,9 +140,13 @@ export function buildClaudeQueryOptions(
   //
   // 安全:'user' 在我们的部署模型里**不指宿主机 ~/.claude**,因为我们在 userMemory
   // 启用时把 CLAUDE_CONFIG_DIR 显式 redirect 到 per-user 派生目录。
+  const sandboxMode = extra.sandboxMode ?? (extra.sandboxInstance ? 'remote' : 'none')
   const userCwd = config.cwd
   if (userCwd) {
     assertSafeUserCwd(userCwd)
+  }
+  if (extra.workspaceRoot) {
+    assertSafeUserCwd(extra.workspaceRoot)
   }
 
   // userMemory 启用时,先派生 claudeConfigDir(per-user 稳定路径)。
@@ -177,7 +186,7 @@ export function buildClaudeQueryOptions(
   // 兜底是 process.cwd() —— 不自作主张造 ephemeral 目录(那是越权:kernel 不知道宿主
   // 哪里可写、session 目录怎么隔离/GC)。需要可写、隔离的工作目录时,由调用方(agent
   // runtime)显式传 config.cwd(它才掌握运行环境)。
-  const effectiveCwd = userCwd ?? process.cwd()
+  const effectiveCwd = extra.workspaceRoot ?? userCwd ?? process.cwd()
 
   // ── cwd 可写性检查(serverless 只读 FS)─────────────────────────────
   // claude CLI 在 cwd 里会做事(git 检测、写临时文件、--add-dir 等)。cwd 不可写会让
@@ -197,13 +206,13 @@ export function buildClaudeQueryOptions(
   //   - userMemory 启用 → 'user'(SDK auto-memory / 用户级 CLAUDE.md / agent-memory)
   // 'user' 安全性:CLAUDE_CONFIG_DIR override 让 'user' 指向 per-user 隔离目录,不是宿主机。
   const settingSources: SettingSource[] = []
-  if (userCwd) settingSources.push('project')
+  if (userCwd || extra.workspaceRoot) settingSources.push('project')
   if (claudeConfigDir) settingSources.push('user')
 
   // ── Skills 启用前置校验(spec §4.1.2)──────────
   // 启用 skills 但未传 cwd → SDK 找不到 SKILL.md(settingSources 没含 'project')
   // 静默无效易混淆 → 显式 warning(不抛错,不破坏向后兼容)
-  if (config.skills?.enabled !== undefined && !userCwd) {
+  if (config.skills?.enabled !== undefined && !userCwd && !extra.workspaceRoot) {
     // eslint-disable-next-line no-console
     console.warn(
       '[oak/skills] skills configured but cwd not set — SKILL.md will not be discovered. ' +
@@ -307,7 +316,7 @@ export function buildClaudeQueryOptions(
   const mergedMcpServers: Record<string, SdkMcpServerConfig> | undefined = (() => {
     const userServers = config.mcpServers ? validateMcpServers(config.mcpServers) : undefined
     const merged: Record<string, SdkMcpServerConfig> = { ...(userServers ?? {}) }
-    if (extra.sandboxInstance) {
+    if (extra.sandboxInstance && sandboxMode === 'remote') {
       // key 'sandbox' 决定工具名前缀：mcp__sandbox__bash 等
       merged.sandbox = createSandboxMcpServer(extra.sandboxInstance)
     }
@@ -367,17 +376,11 @@ export function buildClaudeQueryOptions(
   // 注意:必须用条件展开避免把 undefined 透到 engine —— `{ ...DEFAULT, ...opts }`
   // 模式下,显式赋 undefined 会覆盖默认值,导致 setTimeout(undefined) 立即触发,
   // bootstrap 会以 SandboxRestoreTimeout: init timeout after undefinedms 失败。
-  const snapshotEnabled = resolveSnapshotMode(config.sandbox)
-  const snapshotEngine = snapshotEnabled
-    ? new WorkspaceSnapshotEngine({
-        ...(config.sandbox?.workspaceSnapshotTimeoutMs !== undefined && {
-          snapshotTimeoutMs: config.sandbox.workspaceSnapshotTimeoutMs,
-        }),
-        ...(config.sandbox?.workspaceInitTimeoutMs !== undefined && {
-          initTimeoutMs: config.sandbox.workspaceInitTimeoutMs,
-        }),
-      })
-    : undefined
+  const snapshotEngine = buildWorkspaceSnapshotRuntime(config.sandbox, {
+    envId: config.envId,
+    userId: extra.userId,
+    conversationId: extra.conversationId,
+  })
 
   const options: ClaudeOptions = {
     model: credential.modelId,
@@ -413,7 +416,7 @@ export function buildClaudeQueryOptions(
     // 例外:启用 skills 时必须保留 'Skill' 工具,否则模型无法 invoke discovered skills
     // (SDK 文档:"If you also pass an explicit tools list, include 'Skill' in that list
     //   so Claude can invoke skills.")
-    tools: config.skills?.enabled !== undefined ? ['Skill'] : [],
+    tools: resolveSdkTools(config, sandboxMode),
   }
 
   return { options, credential, syncEngine, snapshotEngine, ...(debugFilePath ? { debugFilePath } : {}) }
@@ -423,6 +426,14 @@ export function buildClaudeQueryOptions(
 
 function isUserMemoryEnabled(config: UserMemoryConfig | undefined): boolean {
   return config === true || (typeof config === 'object' && config.enabled === true)
+}
+
+function resolveSdkTools(config: AgentConfig, sandboxMode: SandboxMode): string[] {
+  const tools = sandboxMode === 'local' ? ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep'] : []
+  if (config.skills?.enabled !== undefined) {
+    tools.push('Skill')
+  }
+  return tools
 }
 
 /**
@@ -440,12 +451,60 @@ function isUserMemoryEnabled(config: UserMemoryConfig | undefined): boolean {
  * 启用后 scope 必须是 'shared'(同 envId 共享容器,跨 session 接续 cwd),
  * 否则 throw ConfigError(包括 scope='session' 和 scope undefined 默认场景)。
  */
+function buildWorkspaceSnapshotRuntime(
+  sandboxConfig: SandboxConfig | undefined,
+  ctx: { envId: string; userId?: string; conversationId?: string },
+): WorkspaceSnapshotRuntime | undefined {
+  if (!resolveSnapshotMode(sandboxConfig)) return undefined
+
+  const runtime = sandboxConfig?.runtime as SandboxRuntime | undefined
+  if (runtime?.backend === 'local') {
+    if (!ctx.userId || !ctx.conversationId) {
+      throw new ConfigError('local workspaceSnapshot requires userId and conversationId from startSession context.')
+    }
+    const factory = (runtime as LocalWorkspaceSyncRuntime).createWorkspaceSyncEngine
+    if (typeof factory !== 'function') {
+      throw new ConfigError(
+        'workspaceSnapshot="enabled" with provider="local" requires LocalRuntimeSandbox or a runtime that implements createWorkspaceSyncEngine().',
+      )
+    }
+    const engine = factory.call(runtime, {
+      envId: ctx.envId,
+      userId: ctx.userId,
+      conversationId: ctx.conversationId,
+    })
+    if (!engine) {
+      throw new ConfigError(
+        'workspaceSnapshot="enabled" with provider="local" requires LocalRuntimeSandboxOptions.workspaceSyncStore.',
+      )
+    }
+    return engine
+  }
+
+  return new WorkspaceSnapshotEngine({
+    ...(sandboxConfig?.workspaceSnapshotTimeoutMs !== undefined && {
+      snapshotTimeoutMs: sandboxConfig.workspaceSnapshotTimeoutMs,
+    }),
+    ...(sandboxConfig?.workspaceInitTimeoutMs !== undefined && {
+      initTimeoutMs: sandboxConfig.workspaceInitTimeoutMs,
+    }),
+  })
+}
+
+interface LocalWorkspaceSyncRuntime {
+  createWorkspaceSyncEngine?: (ctx: {
+    envId: string
+    userId: string
+    conversationId: string
+  }) => LocalWorkspaceSyncEngine | undefined
+}
+
 function resolveSnapshotMode(sandboxConfig: SandboxConfig | undefined): boolean {
   const mode = sandboxConfig?.workspaceSnapshot ?? 'auto'
   const scope = sandboxConfig?.scope ?? 'session'
   const runtime = sandboxConfig?.runtime as SandboxRuntime | undefined
   const backend = runtime?.backend
-  const supportsSnapshot = backend === 'ags-stateful'
+  const supportsSnapshot = backend === 'ags-stateful' || backend === 'local'
 
   if (mode === 'disabled') return false
 
@@ -457,11 +516,13 @@ function resolveSnapshotMode(sandboxConfig: SandboxConfig | undefined): boolean 
     )
   }
 
-  // mode='auto' + 不支持 snapshot 的 runtime → 静默不启用
-  if (mode === 'auto' && !supportsSnapshot) return false
+  // mode='auto' keeps local disabled to avoid surprising COS/network failures
+  // when callers have not provided a persistence backend.
+  if (mode === 'auto' && backend !== 'ags-stateful') return false
 
-  // 到这里 mode 是 'enabled' 或 'auto',且 backend 支持 snapshot → 必须 scope='shared'
-  if (scope !== 'shared') {
+  // AGS/TRW snapshot still requires shared scope. Local snapshot is scoped by
+  // userId + conversationId and does not share an AGS instance.
+  if (backend === 'ags-stateful' && scope !== 'shared') {
     throw new ConfigError(
       `workspaceSnapshot 要求 sandbox.scope='shared'(同 envId 共享容器,跨 session 接续 cwd),` +
         `当前 scope='${scope}'。改为 createAgent({ sandbox: { scope: 'shared', ... } })。` +

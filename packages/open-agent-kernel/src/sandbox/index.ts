@@ -12,12 +12,23 @@
  *   })
  *   ```
  *
- * 高级用户仍可显式传入 `sandbox.runtime` 覆盖默认 AgsStatefulSandbox。
+ * 高级用户仍可显式传入 `sandbox.runtime` 覆盖默认 runtime。
  */
 
 export type { SandboxRuntime, SandboxInstance, SandboxAcquireContext } from './types.js'
 
 export { AgsStatefulSandbox, type AgsStatefulSandboxOptions } from './ags-stateful-sandbox.js'
+export { LocalRuntimeSandbox, type LocalRuntimeSandboxOptions } from './local-runtime-sandbox.js'
+export {
+  LocalWorkspaceSyncEngine,
+  FileSystemLocalWorkspaceStore,
+  CloudBaseCosLocalWorkspaceStore,
+  type LocalWorkspaceSyncContext,
+  type LocalWorkspaceSyncStore,
+  type LocalWorkspaceSyncEngineOptions,
+  type FileSystemLocalWorkspaceStoreOptions,
+  type CloudBaseCosLocalWorkspaceStoreOptions,
+} from './local-workspace-sync/index.js'
 
 export { createSandboxMcpServer } from './sandbox-tools.js'
 
@@ -27,3 +38,7 @@ export {
   type CloudBaseMcpBundle,
   type CloudBaseUserCredentials,
 } from './cloudbase-mcp.js'
+export {
+  createCloudBaseMcpServerInProcess,
+  type CreateCloudBaseMcpInProcessOptions,
+} from './cloudbase-mcp-inprocess.js'

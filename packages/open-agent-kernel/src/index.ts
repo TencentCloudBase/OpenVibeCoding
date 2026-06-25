@@ -10,6 +10,30 @@
 
 // 公共 API：唯一的入口点
 export { createAgent } from './public/create-agent.js'
+export { AcpStreamAdapter } from './adapters/index.js'
+
+export type { AcpStreamAdapterOptions, StreamAdapter, StreamAdapterContext } from './adapters/index.js'
+export type {
+  AcpSessionUpdate,
+  AcpTextBlock,
+  AgentMessageChunkUpdate,
+  AgentThoughtChunkUpdate,
+  ToolCallUpdate,
+  ToolCallStatusUpdate,
+  AvailableCommandsUpdate,
+  LogUpdate,
+  TaskProgressUpdate,
+  FileChangeUpdate,
+  ThinkingUpdate,
+  AskUserUpdate,
+  ToolConfirmUpdate,
+  ArtifactUpdate,
+  HistoryMessage,
+  HistoryMessagePart,
+  HistoryPageUpdate,
+  AgentPhaseName,
+  AgentPhaseUpdate,
+} from './acp/index.js'
 
 // 公共类型：完整对外契约
 export type {
@@ -21,7 +45,6 @@ export type {
   SessionSummary,
   // 输入 / 事件
   SessionInput,
-  SessionEvent,
   MessageRecord,
   MessagePart,
   AttachmentInput,
@@ -92,13 +115,25 @@ export {
   type DeleteUserMemoryFilesOptions,
 } from './user-memory/index.js'
 
-// Sandbox：可选用于让 agent 在远程容器里跑文件系统/shell（PR #6A）
+// Sandbox：可选用于让 agent 通过 local/AGS runtime 跑文件系统/shell
 export {
   AgsStatefulSandbox,
   type AgsStatefulSandboxOptions,
+  LocalRuntimeSandbox,
+  type LocalRuntimeSandboxOptions,
+  LocalWorkspaceSyncEngine,
+  FileSystemLocalWorkspaceStore,
+  CloudBaseCosLocalWorkspaceStore,
+  type LocalWorkspaceSyncContext,
+  type LocalWorkspaceSyncStore,
+  type LocalWorkspaceSyncEngineOptions,
+  type FileSystemLocalWorkspaceStoreOptions,
+  type CloudBaseCosLocalWorkspaceStoreOptions,
   type SandboxRuntime,
   type SandboxInstance,
   type SandboxAcquireContext,
+  createCloudBaseMcpServerInProcess,
+  type CreateCloudBaseMcpInProcessOptions,
 } from './sandbox/index.js'
 
 // Permissions / HITL（PR #7.0 + PR #7.1）

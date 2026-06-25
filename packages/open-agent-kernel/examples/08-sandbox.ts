@@ -1,8 +1,8 @@
 /**
- * Example 08: AGS Stateful Sandbox（腾讯云 Agent Sandbox 产品）
+ * Example 08: Local Runtime Sandbox（Phase 0 默认沙箱）
  *
- * 演示 agent 在真实远程沙箱里跑文件系统 + shell：
- *   1. 让 agent 在沙箱里写一个 README.md
+ * 演示 agent 在宿主进程本地 workspace 里跑文件系统 + shell：
+ *   1. 让 agent 在本地 workspace 写一个 README.md
  *   2. 让 agent 跑 `ls` 列目录
  *   3. 让 agent 读回 README.md 验证
  *
@@ -14,9 +14,11 @@
  *   pnpm dlx tsx packages/open-agent-kernel/examples/08-sandbox.ts
  *
  * 注意：
- *   - 第一次运行会触发 CreateSandboxTool（~30s）+ StartSandboxInstance（~30-60s）
- *   - 之后同一 envId 会复用 ToolId（内存 cache），但每个 session 仍会启新实例
+ *   - local 是过渡方案：无容器级隔离，适合可信 serverless / CloudRun 场景
+ *   - 如需使用 AGS 远程沙箱，请显式配置 sandbox.provider = 'ags-stateful'
  */
+import * as os from 'node:os'
+import * as path from 'node:path'
 import { getEnvId, getModel, getPlatformCredentials } from './_shared/env.js'
 
 import { createAgent } from '@cloudbase/open-agent-kernel'
@@ -24,19 +26,25 @@ import { createAgent } from '@cloudbase/open-agent-kernel'
 async function main(): Promise<void> {
   const envId = getEnvId()
   const credentials = getPlatformCredentials()
+  const workspaceRoot = path.join(os.tmpdir(), 'oak-example-08-local')
 
   const agent = createAgent({
     envId,
     credentials,
     model: getModel(),
     systemPrompt:
-      'You are a helpful coding assistant working inside a sandbox. ' +
-      'You have access to bash / read / write tools (mcp__sandbox__*). ' +
+      'You are a helpful coding assistant working inside a local runtime sandbox. ' +
+      'You have access to Bash / Read / Write / Edit / Glob / Grep tools. ' +
       'Always use the tools to interact with the filesystem—never fabricate output. ' +
       'Reply concisely in Chinese.',
+    cwd: workspaceRoot,
     sandbox: {
       enabled: true,
-      // 默认使用 AgsStatefulSandbox + scope: 'shared'
+      // provider: 'local' 是 Phase 0 默认值；这里显式写出便于阅读。
+      provider: 'local',
+      workspaceRoot,
+      cloudbaseTools: false,
+      workspaceSnapshot: 'disabled',
     },
   })
 
@@ -44,9 +52,9 @@ async function main(): Promise<void> {
 
   const prompt =
     '请完成以下任务：\n' +
-    '1. 在工作目录用 write 工具创建一个 README.md，内容是 "# Hello from open-agent-kernel sandbox"\n' +
-    '2. 用 bash 工具跑 `ls -la` 看下当前目录\n' +
-    '3. 用 read 工具读 README.md 的内容并展示给我\n' +
+    '1. 在工作目录创建一个 README.md，内容是 "# Hello from open-agent-kernel local sandbox"\n' +
+    '2. 跑 `ls -la` 看下当前目录\n' +
+    '3. 读 README.md 的内容并展示给我\n' +
     '完成后告诉我结果。'
 
   console.log('User:', prompt, '\n')
@@ -65,8 +73,8 @@ async function main(): Promise<void> {
     }
   }
 
-  console.log('\n\n--- Cleaning up sandbox ---')
-  await session.abort() // 触发 PauseSandboxInstance
+  console.log('\n\n--- Cleaning up local sandbox session ---')
+  await session.abort()
   console.log('--- Done ---')
 }
 

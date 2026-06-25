@@ -5,4 +5,4 @@ export {
   SandboxRestoreTimeout,
   SandboxUnavailableError,
 } from './errors.js'
-export type { SyncStatus, Restored } from './types.js'
+export type { SyncStatus, Restored, WorkspaceSnapshotRuntime } from './types.js'

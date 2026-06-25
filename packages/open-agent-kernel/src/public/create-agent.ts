@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { query as claudeQuery } from '@anthropic-ai/claude-agent-sdk'
 import type { McpServerConfig as SdkMcpServerConfig } from '@anthropic-ai/claude-agent-sdk'
-import { InvalidConfigError, ResourceError } from '../internal/errors.js'
+import { ConfigError, InvalidConfigError, ResourceError } from '../internal/errors.js'
 import {
   createHookLocalState,
   InMemoryAskUserStore,
@@ -16,10 +16,11 @@ import {
 import { buildClaudeQueryOptions } from '../runtime/agent-builder.js'
 import { createTranslatorState, translateSdkMessage } from '../runtime/event-translator.js'
 import { buildPromptAsync } from '../runtime/prompt-builder.js'
+import { createCloudBaseMcpServerInProcess } from '../sandbox/cloudbase-mcp-inprocess.js'
 import { createCloudBaseMcpServer, type CloudBaseUserCredentials } from '../sandbox/cloudbase-mcp.js'
-import { AgsStatefulSandbox } from '../sandbox/index.js'
+import { AgsStatefulSandbox, CloudBaseCosLocalWorkspaceStore, LocalRuntimeSandbox } from '../sandbox/index.js'
 import type { SandboxInstance, SandboxRuntime } from '../sandbox/types.js'
-import type { WorkspaceSnapshotEngine } from '../sandbox/workspace-snapshot/index.js'
+import type { WorkspaceSnapshotRuntime } from '../sandbox/workspace-snapshot/index.js'
 import { CloudBaseDbDriver, CloudBaseSessionStore } from '../session-store/index.js'
 import { CloudBaseStorage } from '../storage/cloudbase-storage.js'
 import type { StorageProvider } from '../storage/types.js'
@@ -148,15 +149,41 @@ function resolveSandboxConfig(config: AgentConfig): AgentConfig['sandbox'] {
   const sandbox = config.sandbox
   if (!sandbox || sandbox.enabled === false) return undefined
 
-  if (sandbox.runtime) return sandbox
+  if (sandbox.runtime) {
+    const runtime = sandbox.runtime as SandboxRuntime
+    return {
+      ...sandbox,
+      enabled: true,
+      ...(!sandbox.provider && runtime.backend === 'local' ? { provider: 'local' as const } : {}),
+    }
+  }
 
-  const provider = sandbox.provider ?? 'ags-stateful'
-  if (provider !== 'ags-stateful') {
+  const provider = sandbox.provider ?? 'local'
+  if (provider !== 'local' && provider !== 'ags-stateful') {
     throw new InvalidConfigError(
       `AgentConfig.sandbox.provider="${provider}" is not supported yet. ` +
-        'The built-in sandbox currently supports provider="ags-stateful". ' +
+        'The built-in sandbox currently supports provider="local" and provider="ags-stateful". ' +
         'Pass a custom SandboxRuntime via AgentConfig.sandbox.runtime for advanced scenarios.',
     )
+  }
+
+  if (provider === 'local') {
+    const credentials = resolvePlatformCredentials(config)
+    return {
+      ...sandbox,
+      enabled: true,
+      provider,
+      workspaceSnapshot: sandbox.workspaceSnapshot ?? 'disabled',
+      runtime: new LocalRuntimeSandbox({
+        cwd: config.cwd,
+        workspaceRoot: sandbox.workspaceRoot,
+        ...(sandbox.workspaceSnapshot === 'enabled' && {
+          workspaceSyncStore: new CloudBaseCosLocalWorkspaceStore({
+            credentials: credentials ? { ...credentials, envId: credentials.envId ?? config.envId } : undefined,
+          }),
+        }),
+      }),
+    }
   }
 
   const apiKey = sandbox.apiKey ?? process.env.CLOUDBASE_APIKEY ?? process.env.OAK_SANDBOX_API_KEY
@@ -327,7 +354,7 @@ function createSession(deps: SessionDeps): Session {
   // Spec B(Task 8):workspace snapshot engine 由 buildClaudeQueryOptions 在
   // 第一次 send 时构造并通过本闭包变量记录。bootstrap 仅执行一次(首次 acquire 之后)。
   // 注意:engine 本身是无状态构造,跨 send 持有同一个实例没有副作用。
-  let sessionSnapshotEngine: WorkspaceSnapshotEngine | undefined
+  let sessionSnapshotEngine: WorkspaceSnapshotRuntime | undefined
   let snapshotBootstrapped = false
   let snapshotBootstrapPromise: Promise<void> | undefined
 
@@ -382,10 +409,17 @@ function createSession(deps: SessionDeps): Session {
     if (!cloudbaseMcpPromise) {
       cloudbaseMcpPromise = (async (): Promise<SdkMcpServerConfig | undefined> => {
         try {
-          const bundle = await createCloudBaseMcpServer({
-            sandbox,
-            getCredentials: () => resolveUserCredentials(config),
-          })
+          const getCredentials = () => resolveUserCredentials(config)
+          const bundle =
+            resolveSandboxMode(sandbox) === 'local'
+              ? await createCloudBaseMcpServerInProcess({
+                  getCredentials,
+                  workspaceFolderPaths: sandbox.workspaceRoot,
+                })
+              : await createCloudBaseMcpServer({
+                  sandbox,
+                  getCredentials,
+                })
           if (process.env.OAK_DEBUG === '1') {
             // eslint-disable-next-line no-console
             console.error(
@@ -420,7 +454,7 @@ function createSession(deps: SessionDeps): Session {
    * 由 runClaudeQuery 的 catch 块翻译为 'error' 事件 + session_idle('error')。
    * 这是 spec §6.2"restore failed → 视为致命"行为。
    */
-  async function ensureSnapshotBootstrap(engine: WorkspaceSnapshotEngine, sandbox: SandboxInstance): Promise<void> {
+  async function ensureSnapshotBootstrap(engine: WorkspaceSnapshotRuntime, sandbox: SandboxInstance): Promise<void> {
     if (snapshotBootstrapped) return
     if (!snapshotBootstrapPromise) {
       snapshotBootstrapPromise = (async () => {
@@ -444,7 +478,7 @@ function createSession(deps: SessionDeps): Session {
     }
   }
 
-  function onSnapshotEngine(engine: WorkspaceSnapshotEngine | undefined): void {
+  function onSnapshotEngine(engine: WorkspaceSnapshotRuntime | undefined): void {
     if (engine && !sessionSnapshotEngine) {
       sessionSnapshotEngine = engine
     }
@@ -965,9 +999,9 @@ interface RunClaudeQueryArgs {
   ensureSandbox: () => Promise<SandboxInstance | undefined>
   ensureCloudbaseMcp: (sandbox: SandboxInstance) => Promise<SdkMcpServerConfig | undefined>
   /** Spec B(Task 8):首次 send 时执行 snapshot bootstrap(restore)*/
-  ensureSnapshotBootstrap: (engine: WorkspaceSnapshotEngine, sandbox: SandboxInstance) => Promise<void>
+  ensureSnapshotBootstrap: (engine: WorkspaceSnapshotRuntime, sandbox: SandboxInstance) => Promise<void>
   /** Spec B(Task 8):把 buildClaudeQueryOptions 拿到的 engine 上抛给 session 闭包 */
-  onSnapshotEngine: (engine: WorkspaceSnapshotEngine | undefined) => void
+  onSnapshotEngine: (engine: WorkspaceSnapshotRuntime | undefined) => void
   permissionStore?: PermissionStore
   /** PR #7.1: names of user-defined client-side tools (config.tools[].name set). */
   clientToolNames?: ReadonlySet<string>
@@ -1019,6 +1053,8 @@ async function* runClaudeQuery(args: RunClaudeQueryArgs): AsyncGenerator<Session
 
     const built = buildClaudeQueryOptions(effectiveConfig, {
       sandboxInstance: sandbox,
+      sandboxMode: resolveSandboxMode(sandbox),
+      workspaceRoot: sandbox?.workspaceRoot,
       extraMcpServers: cloudbaseMcp ? { cloudbase: cloudbaseMcp } : undefined,
       conversationId,
       hookLocalState,
@@ -1153,8 +1189,8 @@ interface RunApprovalResumeArgs {
   abortController: AbortController
   ensureSandbox: () => Promise<SandboxInstance | undefined>
   ensureCloudbaseMcp: (sandbox: SandboxInstance) => Promise<SdkMcpServerConfig | undefined>
-  ensureSnapshotBootstrap: (engine: WorkspaceSnapshotEngine, sandbox: SandboxInstance) => Promise<void>
-  onSnapshotEngine: (engine: WorkspaceSnapshotEngine | undefined) => void
+  ensureSnapshotBootstrap: (engine: WorkspaceSnapshotRuntime, sandbox: SandboxInstance) => Promise<void>
+  onSnapshotEngine: (engine: WorkspaceSnapshotRuntime | undefined) => void
   permissionStore?: PermissionStore
   clientToolNames?: ReadonlySet<string>
   clientToolStore?: ClientToolResultStore
@@ -1249,8 +1285,8 @@ interface RunClientToolResumeArgs {
   abortController: AbortController
   ensureSandbox: () => Promise<SandboxInstance | undefined>
   ensureCloudbaseMcp: (sandbox: SandboxInstance) => Promise<SdkMcpServerConfig | undefined>
-  ensureSnapshotBootstrap: (engine: WorkspaceSnapshotEngine, sandbox: SandboxInstance) => Promise<void>
-  onSnapshotEngine: (engine: WorkspaceSnapshotEngine | undefined) => void
+  ensureSnapshotBootstrap: (engine: WorkspaceSnapshotRuntime, sandbox: SandboxInstance) => Promise<void>
+  onSnapshotEngine: (engine: WorkspaceSnapshotRuntime | undefined) => void
   permissionStore?: PermissionStore
   clientToolNames: ReadonlySet<string>
   clientToolStore?: ClientToolResultStore
@@ -1355,8 +1391,8 @@ interface RunAskUserResumeArgs {
   abortController: AbortController
   ensureSandbox: () => Promise<SandboxInstance | undefined>
   ensureCloudbaseMcp: (sandbox: SandboxInstance) => Promise<SdkMcpServerConfig | undefined>
-  ensureSnapshotBootstrap: (engine: WorkspaceSnapshotEngine, sandbox: SandboxInstance) => Promise<void>
-  onSnapshotEngine: (engine: WorkspaceSnapshotEngine | undefined) => void
+  ensureSnapshotBootstrap: (engine: WorkspaceSnapshotRuntime, sandbox: SandboxInstance) => Promise<void>
+  onSnapshotEngine: (engine: WorkspaceSnapshotRuntime | undefined) => void
   permissionStore?: PermissionStore
   clientToolNames: ReadonlySet<string>
   clientToolStore?: ClientToolResultStore
@@ -1487,8 +1523,15 @@ function extractSandboxRuntime(config: AgentConfig): SandboxRuntime | undefined 
 }
 
 function isCloudbaseToolsEnabled(config: AgentConfig): boolean {
-  if (!config.sandbox?.runtime) return false
-  return config.sandbox.cloudbaseTools !== false
+  const runtime = config.sandbox?.runtime as SandboxRuntime | undefined
+  if (!runtime) return false
+  return config.sandbox?.cloudbaseTools !== false
+}
+
+function resolveSandboxMode(sandbox: SandboxInstance | undefined): 'none' | 'local' | 'remote' {
+  if (!sandbox) return 'none'
+  if (sandbox.backend === 'local' || sandbox.id.startsWith('local:')) return 'local'
+  return 'remote'
 }
 
 async function resolveUserCredentials(config: AgentConfig): Promise<CloudBaseUserCredentials> {
