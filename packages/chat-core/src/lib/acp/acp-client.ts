@@ -43,6 +43,12 @@ export interface AcpClientOptions {
    * 同名 header 会覆盖默认值；返回值变化无需重建 client。
    */
   getHeaders?: () => Record<string, string> | undefined
+  /**
+   * 是否在请求头里带 `X-Task-Id`（默认 true）。
+   * 同源 web 主应用需要它配合 server 的 task 级资源解析；
+   * playground 等跨域场景可关闭，taskId 走 body/query 传递即可。
+   */
+  sendTaskIdHeader?: boolean
 }
 
 /**
@@ -70,6 +76,7 @@ export class AcpClient {
   private readonly observeBaseUrl: string
   private readonly taskId: string
   private readonly getExtraHeaders?: () => Record<string, string> | undefined
+  private readonly sendTaskIdHeader: boolean
 
   /** 单调递增的 JSON-RPC id（避免 Date.now() 同毫秒冲突） */
   private nextId = 1
@@ -85,17 +92,21 @@ export class AcpClient {
     this.observeBaseUrl = options.observeBaseUrl ?? options.baseUrl.replace(/\/acp$/, '/observe')
     this.taskId = options.taskId
     this.getExtraHeaders = options.getHeaders
+    this.sendTaskIdHeader = options.sendTaskIdHeader ?? true
   }
 
   /**
-   * 合并请求 headers：默认 Content-Type + X-Task-Id（如有），叠加 getHeaders() 返回值。
-   * 调用方传 `withTaskId=false` 用于 GET observe 等不需要 X-Task-Id 的请求。
+   * 合并请求 headers：默认 Content-Type，按需附加 X-Task-Id，叠加 getHeaders() 返回值。
+   *
+   * `sendTaskIdHeader=true`（默认）时 POST 请求带 `X-Task-Id`，配合同源 server
+   * 的 task 级资源解析。playground 等跨域场景关闭后，taskId 由 body/query 携带。
+   * `withTaskId=false` 用于 GET observe 等不需要 taskId 的请求（始终不发）。
    */
   private buildHeaders(opts: { withTaskId?: boolean; jsonBody?: boolean } = {}): Record<string, string> {
     const { withTaskId = true, jsonBody = true } = opts
     const headers: Record<string, string> = {}
     if (jsonBody) headers['Content-Type'] = 'application/json'
-    if (withTaskId && this.taskId) headers['X-Task-Id'] = this.taskId
+    if (withTaskId && this.sendTaskIdHeader && this.taskId) headers['X-Task-Id'] = this.taskId
     const extra = this.getExtraHeaders?.()
     if (extra) Object.assign(headers, extra)
     return headers

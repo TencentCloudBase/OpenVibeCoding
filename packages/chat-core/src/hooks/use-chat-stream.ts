@@ -47,6 +47,8 @@ interface UseChatStreamOptions {
   acpObserveBaseUrl?: string
   /** 每次 ACP 请求附加的 headers（如第三方 server 的 Bearer token）。 */
   getAcpHeaders?: () => Record<string, string> | undefined
+  /** 是否带 X-Task-Id header，默认 true。跨域 playground 可关闭。 */
+  sendTaskIdHeader?: boolean
 }
 
 // ─── Return type (exported for parent components) ─────────────────────
@@ -78,6 +80,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
   acpHeadersRef.current = options.getAcpHeaders
   const acpBaseUrl = options.acpBaseUrl ?? '/api/agent/acp'
   const acpObserveBaseUrl = options.acpObserveBaseUrl
+  const sendTaskIdHeader = options.sendTaskIdHeader ?? true
   const acpClient = useMemo(
     () =>
       new AcpClient({
@@ -85,8 +88,9 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
         observeBaseUrl: acpObserveBaseUrl,
         taskId,
         getHeaders: () => acpHeadersRef.current?.(),
+        sendTaskIdHeader,
       }),
-    [acpBaseUrl, acpObserveBaseUrl, taskId],
+    [acpBaseUrl, acpObserveBaseUrl, taskId, sendTaskIdHeader],
   )
 
   // ── User interaction state ──

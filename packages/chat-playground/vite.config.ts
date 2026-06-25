@@ -4,6 +4,9 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 
 export default defineConfig({
+  // 部署到子路径（如 /ai/agent/acp-playground/）时用相对路径，
+  // 避免 assets 404。根路径部署也兼容。
+  base: './',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

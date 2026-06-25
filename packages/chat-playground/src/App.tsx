@@ -9,6 +9,13 @@
  *
  * 认证：默认与本仓库的 server 同源，复用 web 已建立的 cookie；也可在配置面板里
  * 指向第三方 ACP server，并附加 headers（如 Authorization: Bearer ...）。
+ *
+ * URL 参数注入（部署到静态托管时方便分享/书签）：
+ *   ?endpoint=<url>           ACP JSON-RPC endpoint
+ *   ?observe=<url>            observe SSE endpoint（可选）
+ *   ?token=<xxx>              等价于 Authorization: Bearer <xxx>
+ *   ?headers=<Key:Value%0A…>  完整 headers 文本（每行一个 `Key: Value`，需 URL 编码）
+ * URL 参数出现时覆盖 localStorage，并写入 localStorage 持久化。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { AcpChat, AcpClient } from '@coder/chat-core'
@@ -41,15 +48,52 @@ const DEFAULT_CONFIG: PlaygroundConfig = {
   headersText: '',
 }
 
+/**
+ * 从 URL search params 读取配置。仅返回出现的字段，未出现的字段不覆盖。
+ * `token` 是 `Authorization: Bearer <token>` 的快捷方式；若同时提供 `headers`，
+ * `headers` 中的 Authorization 会覆盖 `token`。
+ */
+function readConfigFromUrl(): Partial<PlaygroundConfig> {
+  const params = new URLSearchParams(window.location.search)
+  const out: Partial<PlaygroundConfig> = {}
+  const endpoint = params.get('endpoint') || params.get('acp')
+  if (endpoint) out.acpBaseUrl = endpoint
+  const observe = params.get('observe')
+  if (observe) out.acpObserveBaseUrl = observe
+  const token = params.get('token')
+  const headersText = params.get('headers')
+  if (token || headersText) {
+    const lines: string[] = []
+    if (token) lines.push(`Authorization: Bearer ${token}`)
+    if (headersText) lines.push(...headersText.split('\n'))
+    out.headersText = lines.join('\n')
+  }
+  return out
+}
+
 function loadConfig(): PlaygroundConfig {
+  let base = DEFAULT_CONFIG
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return DEFAULT_CONFIG
-    const parsed = JSON.parse(raw) as Partial<PlaygroundConfig>
-    return { ...DEFAULT_CONFIG, ...parsed }
+    if (raw) base = { ...DEFAULT_CONFIG, ...(JSON.parse(raw) as Partial<PlaygroundConfig>) }
   } catch {
-    return DEFAULT_CONFIG
+    // ignore broken localStorage
   }
+  const fromUrl = readConfigFromUrl()
+  const hasUrlOverride = Object.keys(fromUrl).length > 0
+  const merged = { ...base, ...fromUrl }
+  if (hasUrlOverride) {
+    // 持久化 URL 注入的配置，后续无参数访问也保留
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(merged))
+    } catch {
+      // ignore
+    }
+    // 清理 URL 参数，避免分享/刷新时泄露 token
+    const cleanUrl = window.location.pathname + window.location.hash
+    window.history.replaceState(null, '', cleanUrl)
+  }
+  return merged
 }
 
 function saveConfig(config: PlaygroundConfig) {
@@ -331,7 +375,7 @@ function SettingsDialog({
             <textarea
               value={draft.headersText}
               onChange={(e) => setDraft({ ...draft, headersText: e.target.value })}
-              placeholder={'Authorization: Bearer xxxxx\nX-Tenant-Id: t-001'}
+              placeholder={'Authorization: Bearer xxxxx'}
               className="w-full h-24 px-2.5 py-1.5 rounded border border-border bg-background font-mono text-[11px] resize-none"
               spellCheck={false}
             />
@@ -460,6 +504,7 @@ function SessionChat({
       acpBaseUrl={acpBaseUrl}
       acpObserveBaseUrl={acpObserveBaseUrl}
       getAcpHeaders={getHeaders}
+      sendTaskIdHeader={false}
       onStreamComplete={onTaskUpdated}
     />
   )
