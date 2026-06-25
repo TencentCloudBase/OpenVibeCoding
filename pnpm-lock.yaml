@@ -280,6 +280,9 @@ importers:
 
   packages/open-agent-kernel:
     dependencies:
+      '@agentclientprotocol/sdk':
+        specifier: ^1.0.0
+        version: 1.0.0(zod@4.3.6)
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.146
         version: 0.3.146(@anthropic-ai/sdk@0.93.0(zod@4.3.6))(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))(zod@4.3.6)
@@ -573,6 +576,11 @@ packages:
 
   '@agentclientprotocol/sdk@0.21.0':
     resolution: {integrity: sha512-ONj+Q8qOdNQp5XbH5jnMwzT9IKZJsSN0p0lkceS4GtUtNOPVLpNzSS8gqQdGMKfBvA0ESbkL8BTaSN1Rc9miEw==}
+    peerDependencies:
+      zod: ^3.25.0 || ^4.0.0
+
+  '@agentclientprotocol/sdk@1.0.0':
+    resolution: {integrity: sha512-5FHgLbLZhSAq9F+9SU7AOCXTDzaw/IYx/AvMjrZDs/YFZ9ZPxkdn9ti3fSkny0huHfj2hrqF6pqdns9gN5/Fig==}
     peerDependencies:
       zod: ^3.25.0 || ^4.0.0
 
@@ -6605,6 +6613,10 @@ snapshots:
       zod: 4.3.6
 
   '@agentclientprotocol/sdk@0.21.0(zod@4.3.6)':
+    dependencies:
+      zod: 4.3.6
+
+  '@agentclientprotocol/sdk@1.0.0(zod@4.3.6)':
     dependencies:
       zod: 4.3.6
 
