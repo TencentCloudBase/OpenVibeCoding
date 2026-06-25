@@ -25,7 +25,14 @@ export interface AcpChatProps {
  * 不包含 web 产品层的部署产物、PR 评论、Actions tab、预览等能力。
  * Transcript 样式复用 TaskChat 已定稿的 ChatTranscript。
  */
-export function AcpChat({ sessionId, onStreamComplete, acpBaseUrl, acpObserveBaseUrl, getAcpHeaders, sendTaskIdHeader }: AcpChatProps) {
+export function AcpChat({
+  sessionId,
+  onStreamComplete,
+  acpBaseUrl,
+  acpObserveBaseUrl,
+  getAcpHeaders,
+  sendTaskIdHeader,
+}: AcpChatProps) {
   const [draft, setDraft] = useState('')
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [currentTime, setCurrentTime] = useState(Date.now())
