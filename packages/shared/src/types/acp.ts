@@ -17,18 +17,21 @@ export interface LogUpdate {
   timestamp: number
 }
 
+/** @deprecated replaced by AgentThoughtChunkUpdate in agent.ts (ACP 1.0.0) */
 export interface TaskProgressUpdate {
   sessionUpdate: 'task_progress'
   progress: number
   status: 'pending' | 'processing' | 'completed' | 'error' | 'stopped'
 }
 
+/** @deprecated replaced by tool_call.locations in ACP 1.0.0 — will be removed next version */
 export interface FileChangeUpdate {
   sessionUpdate: 'file_change'
   filename: string
   action: 'add' | 'modify' | 'delete'
 }
 
+/** @deprecated replaced by AgentThoughtChunkUpdate in agent.ts (ACP 1.0.0) */
 export interface ThinkingUpdate {
   sessionUpdate: 'thinking'
   content: string
@@ -46,6 +49,7 @@ export interface AskUserUpdate {
   }>
 }
 
+/** @deprecated replaced by RequestPermissionUpdate (ACP 1.0.0) */
 export interface ToolConfirmUpdate {
   sessionUpdate: 'tool_confirm'
   toolCallId: string
@@ -57,6 +61,31 @@ export interface ToolConfirmUpdate {
    * 其它工具此字段为空。前端用于在 PlanModeCard 中高亮渲染。
    */
   planContent?: string
+}
+
+/** ACP 1.0.0 standard — replaces ToolConfirmUpdate */
+export interface RequestPermissionUpdate {
+  sessionUpdate: 'request_permission'
+  sessionId?: string
+  toolCall: {
+    toolCallId: string
+    title?: string | null
+    kind?: string
+    rawInput?: unknown
+  }
+  options: Array<{
+    optionId: string
+    name?: string
+    kind: string
+  }>
+  _meta?: { oak?: Record<string, unknown> }
+}
+
+/** ACP 1.0.0 standard — token usage update */
+export interface UsageUpdate {
+  sessionUpdate: 'usage_update'
+  used: number
+  size: number
 }
 
 export interface ArtifactUpdate {
@@ -158,9 +187,11 @@ export type ExtendedSessionUpdate =
   | ThinkingUpdate
   | AskUserUpdate
   | ToolConfirmUpdate
+  | RequestPermissionUpdate
   | ArtifactUpdate
   | HistoryPageUpdate
   | AgentPhaseUpdate
+  | UsageUpdate
 
 // Re-export base types for convenience
 export type {

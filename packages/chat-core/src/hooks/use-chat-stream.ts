@@ -412,10 +412,18 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
         }),
       )
 
+      // ACP 1.0.0 (OAK runtime): resume askUser via a tool_result prompt block.
+      // The content is the user's answer text. For multi-question forms we
+      // serialize the answers map; single-question (the common case) sends the
+      // answer value directly.
+      const answerValues = Object.values(answers)
+      const answerContent = answerValues.length === 1 ? answerValues[0] : JSON.stringify(answers)
+
       try {
         await runPromptStream(askData.assistantMessageId, {
           sessionId: taskId,
-          prompt: [{ type: 'text', text: '' }],
+          prompt: [{ type: 'tool_result', tool_use_id: askData.toolCallId, content: answerContent }],
+          // @deprecated kept for old-runtime compatibility; OAK ignores it
           askAnswers: { [askData.assistantMessageId]: { toolCallId: askData.toolCallId, answers } },
         })
       } finally {
@@ -469,10 +477,19 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
         }
       }
 
+      // ACP 1.0.0 (OAK runtime): resume via a permission_decision prompt block.
+      // action → decision mapping:
+      //   allow → 'allow', allow_always → 'allow_always',
+      //   deny / reject_and_exit_plan → 'reject'
+      // @deprecated old runtimes (HunyuanAgent/OpenCode) used
+      //   toolConfirmation: { interruptId, payload: { action } } — kept as fallback
+      const decision = action === 'allow_always' ? 'allow_always' : action === 'allow' ? 'allow' : 'reject'
+
       try {
         await runPromptStream(data.assistantMessageId, {
           sessionId: taskId,
-          prompt: [{ type: 'text', text: '' }],
+          prompt: [{ type: 'permission_decision', tool_use_id: data.toolCallId, decision }],
+          // @deprecated kept for old-runtime compatibility; OAK ignores it
           toolConfirmation: { interruptId: data.toolCallId, payload: { action } },
           ...(nextPermissionMode ? { permissionMode: nextPermissionMode } : {}),
         })

@@ -19,6 +19,39 @@ import { extractPlanContent } from '../components/chat/plan-content'
 
 type StreamPhase = 'idle' | 'streaming' | 'waiting_for_interaction'
 
+/**
+ * 归一化工具输出为字符串。
+ *
+ * ACP 1.0.0 的 rawOutput 是 SDK tool_result 的原始 content，可能是：
+ *   - 纯字符串 "hello"
+ *   - 内容块数组 [{ type: 'text', text: '...' }]
+ *   - 任意 JSON 对象
+ * 旧的 result 字段已被 runtime stringify 成字符串。本函数统一处理两种来源。
+ */
+function normalizeToolOutput(value: unknown): string {
+  if (value === undefined || value === null) return ''
+  if (typeof value === 'string') return value
+  // 内容块数组：拼接其中的 text 块
+  if (Array.isArray(value)) {
+    const texts = value
+      .map((block) => {
+        if (typeof block === 'string') return block
+        if (block && typeof block === 'object' && 'text' in block) {
+          const t = (block as { text?: unknown }).text
+          return typeof t === 'string' ? t : ''
+        }
+        return ''
+      })
+      .filter(Boolean)
+    if (texts.length > 0) return texts.join('')
+  }
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
 interface OptionsLike {
   scrollToBottom?: () => void
   wasAtBottomRef?: React.RefObject<boolean>
@@ -118,7 +151,11 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
       break
     }
 
-    case 'thinking': {
+    case 'thinking':
+    case 'agent_thought_chunk': {
+      // ACP 1.0.0: agent_thought_chunk uses content: { type: 'text', text }
+      // @deprecated 'thinking' uses content: string (old format)
+      const thoughtText = typeof u.content === 'string' ? u.content : u.content?.text || ''
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantMsgId) return m
@@ -127,16 +164,18 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
           if (lastPart?.type === 'thinking') {
             return {
               ...m,
-              parts: [...prevParts.slice(0, -1), { ...lastPart, text: lastPart.text + (u.content || '') }],
+              parts: [...prevParts.slice(0, -1), { ...lastPart, text: lastPart.text + thoughtText }],
             }
           }
-          return { ...m, parts: [...prevParts, { type: 'thinking' as const, text: u.content || '' }] }
+          return { ...m, parts: [...prevParts, { type: 'thinking' as const, text: thoughtText }] }
         }),
       )
       break
     }
 
     case 'tool_call': {
+      // ACP 1.0.0: rawInput (new) with fallback to input (deprecated)
+      const rawInput = u.rawInput ?? u.input
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantMsgId) return m
@@ -148,7 +187,7 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
             type: 'tool_call' as const,
             toolCallId: u.toolCallId || '',
             toolName: u.title || 'tool',
-            input: u.input,
+            input: rawInput,
             assistantMessageId: u.assistantMessageId || assistantMsgId,
             // P7: 子代理产生的工具链到父 Task；前端据此构建 SubagentCard 嵌套视图
             ...(hasValidParent ? { parentToolCallId: u.parentToolCallId as string } : {}),
@@ -172,8 +211,14 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
     }
 
     case 'tool_call_update': {
+      // ACP 1.0.0: rawInput/rawOutput/content (new) with fallback to input/result/error (deprecated)
+      // NOTE: rawOutput is the SDK's raw tool_result content — may be a string,
+      // an array [{type:'text',text}], or any JSON. Old `result` was already
+      // stringified by the runtime. normalizeToolOutput() handles both.
+      const updateInput = u.rawInput ?? u.input
+      const updateOutput = u.rawOutput ?? u.result
       // Input update (from content_block_stop): merge input into existing tool_call part
-      if (u.input !== undefined && u.result === undefined) {
+      if (updateInput !== undefined && updateOutput === undefined) {
         setMessages((prev) =>
           prev.map((m) => {
             if (m.id !== assistantMsgId) return m
@@ -181,7 +226,7 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
             return {
               ...m,
               parts: prevParts.map((p) =>
-                p.type === 'tool_call' && p.toolCallId === u.toolCallId ? { ...p, input: u.input } : p,
+                p.type === 'tool_call' && p.toolCallId === u.toolCallId ? { ...p, input: updateInput } : p,
               ),
             }
           }),
@@ -201,7 +246,7 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
             type: 'tool_result' as const,
             toolCallId: u.toolCallId || '',
             toolName: toolCallPart?.type === 'tool_call' ? toolCallPart.toolName : undefined,
-            content: String(u.result || ''),
+            content: normalizeToolOutput(updateOutput),
             isError: u.status === 'failed',
             // P7: 从同 toolCallId 的 tool_call part 继承 parentToolCallId
             //     服务端也在 tool_call_update 注入该字段(冗余安全兜底)
@@ -229,33 +274,51 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
     }
 
     case 'tool_confirm':
+    case 'request_permission': {
+      // ACP 1.0.0: request_permission nests fields under toolCall + uses rawInput
+      // @deprecated tool_confirm uses flat toolCallId/toolName/input
+      const isNew = update.sessionUpdate === 'request_permission'
+      const pcToolCallId = isNew ? u.toolCall?.toolCallId : u.toolCallId
+      const pcToolName = isNew ? u.toolCall?.title : u.toolName
+      const pcInput = (isNew ? u.toolCall?.rawInput : u.input) || {}
+      // planContent: old format carries it flat; new format via _meta.oak.planContent
+      const pcPlanContent = isNew ? u._meta?.oak?.planContent : u.planContent
+      const pcAssistantMessageId = isNew ? u._meta?.oak?.assistantMessageId : u.assistantMessageId
+
       phaseRef.current = 'waiting_for_interaction'
       // 立即解除 sending 状态，使确认按钮可点击
       // （OpenCode runtime 的 SSE 不会在中断时关闭，必须显式重置）
       setIsSending(false)
       setIsStreamingResponse(false)
+      // OAK 把 AskUserQuestion 也通过 request_permission 上报（携带 rawInput.questions），
+      // 但它不是“批准/拒绝”语义而是问卷。问卷 UI 由 tool_call part 驱动
+      // （chat-transcript 的 resolveAskUserQuestion），这里不应弹出审批卡片。
+      if (pcToolName === 'AskUserQuestion') {
+        break
+      }
       setToolConfirm({
-        toolCallId: u.toolCallId,
-        assistantMessageId: u.assistantMessageId,
-        toolName: u.toolName,
-        input: u.input || {},
+        toolCallId: pcToolCallId,
+        assistantMessageId: pcAssistantMessageId,
+        toolName: pcToolName,
+        input: pcInput,
         // P2: ExitPlanMode 额外携带 planContent（服务端在 convert 时注入）
-        ...(u.planContent !== undefined ? { planContent: u.planContent as string } : {}),
+        ...(pcPlanContent !== undefined ? { planContent: pcPlanContent as string } : {}),
       })
       // P2: 当收到 ExitPlanMode 的 tool_confirm 时，同步更新 plan-mode atom，
       //     PlanModeCard 和输入框可据此判断当前会话是否处于 Plan 审批流。
-      if (u.toolName === 'ExitPlanMode') {
+      if (pcToolName === 'ExitPlanMode') {
         // planContent 优先级：
-        //   1. 服务端显式注入（u.planContent）—— 目前仅覆盖 input.plan 为字符串的情况
-        //   2. 从 u.input 中宽松提取（allowedPrompts / description+steps / 兜底 JSON）
-        const planText = (u.planContent as string | undefined) || extractPlanContent(u.input)
+        //   1. 服务端显式注入（pcPlanContent）—— 目前仅覆盖 input.plan 为字符串的情况
+        //   2. 从 input 中宽松提取（allowedPrompts / description+steps / 兜底 JSON）
+        const planText = (pcPlanContent as string | undefined) || extractPlanContent(pcInput)
         setPlanMode({
           active: true,
           planContent: planText || null,
-          toolCallId: u.toolCallId,
+          toolCallId: pcToolCallId,
         })
       }
       break
+    }
 
     case 'ask_user':
       phaseRef.current = 'waiting_for_interaction'
@@ -356,5 +419,9 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
       })
       break
     }
+
+    case 'usage_update':
+      // ACP 1.0.0: token usage. Not currently displayed in the UI; no-op.
+      break
   }
 }

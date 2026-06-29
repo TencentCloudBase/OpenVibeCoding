@@ -368,24 +368,26 @@ export type SessionUpdate =
   | ToolCallUpdate
   | ToolCallStatusUpdate
   | AvailableCommandsUpdate
-  | AgentToughtChunkUpdate
+  | AgentThoughtChunkUpdate
 
 export interface AgentMessageChunkUpdate {
   sessionUpdate: 'agent_message_chunk'
   content: AcpTextBlock
 }
 
-interface AgentToughtChunkUpdate {
+export interface AgentThoughtChunkUpdate {
   sessionUpdate: 'agent_thought_chunk'
-  content: string
+  content: AcpTextBlock
 }
 
 export interface ToolCallUpdate {
   sessionUpdate: 'tool_call'
   toolCallId: string
   title: string
-  kind: 'function' | 'other'
+  kind: string
   status: 'in_progress' | 'completed' | 'failed'
+  rawInput?: unknown
+  /** @deprecated use rawInput */
   input?: unknown
   /** P7: 父 Task 的 toolCallId，非空表示此调用由子代理（Task 工具）产生 */
   parentToolCallId?: string
@@ -395,8 +397,14 @@ export interface ToolCallStatusUpdate {
   sessionUpdate: 'tool_call_update'
   toolCallId: string
   status: 'in_progress' | 'completed' | 'failed'
+  rawOutput?: unknown
+  rawInput?: unknown
+  content?: unknown[]
+  /** @deprecated use rawOutput */
   result?: unknown
+  /** @deprecated use rawInput */
   input?: unknown
+  /** @deprecated use content */
   error?: { message: string }
   /** P7: 父 Task 的 toolCallId（冗余字段，前端优先从 tool_call part 继承） */
   parentToolCallId?: string

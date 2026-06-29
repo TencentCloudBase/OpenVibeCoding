@@ -630,13 +630,48 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
     return c.json(rpcErr(id, JSON_RPC_ERRORS.INTERNAL, 'CloudBase environment not bound'))
   }
 
+  // Extract prompt text and image blocks
+  const promptBlocks: any[] = params?.prompt ?? []
+  const prompt: string = promptBlocks
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+  const imageBlocks = promptBlocks.filter((b) => b.type === 'image')
+
+  // ── ACP 1.0.0 resume blocks → legacy resume payload ─────────────────────
+  // New clients (OAK-aligned) send resume via prompt blocks:
+  //   permission_decision { tool_use_id, decision } → toolConfirmation
+  //   tool_result         { tool_use_id, content }  → askAnswers
+  // Normalize them into the legacy params so the runtime resume paths work
+  // unchanged. Legacy clients keep sending toolConfirmation/askAnswers directly.
+  let normalizedToolConfirmation = params?.toolConfirmation
+  let normalizedAskAnswers = params?.askAnswers
+  if (!normalizedToolConfirmation) {
+    const permBlock = promptBlocks.find((b) => b.type === 'permission_decision')
+    if (permBlock?.tool_use_id) {
+      // decision: allow | allow_always | reject  →  action: allow | allow_always | deny
+      const action = permBlock.decision === 'reject' ? 'deny' : permBlock.decision || 'deny'
+      normalizedToolConfirmation = { interruptId: permBlock.tool_use_id, payload: { action } }
+    }
+  }
+  if (!normalizedAskAnswers || Object.keys(normalizedAskAnswers).length === 0) {
+    const resultBlock = promptBlocks.find((b) => b.type === 'tool_result')
+    if (resultBlock?.tool_use_id) {
+      const content = typeof resultBlock.content === 'string' ? resultBlock.content : String(resultBlock.content ?? '')
+      // runtime 用 Object.entries(answers) 格式化，key 仅用于展示，用通用 'answer'
+      normalizedAskAnswers = {
+        [resultBlock.tool_use_id]: { toolCallId: resultBlock.tool_use_id, answers: { answer: content } },
+      }
+    }
+  }
+
   // Resume payload (askAnswers / toolConfirmation) 必须路由到 runtime.chatStream 的
   // resume 分支来 resolve 挂起的 question/permission，而不是只 observe。
   // 这里优先检查 resume payload —— 有 resume 时跳过 observeStream early-return。
-  const hasResumePayloadEarly =
-    (params?.askAnswers && Object.keys(params.askAnswers).length > 0) || !!params?.toolConfirmation
+  const hasResumePayload =
+    (normalizedAskAnswers && Object.keys(normalizedAskAnswers).length > 0) || !!normalizedToolConfirmation
 
-  if (!hasResumePayloadEarly) {
+  if (!hasResumePayload) {
     // Check if agent is already running via registry
     const existingRun = getAgentRun(sessionId)
     if (existingRun && existingRun.status === 'running') {
@@ -649,17 +684,6 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
       return c.json(rpcErr(id, JSON_RPC_ERRORS.INVALID_REQUEST, 'A prompt turn is already in progress'))
     }
   }
-
-  // Extract prompt text and image blocks
-  const promptBlocks: any[] = params?.prompt ?? []
-  const prompt: string = promptBlocks
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('')
-  const imageBlocks = promptBlocks.filter((b) => b.type === 'image')
-
-  const hasResumePayload =
-    (params?.askAnswers && Object.keys(params.askAnswers).length > 0) || !!params?.toolConfirmation
 
   if (!prompt.trim() && !hasResumePayload && imageBlocks.length === 0) {
     return c.json(rpcErr(id, JSON_RPC_ERRORS.INVALID_PARAMS, 'prompt must contain at least one text block'))
@@ -702,8 +726,8 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
       userId,
       userCredentials,
       model: selectedModel,
-      askAnswers: params.askAnswers,
-      toolConfirmation: params.toolConfirmation,
+      askAnswers: normalizedAskAnswers,
+      toolConfirmation: normalizedToolConfirmation,
       permissionMode: params.permissionMode,
       mode: taskMode,
       imageBlocks: imageBlocks.length > 0 ? imageBlocks : undefined,
