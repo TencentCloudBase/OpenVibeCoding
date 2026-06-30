@@ -22,6 +22,7 @@ import { registerAgent, getAgentRun, completeAgent, isAgentRunning, type StopRea
 import { EventBuffer } from './event-buffer.js'
 import { sessionPermissions, normalizeToolName } from './session-permissions.js'
 import { initRepo, pushToUserGit } from '../sandbox/git-personal'
+import { initSkills } from '../services/skill-manager.js'
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -861,6 +862,37 @@ export class CloudbaseAgentService {
             }
           } catch (e) {
             console.log(`[Agent] Sandbox initialized user repo err: ${e}`)
+          }
+
+          // ── Skills 初始化：检查 skillSettings.initialized，仅首次执行 ──
+          if (toolOverrideConfig) {
+            try {
+              const taskForSkills = await getDb().tasks.findById(conversationId)
+              if (taskForSkills?.skillSettings) {
+                const skillSettings = JSON.parse(taskForSkills.skillSettings)
+                if (
+                  !skillSettings.initialized &&
+                  Array.isArray(skillSettings.skillList) &&
+                  skillSettings.skillList.length > 0
+                ) {
+                  sandboxProgressBridge({ phase: 'init_skills', message: '初始化 Skills...\n' })
+                  const skillResult = await initSkills(toolOverrideConfig, conversationId, skillSettings.skillList)
+                  if (skillResult.success) {
+                    console.log('[Agent] Skills initialized successfully')
+                  } else {
+                    console.error('[Agent] Skills initialization failed')
+                  }
+                  // 无论成功失败都标记为已初始化，避免重复执行
+                  skillSettings.initialized = true
+                  await getDb().tasks.update(conversationId, {
+                    skillSettings: JSON.stringify(skillSettings),
+                    updatedAt: Date.now(),
+                  })
+                }
+              }
+            } catch (e) {
+              console.error('[Agent] Skills initialization error')
+            }
           }
 
           // Create sandbox MCP client，使用【登录用户凭证】操作 CloudBase 资源

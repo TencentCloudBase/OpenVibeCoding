@@ -12,128 +12,39 @@
  */
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs'
-import { join, relative, basename, dirname } from 'path'
-import matter from 'gray-matter'
-
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-export interface SkillDefinition {
-  name: string
-  description: string
-  instructions: string
-  baseDirectory: string
-  allowedTools?: string[]
-  source: 'project' | 'user'
-  location: string
-  color: string
-  disableModelInvocation?: boolean
-  context?: string
-  agent?: string
-  userInvocable?: boolean
-}
+import { join } from 'path'
+import {
+  SkillDefinition,
+  SandboxConfig,
+  parseSkillFromRaw,
+  scanSandboxSkillsDirectory,
+  SKILL_DIR_RELS,
+} from './skill-loader-shared.js'
 
 type OriginalLoadSkills = () => Promise<SkillDefinition[]>
 type OriginalScanSkillsDirectory = (dir: string, source: string) => Promise<SkillDefinition[]>
 type OriginalParseSkillFile = (filePath: string, baseDir: string, source: string) => SkillDefinition | undefined
 
-// ─── Utilities ──────────────────────────────────────────────────────────────
-
-/** Run async tasks in batches to avoid overwhelming the sandbox with too many concurrent requests. */
-async function batchedMap<T, R>(items: T[], batchSize: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = []
-  for (let i = 0; i < items.length; i += batchSize) {
-    const batch = items.slice(i, i + batchSize)
-    const batchResults = await Promise.all(batch.map(fn))
-    results.push(...batchResults)
-  }
-  return results
-}
-
-function parseListField(value: unknown): string[] {
-  if (!value) return []
-  if (Array.isArray(value)) return value.map(String)
-  if (typeof value === 'string') {
-    return value
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-  }
-  return []
-}
-
-function generateColorFromName(name: string): string {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) | 0
-  }
-  const hue = ((hash % 360) + 360) % 360
-  return `hsl(${hue}, 65%, 55%)`
-}
-
-function extractFrontMatterWithContent(raw: string): {
-  data: Record<string, any>
-  content: string
-} {
-  const { data, content } = matter(raw)
-  return { data, content }
-}
-
 // ─── Skills 目录路径 ─────────────────────────────────────────────────────────
 
 /** 项目根目录下的 skills/（通过 npx skills add 安装的领域 skill） */
-function getProjectRootSkillsDir(): string {
+export function getProjectRootSkillsDir(): string {
   return join(process.cwd(), 'skills')
 }
 
 /** .codebuddy/skills/（IDE 管理的 skill） */
-function getProjectSkillsDir(): string {
+export function getProjectSkillsDir(): string {
   return join(process.cwd(), '.codebuddy', 'skills')
 }
 
-function getHomeSkillsDir(): string {
+export function getHomeSkillsDir(): string {
   const home = process.env.HOME || process.env.USERPROFILE || ''
   return join(home, '.codebuddy', 'skills')
 }
 
 // ─── Local FS Scanning ────────────────────────────────────────────────────────
 
-function parseSkillFromRaw(
-  raw: string,
-  filePath: string,
-  baseDir: string,
-  source: 'project' | 'user',
-): SkillDefinition | undefined {
-  try {
-    const { data: frontmatter, content } = extractFrontMatterWithContent(raw)
-    const relPath = relative(baseDir, filePath)
-    const dirName = basename(relPath.replace('/SKILL.md', ''))
-    const name = frontmatter.name || dirName
-    let description = frontmatter.description || name
-    const sourceLabel = `(${source})`
-    if (!description.includes(sourceLabel)) {
-      description = `${description} ${sourceLabel}`
-    }
-    const allowedToolsList = parseListField(frontmatter['allowed-tools'])
-    return {
-      name,
-      description,
-      instructions: content.trim(),
-      baseDirectory: dirname(filePath),
-      allowedTools: allowedToolsList.length > 0 ? allowedToolsList : undefined,
-      source,
-      location: filePath,
-      color: generateColorFromName(name),
-      disableModelInvocation: frontmatter['disable-model-invocation'],
-      context: frontmatter.context,
-      agent: frontmatter.agent,
-      userInvocable: frontmatter['user-invocable'],
-    }
-  } catch {
-    return undefined
-  }
-}
-
-function scanLocalSkillsDirectory(dir: string, source: 'project' | 'user'): SkillDefinition[] {
+export function scanLocalSkillsDirectory(dir: string, source: 'project' | 'user'): SkillDefinition[] {
   const skills: SkillDefinition[] = []
   try {
     const entries = readdirSync(dir)
@@ -163,14 +74,9 @@ function scanLocalSkillsDirectory(dir: string, source: 'project' | 'user'): Skil
   return skills
 }
 
-// ─── Sandbox HTTP API Helpers（用于远端 skills 扫描）───────────────────────
+// ─── Sandbox Config ─────────────────────────────────────────────────────────
 
-interface SandboxConfig {
-  url: string
-  headers?: Record<string, string>
-}
-
-function getSandboxConfig(): SandboxConfig | null {
+export function getSandboxConfig(): SandboxConfig | null {
   const configStr = process.env.CODEBUDDY_TOOL_OVERRIDE_CONFIG
   if (!configStr) return null
   try {
@@ -182,80 +88,6 @@ function getSandboxConfig(): SandboxConfig | null {
   } catch {
     return null
   }
-}
-
-async function sandboxReadFile(sandbox: SandboxConfig, filePath: string): Promise<string | null> {
-  try {
-    const res = await fetch(`${sandbox.url}/api/tools/read?from=skill`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...sandbox.headers },
-      body: JSON.stringify({ path: filePath }),
-    })
-    if (!res.ok) return null
-    const data = (await res.json()) as any
-    if (!data.success) return null
-    return data.result?.content ?? null
-  } catch {
-    return null
-  }
-}
-
-/**
- * List a directory via /e2b-compatible/filesystem.Filesystem/ListDir.
- * Returns entries with their type via entry.type field.
- * Returns null if the path doesn't exist or is not a directory.
- */
-async function sandboxReadDir(
-  sandbox: SandboxConfig,
-  dirPath: string,
-): Promise<Array<{ name: string; isDirectory: boolean }> | null> {
-  try {
-    const res = await fetch(`${sandbox.url}/e2b-compatible/filesystem.Filesystem/ListDir`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...sandbox.headers },
-      body: JSON.stringify({ path: dirPath, depth: 1 }),
-    })
-    if (!res.ok) return null
-    const data = (await res.json()) as { entries?: Array<{ name: string; type: string }> }
-    if (!data.entries) return null
-    return data.entries.map((e) => ({
-      name: e.name,
-      isDirectory: e.type === 'FILE_TYPE_DIRECTORY',
-    }))
-  } catch {
-    return null
-  }
-}
-
-async function scanSandboxSkillsDirectory(
-  sandbox: SandboxConfig,
-  dir: string,
-  source: 'project' | 'user',
-): Promise<SkillDefinition[]> {
-  // 1 request: list the directory with type info
-  const entries = await sandboxReadDir(sandbox, dir)
-  if (!entries) return []
-
-  // Collect all SKILL.md paths to read (from subdirs and bare files)
-  const skillFilePaths: string[] = []
-  for (const entry of entries) {
-    const fullPath = `${dir}/${entry.name}`
-    if (entry.isDirectory) {
-      skillFilePaths.push(`${fullPath}/SKILL.md`)
-    } else if (entry.name === 'SKILL.md') {
-      skillFilePaths.push(fullPath)
-    }
-  }
-
-  // Fetch all SKILL.md files in batches of 30, concurrent within each batch
-  const SKILL_READ_BATCH = 30
-  const results = await batchedMap(skillFilePaths, SKILL_READ_BATCH, async (skillFile) => {
-    const raw = await sandboxReadFile(sandbox, skillFile)
-    if (!raw) return null
-    return parseSkillFromRaw(raw, skillFile, dir, source)
-  })
-
-  return results.filter((s): s is SkillDefinition => s !== null)
 }
 
 // ─── 三个核心导出方法 ────────────────────────────────────────────────────────
@@ -301,21 +133,21 @@ export async function loadSkills(originalFn: OriginalLoadSkills): Promise<SkillD
   if (sandbox && sandbox.url) {
     const sandboxCwd = process.env.CODEBUDDY_SANDBOX_CWD || '/home/user'
 
-    // Scan both sandbox skill directories concurrently (2 ListDir + N reads in parallel)
-    const [remoteSkills, remoteCbSkills] = await Promise.all([
-      scanSandboxSkillsDirectory(sandbox, `${sandboxCwd}/skills`, 'project').catch(() => []),
-      scanSandboxSkillsDirectory(sandbox, `${sandboxCwd}/.codebuddy/skills`, 'project').catch(() => []),
-    ])
+    // Scan sandbox skill directories concurrently (4 ListDir + N reads in parallel)
+    const results = await Promise.all(
+      SKILL_DIR_RELS.map((rel) =>
+        scanSandboxSkillsDirectory(sandbox, `${sandboxCwd}/${rel}`, 'project').catch(() => [] as SkillDefinition[]),
+      ),
+    )
 
-    if (remoteSkills.length > 0) {
-      skills.push(...remoteSkills)
-      console.error(`[SkillLoaderOverride] Loaded ${remoteSkills.length} skill(s) from sandbox ${sandboxCwd}/skills`)
-    }
-    if (remoteCbSkills.length > 0) {
-      skills.push(...remoteCbSkills)
-      console.error(
-        `[SkillLoaderOverride] Loaded ${remoteCbSkills.length} skill(s) from sandbox ${sandboxCwd}/.codebuddy/skills`,
-      )
+    for (let i = 0; i < SKILL_DIR_RELS.length; i++) {
+      const batch = results[i]
+      if (batch.length > 0) {
+        skills.push(...batch)
+        console.error(
+          `[SkillLoaderOverride] Loaded ${batch.length} skill(s) from sandbox ${sandboxCwd}/${SKILL_DIR_RELS[i]}`,
+        )
+      }
     }
   }
 

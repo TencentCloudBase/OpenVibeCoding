@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef } from 'react'
-import COS from 'cos-js-sdk-v5'
 import { useStorageAPI, BucketInfo, FileInfo } from '../services/storage'
 import { useCapiClient } from '../services/capi'
 import { Button } from '../components/ui'
@@ -15,6 +14,7 @@ import {
   Home,
   Shield,
   Upload,
+  FolderUp,
   Link,
   Copy,
   HardDrive,
@@ -97,6 +97,7 @@ export default function StoragePage() {
   const [uploading, setUploading] = useState(false)
   const [permOpen, setPermOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const folderInputRef = useRef<HTMLInputElement>(null)
 
   const loadFiles = () => {
     if (!activeBucket) return
@@ -114,55 +115,40 @@ export default function StoragePage() {
     loadFiles()
   }, [activeBucket, prefix])
 
+  // 上传文件 & 上传文件夹共用同一个 onChange 处理函数。
+  // 区别仅在于 <input> 元素的属性：
+  //   - 上传文件：<input type="file" multiple>
+  //   - 上传文件夹：<input type="file" webkitdirectory>
+  // 通过 webkitRelativePath 自动保留文件夹的目录结构。
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileList = e.target.files
+    const input = e.target
+    const fileList = input.files
     if (!fileList || fileList.length === 0 || !activeBucket) return
 
     setUploading(true)
-    let successCount = 0
 
     try {
-      // 后端把当前用户已解析的临时凭证（限定到 envId / cos tag）下发给前端，
-      // 前端直接用它走 cos-js-sdk 上传，避免再次 GetFederationToken。
-      const cred = await storageAPI.getUploadCredential()
-
-      const cos = new COS({
-        getAuthorization: (_: any, callback: any) => {
-          callback({
-            TmpSecretId: cred.tmpSecretId,
-            TmpSecretKey: cred.tmpSecretKey,
-            SecurityToken: cred.sessionToken,
-            ExpiredTime: cred.expiredTime,
-          })
-        },
+      const { successCount, errors } = await storageAPI.uploadFiles({
+        files: Array.from(fileList),
+        bucket: activeBucket,
+        prefix,
       })
 
-      for (const file of Array.from(fileList)) {
-        const key = (prefix + file.name).replace(/^\//, '')
-        await new Promise<void>((resolve, reject) => {
-          cos.putObject(
-            {
-              Bucket: activeBucket.bucket,
-              Region: activeBucket.region,
-              Key: key,
-              Body: file,
-            },
-            (err: any) => (err ? reject(new Error(err.message || '上传失败')) : resolve()),
-          )
-        })
-        successCount++
+      if (errors.length > 0) {
+        toast.error(`${errors.length} 个文件上传失败`)
+      }
+      if (successCount > 0) {
+        toast.success(`成功上传 ${successCount} 个文件`)
+        loadFiles()
       }
     } catch (err: any) {
       toast.error(`上传失败：${err.message}`)
     }
 
+    // 重置两个 input 的值
     if (fileInputRef.current) fileInputRef.current.value = ''
+    if (folderInputRef.current) folderInputRef.current.value = ''
     setUploading(false)
-
-    if (successCount > 0) {
-      toast.success(`成功上传 ${successCount} 个文件`)
-      loadFiles()
-    }
   }
 
   const handleDownload = async (file: FileInfo) => {
@@ -210,7 +196,17 @@ export default function StoragePage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden bg-bg-default/70">
+      {/* 隐藏的文件选择 input：上传文件（多选）和上传文件夹 */}
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleUpload} />
+      <input
+        ref={folderInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleUpload}
+        // @ts-expect-error webkitdirectory is a non-standard attribute
+        webkitdirectory=""
+        directory=""
+      />
 
       {/* Header */}
       <div className="flex min-h-12 items-center justify-between border-b border-border-muted px-4 bg-bg-surface-100/30">
@@ -229,6 +225,9 @@ export default function StoragePage() {
               <Shield size={14} /> 权限
             </Button>
           )}
+          <Button variant="outline" size="tiny" onClick={() => folderInputRef.current?.click()} loading={uploading}>
+            <FolderUp size={14} /> {uploading ? '上传中...' : '上传文件夹'}
+          </Button>
           <Button variant="primary" size="tiny" onClick={() => fileInputRef.current?.click()} loading={uploading}>
             <Upload size={14} /> {uploading ? '上传中...' : '上传'}
           </Button>

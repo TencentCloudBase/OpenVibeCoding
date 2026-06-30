@@ -441,6 +441,7 @@ export function HomePageContent({
     mode: 'default' | 'coding'
     mcpServerList?: Connector[]
     imageBlocks?: Array<{ data: string; mimeType: string }>
+    skillList?: string[]
   }) => {
     console.log(
       '[TaskSubmit] called, isSubmitting:',
@@ -684,6 +685,17 @@ export function HomePageContent({
         // Save image blocks to sessionStorage so task-page-client can pick them up
         if (data.imageBlocks && data.imageBlocks.length > 0) {
           sessionStorage.setItem(`task-images-${id}`, JSON.stringify(data.imageBlocks))
+        }
+        // Initialize skills in background if any were selected
+        if (data.skillList && data.skillList.length > 0) {
+          fetch('/api/skills/init', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ taskId: id, skillNames: data.skillList }),
+          }).catch(() => {
+            // Skills init failure is non-blocking
+          })
         }
         navigate(`/tasks/${id}?prompt=${encodeURIComponent(data.prompt)}`)
         await refreshTasks()

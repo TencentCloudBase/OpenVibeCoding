@@ -321,6 +321,7 @@ class CloudBaseTaskRepository implements TaskRepository {
       prStatus: null,
       prMergeCommitSha: null,
       mcpServerList: null,
+      skillSettings: null,
       // ── Caller overrides (spread after defaults) ──
       ...task,
       createdAt: task.createdAt ?? ts,

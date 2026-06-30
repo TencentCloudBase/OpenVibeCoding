@@ -56,6 +56,7 @@ import functionsRoutes from './routes/functions.js'
 import sqlRoutes from './routes/sql.js'
 import capiRoutes from './routes/capi.js'
 import adminRoutes from './routes/admin'
+import skillsRoutes from './routes/skills'
 
 const app = new Hono<AppEnv>()
 
@@ -93,6 +94,7 @@ app.route('/api/functions', functionsRoutes)
 app.route('/api/sql', sqlRoutes)
 app.route('/api/capi', capiRoutes)
 app.route('/api/admin', adminRoutes)
+app.route('/api/skills', skillsRoutes)
 
 // Static file serving for production (web build output)
 const webDistPath = resolve(__dirname, '../web/dist')

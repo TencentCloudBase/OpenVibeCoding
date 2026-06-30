@@ -42,6 +42,17 @@ export function tdFetch(ctx: ApiContext, input: RequestInfo | URL, init: Request
   const headers = new Headers(init.headers)
   if (ctx.taskId && !headers.has('X-Task-Id')) headers.set('X-Task-Id', ctx.taskId)
 
+  // DEBUG: 打印请求信息
+  const reqHeaders: Record<string, string> = {}
+  headers.forEach((v, k) => {
+    reqHeaders[k] = v
+  })
+  console.log('[tdFetch] 请求:', init.method || 'GET', resolvedInput.toString())
+  console.log('[tdFetch] 请求 headers:', JSON.stringify(reqHeaders, null, 2))
+  if (init.body) {
+    console.log('[tdFetch] 请求 body:', typeof init.body === 'string' ? init.body : '(non-string body)')
+  }
+
   return fetch(resolvedInput, {
     credentials: 'include',
     ...init,

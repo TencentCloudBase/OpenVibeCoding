@@ -1,6 +1,7 @@
 import type { Task, McpServerConfig } from '@coder/shared'
 import type { Connector } from '@/lib/session/types'
 import { CloudDashboard } from '@coder/dashboard/CloudDashboard'
+import { StorageAPI } from '@coder/dashboard/storage'
 import type { Theme } from '@coder/dashboard/CloudDashboard'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -17,6 +18,7 @@ import {
   RotateCcw,
   Trash2,
   ChevronDown,
+  ChevronLeft,
   XCircle,
   Code,
   MessageSquare,
@@ -36,6 +38,9 @@ import {
   AlertTriangle,
   Cloud,
   Pencil,
+  Zap,
+  Download,
+  FolderUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -100,6 +105,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useNavigate } from 'react-router'
 import { Link } from 'react-router'
 import BrowserbaseIcon from '@/components/icons/browserbase-icon'
@@ -208,6 +214,7 @@ export function TaskDetails({
   // 优先用 task 自己的 envId（task provision 模式下每个 task 有独立 env）
   // 否则 fallback 到 user-level（shared / isolated 模式）
   const sessionEnvId = task.envId || session?.envId || ''
+  const userId = session?.user?.id || ''
 
   // ── Chat stream — hoisted here so it survives TaskChat remounts ──
   // onStreamComplete 经包装：原回调先跑，然后异步探测 /__dev_errors，
@@ -270,6 +277,29 @@ export function TaskDetails({
   const { refreshTasks } = useTasks()
   const [showTaskMcpDialog, setShowTaskMcpDialog] = useState(false)
   const [showConnectorDialog, setShowConnectorDialog] = useState(false)
+  const [showSkillsDialog, setShowSkillsDialog] = useState(false)
+  const [skillsTab, setSkillsTab] = useState<string>('user')
+  const [skillsList, setSkillsList] = useState<Array<{ name: string; description: string }>>([])
+  const [userSkillsList, setUserSkillsList] = useState<Array<{ name: string; description: string }>>([])
+  const [checkedUserSkills, setCheckedUserSkills] = useState<Set<string>>(new Set())
+  const [checkedProjectSkills, setCheckedProjectSkills] = useState<Set<string>>(new Set())
+  const [deletingProjectSkills, setDeletingProjectSkills] = useState(false)
+  const [skillsLoaded, setSkillsLoaded] = useState(false)
+  const [loadingSkills, setLoadingSkills] = useState(false)
+  const [loadingUserSkills, setLoadingUserSkills] = useState(false)
+  const [selectedSkillDetail, setSelectedSkillDetail] = useState<{
+    name: string
+    description: string
+    instructions?: string
+    baseDirectory?: string
+    allowedTools?: string[]
+    source?: string
+    location?: string
+  } | null>(null)
+  const [loadingSkillDetail, setLoadingSkillDetail] = useState(false)
+
+  const [uninstallingSkill, setUninstallingSkill] = useState(false)
+  const [initializingSkills, setInitializingSkills] = useState(false)
   const setEditingConnectorAction = useSetAtom(setEditingConnectorActionAtom)
   const [diffsCache, setDiffsCache] = useState<Record<string, DiffData>>({})
   const loadingDiffsRef = useRef(false)
@@ -1235,6 +1265,277 @@ export function TaskDetails({
     setShowTaskMcpDialog(false)
     setShowConnectorDialog(true)
   }
+
+  const fetchSkills = useCallback(async () => {
+    setLoadingSkills(true)
+    try {
+      const res = await fetch(`/api/skills?taskId=${encodeURIComponent(task.id)}`, { credentials: 'include' })
+      if (res.ok) {
+        const data = await res.json()
+        setSkillsList(data.skills ?? [])
+        setSkillsLoaded(true)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingSkills(false)
+    }
+  }, [task.id])
+
+  const fetchUserSkills = useCallback(async () => {
+    setLoadingUserSkills(true)
+    try {
+      const params = new URLSearchParams({ prefix: `${userId}/skills/`, bucketType: 'storage' })
+      const res = await fetch(`/api/storage/files?${params}`, { credentials: 'include' })
+      if (res.ok) {
+        const files: Array<{ name: string; isDir: boolean }> = await res.json()
+        // 只取第一层目录，目录名作为 skill name
+        const skills = files.filter((f) => f.isDir).map((f) => ({ name: f.name, description: '' }))
+        setUserSkillsList(skills)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setLoadingUserSkills(false)
+    }
+  }, [])
+
+  const refreshAllSkills = useCallback(async () => {
+    await Promise.all([fetchSkills(), fetchUserSkills()])
+  }, [fetchSkills, fetchUserSkills])
+
+  // 预加载 skills 列表，用于对话框中的 / 命令补全
+  useEffect(() => {
+    if (!skillsLoaded) fetchSkills()
+  }, [skillsLoaded, fetchSkills])
+
+  const fetchSkillDetail = useCallback(
+    async (skillName: string) => {
+      setLoadingSkillDetail(true)
+      setSelectedSkillDetail(null)
+      try {
+        const res = await fetch(`/api/skills/${encodeURIComponent(skillName)}?taskId=${encodeURIComponent(task.id)}`, {
+          credentials: 'include',
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setSelectedSkillDetail(data)
+        }
+      } catch {
+        // ignore
+      } finally {
+        setLoadingSkillDetail(false)
+      }
+    },
+    [task.id],
+  )
+
+  const handleUninstallSkill = useCallback(
+    async (skillName: string) => {
+      setUninstallingSkill(true)
+      try {
+        const res = await fetch('/api/skills/delete', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId: task.id, skillNames: [skillName] }),
+        })
+        if (res.ok) {
+          setSelectedSkillDetail(null)
+          fetchSkills()
+        }
+      } catch {
+        // ignore
+      } finally {
+        setUninstallingSkill(false)
+      }
+    },
+    [task.id, fetchSkills],
+  )
+
+  const handleInitSkills = useCallback(async () => {
+    if (checkedUserSkills.size === 0) {
+      toast.error('请先勾选要同步的 Skill')
+      return
+    }
+    setInitializingSkills(true)
+    try {
+      const skillNames = Array.from(checkedUserSkills)
+      const res = await fetch('/api/skills/init', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: task.id, skillNames }),
+      })
+      if (res.ok) {
+        toast.success('Skills initialized successfully')
+        fetchSkills()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        toast.error(data.error || 'Failed to initialize skills')
+      }
+    } catch {
+      toast.error('Failed to initialize skills')
+    } finally {
+      setInitializingSkills(false)
+    }
+  }, [task.id, fetchSkills, checkedUserSkills])
+
+  const [deletingUserSkills, setDeletingUserSkills] = useState(false)
+  const [uploadingSkill, setUploadingSkill] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null)
+  const skillFolderInputRef = useRef<HTMLInputElement>(null)
+
+  const handleUploadSkillFolder = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const input = e.target
+      const inputFiles = input.files ? [...input.files] : []
+      if (!inputFiles.length) return
+
+      // 从 webkitRelativePath 提取顶层文件夹名称（skill 名称）
+      const firstRelPath = inputFiles[0].webkitRelativePath || inputFiles[0].name
+      const skillName = firstRelPath.split('/')[0]
+      if (!skillName) {
+        toast.error('无法识别文件夹名称')
+        input.value = ''
+        return
+      }
+
+      // 检查是否包含 SKILL.md
+      const hasSkillMd = inputFiles.some((f) => {
+        const rel = f.webkitRelativePath || f.name
+        const parts = rel.split('/')
+        return parts.length === 2 && parts[1] === 'SKILL.md'
+      })
+      if (!hasSkillMd) {
+        toast.error(`文件夹 "${skillName}" 中缺少 SKILL.md 文件`)
+        input.value = ''
+        return
+      }
+
+      setUploadingSkill(true)
+      setUploadProgress({ current: 0, total: inputFiles.length })
+
+      try {
+        // 过滤掉隐藏文件和空目录占位
+        const filesToUpload = inputFiles.filter((f) => {
+          const rel = f.webkitRelativePath || f.name
+          const parts = rel.split('/')
+          return !parts.some((p) => p.startsWith('.') && p !== '.' && p !== '..')
+        })
+
+        setUploadProgress({ current: 0, total: filesToUpload.length })
+
+        // 使用 dashboard StorageAPI 上传
+        const storageAPI = new StorageAPI({ envId: sessionEnvId, taskId: task.id })
+        const buckets = await storageAPI.getBuckets()
+        const storageBucket = buckets.find((b) => b.type === 'storage')
+        if (!storageBucket) {
+          toast.error('未找到云存储桶')
+          return
+        }
+
+        const { errors } = await storageAPI.uploadFiles({
+          files: filesToUpload,
+          bucket: storageBucket,
+          prefix: `${userId}/skills/`,
+          onProgress: (completed, total) => {
+            setUploadProgress({ current: completed, total })
+          },
+        })
+
+        if (errors.length > 0) {
+          toast.error(`${errors.length} 个文件上传失败`)
+        } else {
+          toast.success(`Skill "${skillName}" 上传成功`)
+        }
+        fetchUserSkills()
+      } catch {
+        toast.error('上传失败')
+      } finally {
+        setUploadingSkill(false)
+        setUploadProgress(null)
+        input.value = ''
+      }
+    },
+    [fetchUserSkills, sessionEnvId, task.id],
+  )
+
+  const handleDeleteUserSkills = useCallback(async () => {
+    if (checkedUserSkills.size === 0) {
+      toast.error('请先勾选要删除的 Skill')
+      return
+    }
+    const confirmed = window.confirm(`确定要删除选中的 ${checkedUserSkills.size} 个 Skill 吗？此操作不可恢复。`)
+    if (!confirmed) return
+
+    setDeletingUserSkills(true)
+    try {
+      const skillNames = Array.from(checkedUserSkills)
+      const errors: string[] = []
+
+      await Promise.all(
+        skillNames.map(async (name) => {
+          const res = await fetch('/api/storage/files', {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: `${userId}/skills/${name}/`, bucketType: 'storage' }),
+          })
+          if (!res.ok) errors.push(name)
+        }),
+      )
+
+      if (errors.length > 0) {
+        toast.error(`部分 Skill 删除失败: ${errors.join(', ')}`)
+      } else {
+        toast.success('Skills deleted successfully')
+      }
+      setCheckedUserSkills(new Set())
+      fetchUserSkills()
+    } catch {
+      toast.error('Failed to delete skills')
+    } finally {
+      setDeletingUserSkills(false)
+    }
+  }, [checkedUserSkills, fetchUserSkills])
+
+  const handleDeleteProjectSkills = useCallback(async () => {
+    if (checkedProjectSkills.size === 0) {
+      toast.error('请先勾选要删除的 Skill')
+      return
+    }
+    const confirmed = window.confirm(
+      `确定要从沙箱中删除选中的 ${checkedProjectSkills.size} 个项目 Skill 吗？此操作不可恢复。`,
+    )
+    if (!confirmed) return
+
+    setDeletingProjectSkills(true)
+    try {
+      const skillNames = Array.from(checkedProjectSkills)
+      const res = await fetch('/api/skills/delete', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: task.id, skillNames }),
+      })
+
+      if (res.ok) {
+        toast.success('项目 Skills 删除成功')
+      } else if (res.status === 207) {
+        const data = await res.json()
+        toast.error(`部分 Skill 删除失败: ${data.errors?.join(', ')}`)
+      } else {
+        toast.error('删除失败')
+      }
+      setCheckedProjectSkills(new Set())
+      fetchSkills()
+    } catch {
+      toast.error('Failed to delete project skills')
+    } finally {
+      setDeletingProjectSkills(false)
+    }
+  }, [checkedProjectSkills, task.id, fetchSkills])
 
   const handleConnectorSaved = async (connector: Connector) => {
     const config: McpServerConfig = {
@@ -2229,6 +2530,22 @@ export function TaskDetails({
             </button>
           )}
 
+          {/* TODO: OpenCode 运行时暂不支持 skill 管理，等待 OpenCode 的升级 */}
+          {task.selectedAgent !== 'opencode' && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowSkillsDialog(true)
+                if (!skillsLoaded || skillsList.length === 0) fetchSkills()
+                if (userSkillsList.length === 0) fetchUserSkills()
+              }}
+              className="flex items-center gap-1.5 md:gap-2 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Zap className="h-3.5 w-3.5 md:h-4 md:w-4 flex-shrink-0" />
+              <span className="hidden sm:inline">Skills</span>
+            </button>
+          )}
+
           {/* Desktop Pane Toggles - Only show on desktop */}
           <div className="hidden md:flex items-center gap-1 ml-auto">
             {hasFilesSupport && (
@@ -2948,6 +3265,7 @@ export function TaskDetails({
                   chatStream={chatStream}
                   onStreamComplete={onStreamComplete}
                   onManualUserSend={autoFix.notifyUserSend}
+                  skillsList={skillsList}
                 />
               </div>
             )}
@@ -3009,6 +3327,7 @@ export function TaskDetails({
                   chatStream={chatStream}
                   onStreamComplete={onStreamComplete}
                   onManualUserSend={autoFix.notifyUserSend}
+                  skillsList={skillsList}
                 />
               </div>
 
@@ -3364,6 +3683,7 @@ export function TaskDetails({
               chatStream={chatStream}
               onStreamComplete={onStreamComplete}
               onManualUserSend={autoFix.notifyUserSend}
+              skillsList={skillsList}
             />
           </div>
         </div>
@@ -3747,6 +4067,364 @@ export function TaskDetails({
         onCancelEdit={() => setShowTaskMcpDialog(true)}
         initialView="presets"
       />
+
+      {/* Skills Dialog */}
+      <Dialog
+        open={showSkillsDialog}
+        onOpenChange={(open) => {
+          setShowSkillsDialog(open)
+          if (!open) setSelectedSkillDetail(null)
+        }}
+      >
+        <DialogContent className="w-[720px] max-w-[90vw] max-h-[80vh] flex flex-col overflow-hidden">
+          {selectedSkillDetail ? (
+            <>
+              <DialogHeader>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSkillDetail(null)}
+                    className="text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </button>
+                  <DialogTitle>{selectedSkillDetail.name}</DialogTitle>
+                </div>
+              </DialogHeader>
+              <div className="space-y-4 py-4 overflow-y-auto flex-1 max-h-[60vh]">
+                {selectedSkillDetail.description && (
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Description</h4>
+                    <p className="text-base">{selectedSkillDetail.description}</p>
+                  </div>
+                )}
+                {selectedSkillDetail.source && (
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Source</h4>
+                    <p className="text-base">{selectedSkillDetail.source}</p>
+                  </div>
+                )}
+                {selectedSkillDetail.location && (
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Location</h4>
+                    <p className="text-base font-mono text-sm break-all">{selectedSkillDetail.location}</p>
+                  </div>
+                )}
+                {selectedSkillDetail.baseDirectory && (
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Base Directory</h4>
+                    <p className="text-base font-mono text-sm break-all">{selectedSkillDetail.baseDirectory}</p>
+                  </div>
+                )}
+                {selectedSkillDetail.allowedTools && selectedSkillDetail.allowedTools.length > 0 && (
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Allowed Tools</h4>
+                    <div className="flex flex-wrap gap-1">
+                      {selectedSkillDetail.allowedTools.map((tool) => (
+                        <span key={tool} className="px-2 py-0.5 bg-accent text-accent-foreground rounded text-sm">
+                          {tool}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {selectedSkillDetail.instructions && (
+                  <div>
+                    <h4 className="text-sm font-medium text-muted-foreground mb-1">Instructions</h4>
+                    <pre className="text-sm bg-muted p-4 rounded-md whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto">
+                      {selectedSkillDetail.instructions}
+                    </pre>
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end pt-4 border-t border-border">
+                <Button
+                  variant="destructive"
+                  size="default"
+                  onClick={() => handleUninstallSkill(selectedSkillDetail.name)}
+                  disabled={uninstallingSkill}
+                >
+                  {uninstallingSkill ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-1.5" />
+                  ) : (
+                    <Trash2 className="h-4 w-4 mr-1.5" />
+                  )}
+                  Uninstall
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <div className="flex items-center gap-2">
+                  <DialogTitle>Skills Manager</DialogTitle>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8"
+                    onClick={refreshAllSkills}
+                    disabled={loadingSkills || loadingUserSkills}
+                    title="刷新所有 Skills"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
+              </DialogHeader>
+              <Tabs
+                value={skillsTab}
+                onValueChange={(v) => {
+                  setSkillsTab(v)
+                  if (v === 'user' && userSkillsList.length === 0) fetchUserSkills()
+                }}
+                className="flex flex-col flex-1 overflow-hidden"
+              >
+                <TabsList className="w-full shrink-0">
+                  <TabsTrigger value="user" className="flex-1">
+                    用户 Skill
+                  </TabsTrigger>
+                  <TabsTrigger value="project" className="flex-1">
+                    项目 Skill
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="user" className="mt-3 flex flex-col flex-1 overflow-hidden">
+                  <div className="space-y-1 overflow-y-auto flex-1">
+                    {loadingUserSkills ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : userSkillsList.length === 0 ? (
+                      <Card className="p-6 text-center">
+                        <p className="text-base text-muted-foreground">No user skills found in cloud storage.</p>
+                      </Card>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border">
+                          <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              className="rounded border-border"
+                              checked={checkedUserSkills.size === userSkillsList.length && userSkillsList.length > 0}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setCheckedUserSkills(new Set(userSkillsList.map((s) => s.name)))
+                                } else {
+                                  setCheckedUserSkills(new Set())
+                                }
+                              }}
+                            />
+                            全选
+                          </label>
+                          <span className="text-sm text-muted-foreground ml-auto">
+                            已选 {checkedUserSkills.size}/{userSkillsList.length}
+                          </span>
+                        </div>
+                        {(() => {
+                          const projectSkillNames = new Set(skillsList.map((s) => s.name))
+                          const sorted = [...userSkillsList].sort((a, b) => {
+                            const aInProject = projectSkillNames.has(a.name) ? 1 : 0
+                            const bInProject = projectSkillNames.has(b.name) ? 1 : 0
+                            return aInProject - bInProject
+                          })
+                          return sorted.map((skill) => {
+                            const existsInProject = projectSkillNames.has(skill.name)
+                            return (
+                              <label
+                                key={skill.name}
+                                className={`flex items-center gap-2 px-4 py-3 border-b border-border last:border-b-0 rounded transition-colors hover:bg-accent/50 cursor-pointer`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="rounded border-border shrink-0"
+                                  checked={checkedUserSkills.has(skill.name)}
+                                  onChange={(e) => {
+                                    const next = new Set(checkedUserSkills)
+                                    if (e.target.checked) {
+                                      next.add(skill.name)
+                                    } else {
+                                      next.delete(skill.name)
+                                    }
+                                    setCheckedUserSkills(next)
+                                  }}
+                                />
+                                <div className="flex flex-col gap-0.5 min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-semibold text-base">{skill.name}</span>
+                                    {existsInProject && (
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 whitespace-nowrap">
+                                        项目已存在
+                                      </span>
+                                    )}
+                                  </div>
+                                  {skill.description && (
+                                    <p className="text-sm text-muted-foreground truncate">{skill.description}</p>
+                                  )}
+                                </div>
+                              </label>
+                            )
+                          })
+                        })()}
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 pt-4 border-t border-border">
+                    <Button
+                      size="default"
+                      variant="destructive"
+                      onClick={handleDeleteUserSkills}
+                      disabled={deletingUserSkills || checkedUserSkills.size === 0}
+                      title="Delete selected skills from cloud storage"
+                    >
+                      {deletingUserSkills ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      <span className="ml-1.5">
+                        删除{checkedUserSkills.size > 0 ? ` (${checkedUserSkills.size})` : ''}
+                      </span>
+                    </Button>
+                    <Button
+                      size="default"
+                      variant="outline"
+                      onClick={() => skillFolderInputRef.current?.click()}
+                      disabled={uploadingSkill}
+                      title="上传 Skill 文件夹到云存储"
+                    >
+                      {uploadingSkill ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span className="ml-1.5">
+                            {uploadProgress ? `${uploadProgress.current}/${uploadProgress.total}` : '上传中...'}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <FolderUp className="h-4 w-4" />
+                          <span className="ml-1.5">上传 Skill</span>
+                        </>
+                      )}
+                    </Button>
+                    <input
+                      ref={skillFolderInputRef}
+                      type="file"
+                      className="hidden"
+                      onChange={handleUploadSkillFolder}
+                      // @ts-expect-error webkitdirectory is a non-standard attribute
+                      webkitdirectory=""
+                      directory=""
+                    />
+                    <Button
+                      size="default"
+                      onClick={handleInitSkills}
+                      disabled={initializingSkills || checkedUserSkills.size === 0}
+                      title="Sync selected skills to sandbox"
+                      className="ml-auto"
+                    >
+                      {initializingSkills ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                      <span className="ml-1.5">
+                        同步到沙箱{checkedUserSkills.size > 0 ? ` (${checkedUserSkills.size})` : ''}
+                      </span>
+                    </Button>
+                  </div>
+                </TabsContent>
+                <TabsContent value="project" className="mt-3 flex flex-col flex-1 overflow-hidden">
+                  <div className="space-y-1 overflow-y-auto flex-1">
+                    {loadingSkills ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                      </div>
+                    ) : skillsList.length === 0 ? (
+                      <Card className="p-6 text-center">
+                        <p className="text-base text-muted-foreground">No skills available.</p>
+                      </Card>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-2 px-3 py-1.5 border-b border-border">
+                          <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+                            <input
+                              type="checkbox"
+                              className="rounded border-border"
+                              checked={checkedProjectSkills.size === skillsList.length && skillsList.length > 0}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setCheckedProjectSkills(new Set(skillsList.map((s) => s.name)))
+                                } else {
+                                  setCheckedProjectSkills(new Set())
+                                }
+                              }}
+                            />
+                            全选
+                          </label>
+                          <span className="text-sm text-muted-foreground ml-auto">
+                            已选 {checkedProjectSkills.size}/{skillsList.length}
+                          </span>
+                        </div>
+                        {skillsList.map((skill) => (
+                          <div
+                            key={skill.name}
+                            className="flex items-center gap-2 px-4 py-3 border-b border-border last:border-b-0 rounded transition-colors hover:bg-accent/50"
+                          >
+                            <input
+                              type="checkbox"
+                              className="rounded border-border shrink-0 cursor-pointer"
+                              checked={checkedProjectSkills.has(skill.name)}
+                              onChange={(e) => {
+                                const next = new Set(checkedProjectSkills)
+                                if (e.target.checked) {
+                                  next.add(skill.name)
+                                } else {
+                                  next.delete(skill.name)
+                                }
+                                setCheckedProjectSkills(next)
+                              }}
+                            />
+                            <div
+                              className="flex flex-col gap-0.5 min-w-0 flex-1 cursor-pointer"
+                              onClick={() => fetchSkillDetail(skill.name)}
+                            >
+                              <span className="font-semibold text-base">{skill.name}</span>
+                              {skill.description && (
+                                <p className="text-sm text-muted-foreground truncate">{skill.description}</p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 pt-4 border-t border-border">
+                    <Button
+                      size="default"
+                      variant="destructive"
+                      onClick={handleDeleteProjectSkills}
+                      disabled={deletingProjectSkills || checkedProjectSkills.size === 0}
+                      title="删除选中的项目 Skills"
+                    >
+                      {deletingProjectSkills ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      <span className="ml-1.5">
+                        删除{checkedProjectSkills.size > 0 ? ` (${checkedProjectSkills.size})` : ''}
+                      </span>
+                    </Button>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </>
+          )}
+          {loadingSkillDetail && (
+            <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

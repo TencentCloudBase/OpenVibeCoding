@@ -166,7 +166,17 @@ export async function getDownloadUrl(creds: CloudBaseCredentials, cloudPath: str
 
 export async function deleteFile(creds: CloudBaseCredentials, cloudPath: string): Promise<void> {
   const manager = createManager(creds)
-  await manager.storage.deleteFile([cloudPath])
+
+  // If cloudPath ends with '/', it's a directory — need to list all files under it then delete
+  if (cloudPath.endsWith('/')) {
+    const files = await manager.storage.walkCloudDir(cloudPath)
+    const keys = files.map((f: any) => f.Key).filter(Boolean) as string[]
+    if (keys.length > 0) {
+      await manager.storage.deleteFile(keys)
+    }
+  } else {
+    await manager.storage.deleteFile([cloudPath])
+  }
 }
 
 export async function deleteHostingFile(creds: CloudBaseCredentials, cloudPath: string): Promise<void> {

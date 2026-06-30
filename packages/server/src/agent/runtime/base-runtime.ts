@@ -30,6 +30,7 @@ import { getCodingSystemPrompt } from '../coding-mode.js'
 import { decrypt } from '../../lib/crypto.js'
 import { encryptJWE } from '../../lib/session.js'
 import { sessionPermissions } from '../session-permissions.js'
+import { initSkills } from '../../services/skill-manager.js'
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -465,6 +466,37 @@ export abstract class BaseAgentRuntime implements IAgentRuntime {
         )
         if (initResult.workspace) {
           detectedCwd = initResult.workspace
+        }
+
+        // ── Skills 初始化：检查 skillSettings.initialized，仅首次执行 ──
+        if (toolOverrideConfig) {
+          try {
+            const taskForSkills = await getDb().tasks.findById(conversationId)
+            if (taskForSkills?.skillSettings) {
+              const skillSettings = JSON.parse(taskForSkills.skillSettings)
+              if (
+                !skillSettings.initialized &&
+                Array.isArray(skillSettings.skillList) &&
+                skillSettings.skillList.length > 0
+              ) {
+                progressBridge({ phase: 'init_skills', message: '初始化 Skills...\n' })
+                const skillResult = await initSkills(toolOverrideConfig, conversationId, skillSettings.skillList)
+                if (skillResult.success) {
+                  console.log('[BaseRuntime] Skills initialized successfully')
+                } else {
+                  console.error('[BaseRuntime] Skills initialization failed')
+                }
+                // 无论成功失败都标记为已初始化，避免重复执行
+                skillSettings.initialized = true
+                await getDb().tasks.update(conversationId, {
+                  skillSettings: JSON.stringify(skillSettings),
+                  updatedAt: Date.now(),
+                })
+              }
+            }
+          } catch (e) {
+            console.error('[BaseRuntime] Skills initialization error')
+          }
         }
 
         // Create MCP client

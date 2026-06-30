@@ -17,7 +17,7 @@ import { InterruptionCard } from './chat/interruption-card'
 import { AgentStatusIndicator } from './chat/agent-status-indicator'
 import { extractPlanContent } from './chat/plan-content'
 import { mdComponents } from './chat/markdown-block'
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Card } from './ui/card'
 import { Button } from './ui/button'
 import { Textarea } from './ui/textarea'
@@ -74,6 +74,7 @@ export function TaskChat({
   messagesApiBase = '',
   historyMode = 'task-api',
   onManualUserSend,
+  skillsList = [],
 }: TaskChatProps) {
   // ─── Local UI state ───────────────────────────────────────────────
 
@@ -88,6 +89,12 @@ export function TaskChat({
     Array<{ id: string; url: string; data: string; mimeType: string }>
   >([])
   const imageInputRef = useRef<HTMLInputElement>(null)
+
+  // Slash command (skill picker)
+  const [showSkillSuggestions, setShowSkillSuggestions] = useState(false)
+  const [skillQuery, setSkillQuery] = useState('')
+  const [selectedSkillIndex, setSelectedSkillIndex] = useState(0)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Tab data
   const [prComments, setPrComments] = useState<PRComment[]>([])
@@ -456,17 +463,56 @@ export function TaskChat({
 
   const isAgentBusy = task.status === 'processing' || task.status === 'pending'
 
+  // ─── Slash command (skill picker) ─────────────────────────────────
+
+  const filteredSkills = useMemo(() => {
+    if (!showSkillSuggestions || !skillQuery) return skillsList
+    const q = skillQuery.toLowerCase()
+    return skillsList.filter((s) => s.name.toLowerCase().includes(q))
+  }, [showSkillSuggestions, skillQuery, skillsList])
+
+  const handleSelectSkill = useCallback(
+    (skillName: string) => {
+      setNewMessage(`/${skillName} `)
+      setShowSkillSuggestions(false)
+      setSkillQuery('')
+      setSelectedSkillIndex(0)
+      // 聚焦回输入框
+      setTimeout(() => textareaRef.current?.focus(), 0)
+    },
+    [setNewMessage],
+  )
+
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const value = e.target.value
+      setNewMessage(value)
+
+      // 检测斜杠命令: 在行首输入 "/" 且后面没有空格时弹出建议
+      if (value.startsWith('/') && !value.includes(' ')) {
+        const query = value.slice(1)
+        setSkillQuery(query)
+        setShowSkillSuggestions(true)
+        setSelectedSkillIndex(0)
+      } else {
+        setShowSkillSuggestions(false)
+      }
+    },
+    [setNewMessage],
+  )
+
   const handleSendMessage = async () => {
     if ((!newMessage.trim() && pendingImages.length === 0) || isSending || isAgentBusy) return
     const text = newMessage.trim()
     const images = pendingImages.map(({ data, mimeType }) => ({ data, mimeType }))
     setNewMessage('')
     setPendingImages([])
+    setShowSkillSuggestions(false)
     // 通知上层这是用户手动发送（用于重置自动修复计数等）
     onManualUserSend?.()
     const usedAcp = await chatSendMessage(text, (draft) => setNewMessage(draft), images.length > 0 ? images : undefined)
     // ACP 流式路径下 SSE 已实时更新本地 messages，服务端异步落 DB，
-    // 过早 fetchMessages 会用陈旧数据覆盖本地内容（表现为“答完后消息消失”）。
+    // 过早 fetchMessages 会用陈旧数据覆盖本地内容（表现为"答完后消息消失"）。
     // REST fallback 路径则需要同步服务器状态。
     if (!usedAcp) {
       await fetchMessages(false)
@@ -474,6 +520,30 @@ export function TaskChat({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 斜杠命令建议菜单中的键盘导航
+    if (showSkillSuggestions && filteredSkills.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setSelectedSkillIndex((prev) => (prev + 1) % filteredSkills.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setSelectedSkillIndex((prev) => (prev - 1 + filteredSkills.length) % filteredSkills.length)
+        return
+      }
+      if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault()
+        handleSelectSkill(filteredSkills[selectedSkillIndex].name)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setShowSkillSuggestions(false)
+        return
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       if (isAgentBusy) return
@@ -1507,12 +1577,36 @@ export function TaskChat({
             </div>
           )}
           <div className="relative">
+            {/* Skill suggestions dropdown */}
+            {showSkillSuggestions && filteredSkills.length > 0 && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-popover border border-border rounded-lg shadow-lg max-h-[200px] overflow-y-auto z-50">
+                {filteredSkills.map((skill, index) => (
+                  <button
+                    key={skill.name}
+                    className={`w-full text-left px-3 py-2 text-sm flex flex-col gap-0.5 transition-colors ${
+                      index === selectedSkillIndex ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50'
+                    }`}
+                    onMouseDown={(e) => {
+                      e.preventDefault() // 防止 textarea 失焦
+                      handleSelectSkill(skill.name)
+                    }}
+                    onMouseEnter={() => setSelectedSkillIndex(index)}
+                  >
+                    <span className="font-medium">/{skill.name}</span>
+                    {skill.description && (
+                      <span className="text-xs text-muted-foreground truncate">{skill.description}</span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
             <Textarea
+              ref={textareaRef}
               value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
+              onChange={handleInputChange}
               onKeyDown={handleKeyDown}
               onPaste={handlePasteImage}
-              placeholder="发送后续消息...（使用 Ctrl+V 粘贴图片）"
+              placeholder="发送后续消息...（输入 / 选择技能，Ctrl+V 粘贴图片）"
               className="w-full min-h-[60px] max-h-[120px] resize-none pr-16 text-base md:text-xs"
               disabled={isSending}
             />
