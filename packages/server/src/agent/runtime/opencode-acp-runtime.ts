@@ -25,6 +25,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { ClientSideConnection } from '@agentclientprotocol/sdk'
 import type { AgentCallback, AgentCallbackMessage, AgentOptions } from '@coder/shared'
+import { normalizeStreamEvent } from '@coder/shared'
 import type { ChatStreamResult } from './types.js'
 import type { ModelInfo } from '../cloudbase-agent.service.js'
 import {
@@ -203,67 +204,33 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
     const envId = options.envId || ''
     const userId = options.userId || 'anonymous'
 
-    // ── Resume path 1: askAnswers（abort + DB resume 模式）──
-    // 中断时子进程已 abort，questions 存在 stream_events 的 ask_user 事件中。
-    // 前端带 askAnswers → 写 tool_result 到 DB → spawn 新进程从 DB 恢复。
-    if (options.askAnswers && Object.keys(options.askAnswers).length > 0 && envId) {
+    // ── Resume path 1: clientToolResult（RESPONSE 恢复，客户端已执行完工具）──
+    if (options.clientToolResult && envId) {
+      const { toolCallId, content, isError } = options.clientToolResult
+      const rawContent = typeof content === 'string' ? content : JSON.stringify(content ?? '')
       const latestRecord = await persistenceService.getLatestRecordStatus(conversationId, userId, envId)
 
       if (latestRecord) {
-        for (const [recordId, entry] of Object.entries(options.askAnswers)) {
-          const { toolCallId: answerToolCallId, answers } = entry as {
-            toolCallId: string
-            answers: Record<string, string>
-          }
-
-          // 从 stream_events 读取 ask_user 事件获取 questions 上下文
-          let questionContext = ''
-          try {
-            const streamEvents = await persistenceService.getStreamEvents(conversationId, latestRecord.recordId)
-            const askUserEvent = streamEvents.find(
-              (evt: any) => evt.event?.sessionUpdate === 'ask_user' && evt.event?.toolCallId === answerToolCallId,
-            )
-            if (askUserEvent) {
-              const questions = askUserEvent.event?.questions || []
-              questionContext = questions.map((q: any) => q.question).join('\n')
-            }
-          } catch (e) {
-            console.warn('[OpencodeAcpRuntime] read stream_events for askAnswers failed:', (e as Error).message)
-          }
-
-          // 格式化用户答案为 tool_result
-          const formatted = questionContext
-            ? `${questionContext}\n用户的选择：\n${Object.entries(answers)
-                .map(([k, v]) => ` · ${k}: ${v}`)
-                .join('\n')}`
-            : Object.entries(answers)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join('\n')
-
-          try {
-            await persistenceService.updateToolResult(
-              conversationId,
-              latestRecord.recordId,
-              answerToolCallId,
-              formatted,
-              'done',
-            )
-          } catch (e) {
-            console.warn('[OpencodeAcpRuntime] updateToolResult for askAnswers failed:', (e as Error).message)
-          }
+        try {
+          await persistenceService.updateToolResult(
+            conversationId,
+            latestRecord.recordId,
+            toolCallId,
+            { type: 'text', text: rawContent },
+            isError ? 'error' : 'done',
+          )
+        } catch (e) {
+          console.warn('[OpencodeAcpRuntime] updateToolResult for clientToolResult failed:', (e as Error).message)
         }
-
-        // finalize the pending assistant record
         await persistenceService.updateRecordStatus(latestRecord.recordId, 'done')
       }
-
-      // 用 resume prompt 继续对话（新进程会从 DB 加载历史）
-      prompt = `[系统通知] 用户已回答了你的问题。请根据回答继续执行。`
-      // Fall through to normal launchAgent flow
+      prompt = isError
+        ? `[系统通知] 客户端工具执行失败，请根据结果继续。`
+        : `[系统通知] 客户端工具已执行完毕，请根据结果继续。`
     }
 
     // ── Resume path 2: toolConfirmation（abort + DB 模式）──
-    // requestPermission 时子进程已被 abort，pending state 在 record status='pending'。
+    // request_permission 时子进程已被 abort，pending state 在 record status='pending'。
     // 前端带 toolConfirmation → 写结果到 DB → spawn 新进程从 DB 恢复。
     if (options.toolConfirmation && envId) {
       const latestRecord = await persistenceService.getLatestRecordStatus(conversationId, userId, envId)
@@ -300,7 +267,7 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
     }
 
     // Agent still running (no resume payload) → observe existing stream
-    if (isAgentRunning(conversationId) && !options.toolConfirmation) {
+    if (isAgentRunning(conversationId) && !options.toolConfirmation && !options.turnId) {
       const run = getAgentRun(conversationId)!
       updateLiveCallback(conversationId, callback)
       if (process.env.OPENCODE_ACP_DEBUG) {
@@ -313,8 +280,9 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
 
     // 非 resume：preSave user + assistant(pending) 记录，取 assistantRecordId 作为 turnId
     // (与 Tencent SDK runtime 一致：turnId == assistantMessageId)
+    // 但如果 options.turnId 已指定（RESPONSE 恢复场景），跳过 preSave，直接复用
     let preSaved: { userRecordId: string; assistantRecordId: string } | null = null
-    if (options.envId) {
+    if (options.envId && !options.turnId) {
       try {
         // 找上一轮 record ids，维护 replyTo / parentId 链
         const { prevRecordId, lastAssistantRecordId } = await findLastRecordIds(
@@ -338,7 +306,7 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
       }
     }
 
-    const turnId = preSaved?.assistantRecordId ?? uuidv4()
+    const turnId = options.turnId || preSaved?.assistantRecordId || uuidv4()
     const abortController = new AbortController()
 
     registerAgent({
@@ -608,7 +576,7 @@ export class OpencodeAcpRuntime extends BaseAgentRuntime {
       // 把它们作为 context prefix 拼到本轮 prompt 前面，让 LLM 能做多轮记忆。
       // 同时注入基类构建的 systemPrompt（任务分类 + 沙箱上下文 + CloudBase 指引）。
       //
-      // 注意：Resume 场景（toolConfirmation/askAnswers）不会走到这里（早 return 了），
+      // 注意：Resume 场景（toolConfirmation/clientToolResult）不会走到这里（早 return 了），
       // 所以 resume 时用的是原 opencode session 自带的上下文，不需要重新注入。
       let contextPrompt: string
       if (envId) {
@@ -856,6 +824,8 @@ function makeEmitter(ctx: {
       const acpEvent = CloudbaseAgentService.convertToSessionUpdate(enriched, conversationId)
       if (acpEvent) {
         const seq = getAgentRun(conversationId)?.lastSeq ?? 0
+        // Normalize to canonical AcpWireMessage for storage
+        const normalized = normalizeStreamEvent(acpEvent, conversationId)
         persistenceService
           .appendStreamEvents([
             {
@@ -864,7 +834,7 @@ function makeEmitter(ctx: {
               turnId,
               envId,
               userId,
-              event: acpEvent,
+              event: normalized,
               seq,
               createTime: Date.now(),
             },

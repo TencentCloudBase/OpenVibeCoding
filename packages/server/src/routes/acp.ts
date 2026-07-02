@@ -122,6 +122,12 @@ function resolveStopReason(run: { status?: string; stopReason?: StopReason } | u
   return 'end_turn'
 }
 
+import { normalizeStreamEvent } from '@coder/shared'
+
+function serializeSseEvent(event: unknown, sessionId: string): string {
+  return JSON.stringify(normalizeStreamEvent(event, sessionId))
+}
+
 // ─── Health Check ──────────────────────────────────────────────────────────
 
 acp.get('/health', (c) => {
@@ -310,6 +316,72 @@ acp.post('/chat', async (c) => {
   })
 })
 
+// ─── Pending REQUEST registry (for JSON-RPC RESPONSE matching) ──────────────
+
+/**
+ * Handle a JSON-RPC RESPONSE from the client.
+ *
+ * Matches the pending REQUEST by ``id``, then dispatches by the original
+ * request ``method``:
+ * - session/request_permission → write decision to store, auto-resume agent
+ * - client/<ToolName> → write result to client tool store, auto-resume agent
+ */
+async function handleJsonRpcResponse(
+  c: any,
+  id: string,
+  result: unknown,
+  respMeta?: Record<string, unknown>,
+  _error?: { message?: string },
+): Promise<Response> {
+  // _meta from RESPONSE body carries all routing info (stateless, multi-node safe)
+  const method = respMeta?.method as string | undefined
+  const sessionId = (respMeta?.sessionId as string) || id.split(':')[0] || ''
+  const toolCallId = (respMeta?.toolCallId as string) || id.split(':').pop() || id
+  const assistantMsgId = respMeta?.assistantMessageId as string | undefined
+
+  if (!method || !sessionId) {
+    return c.json(rpcErr(id, JSON_RPC_ERRORS.INVALID_REQUEST, `RESPONSE _meta must include method and sessionId`), 400)
+  }
+
+  const { envId, userId } = c.get('userEnv')!
+  console.log(`[ACP RESPONSE] method=${method} sessionId=${sessionId} toolCallId=${toolCallId}`)
+
+  if (method === 'session/request_permission') {
+    const outcome = (result as any)?.outcome
+    let action = 'deny'
+    if (outcome?.outcome === 'selected') {
+      action = (outcome.optionId as string) || 'deny'
+    }
+    const permAction = (
+      action === 'allow_always' ? 'allow_always' : action === 'allow' ? 'allow' : 'deny'
+    ) as import('@coder/shared').PermissionAction
+    return observeStreamWithLiveCallback(c, id, sessionId, envId, userId, async (callback) => {
+      const runtime = agentRuntimeRegistry.resolve({ conversationId: sessionId })
+      return runtime.chatStream('继续未完成的任务', callback, {
+        conversationId: sessionId,
+        envId,
+        userId,
+        toolConfirmation: { interruptId: toolCallId, payload: { action: permAction } },
+      })
+    })
+  }
+
+  // client/<ToolName> — result 就是工具输出（与 fs/read_text_file 一致）
+  const isError = !!_error
+
+  return observeStreamWithLiveCallback(c, id, sessionId, envId, userId, async (callback) => {
+    const runtime = agentRuntimeRegistry.resolve({ conversationId: sessionId })
+    // prompt 由 runtime 根据 clientToolResult 自行构造，路由层不关心
+    return runtime.chatStream('继续未完成的任务', callback, {
+      conversationId: sessionId,
+      envId,
+      userId,
+      turnId: assistantMsgId,
+      clientToolResult: { toolCallId, content: result, isError },
+    })
+  })
+}
+
 // ─── ACP JSON-RPC 2.0 Endpoint ─────────────────────────────────────────────
 
 /**
@@ -321,16 +393,39 @@ acp.post('/chat', async (c) => {
  * - session/load: 加载会话
  * - session/prompt: 发送消息（SSE 流式响应）
  * - session/cancel: 取消请求
+ * - JSON-RPC RESPONSE: 客户端回复 REQUEST（session/request_permission 或 client/<ToolName>）
  */
 acp.post('/acp', async (c) => {
-  const body: JsonRpcRequest = await c.req.json()
+  const body = (await c.req.json()) as Record<string, unknown>
 
-  // 验证 JSON-RPC 请求
-  if (!body || body.jsonrpc !== '2.0' || !body.method) {
-    return c.json(rpcErr(body?.id ?? null, JSON_RPC_ERRORS.INVALID_REQUEST, 'Invalid JSON-RPC 2.0 request'), 400)
+  if (!body || body.jsonrpc !== '2.0') {
+    return c.json(
+      rpcErr((body?.id as number | string) ?? null, JSON_RPC_ERRORS.INVALID_REQUEST, 'Invalid JSON-RPC 2.0'),
+      400,
+    )
   }
 
-  const { id, method, params } = body
+  // ── JSON-RPC RESPONSE (has id, no method, has result/error) ──
+  if (body.id !== undefined && body.id !== null && !body.method && ('result' in body || 'error' in body)) {
+    return handleJsonRpcResponse(
+      c,
+      body.id as string,
+      body.result,
+      body._meta as Record<string, unknown> | undefined,
+      body.error as { message?: string } | undefined,
+    )
+  }
+
+  // ── JSON-RPC REQUEST or NOTIFICATION ──
+  if (!body.method || typeof body.method !== 'string') {
+    return c.json(rpcErr((body.id as number | string) ?? null, JSON_RPC_ERRORS.INVALID_REQUEST, 'Method required'), 400)
+  }
+
+  const { id, method, params } = body as {
+    id?: number | string | null
+    method: string
+    params?: Record<string, unknown>
+  }
   const isNotification = id === undefined || id === null
 
   // 根据方法路由
@@ -638,38 +733,27 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
     .join('')
   const imageBlocks = promptBlocks.filter((b) => b.type === 'image')
 
-  // ── ACP 1.0.0 resume blocks → legacy resume payload ─────────────────────
-  // New clients (OAK-aligned) send resume via prompt blocks:
-  //   permission_decision { tool_use_id, decision } → toolConfirmation
-  //   tool_result         { tool_use_id, content }  → askAnswers
-  // Normalize them into the legacy params so the runtime resume paths work
-  // unchanged. Legacy clients keep sending toolConfirmation/askAnswers directly.
+  // ── ACP 1.0.0 resume blocks → unified resume payload ────────────────────
+  //   permission_decision → toolConfirmation
+  //   tool_result         → clientToolResult
   let normalizedToolConfirmation = params?.toolConfirmation
-  let normalizedAskAnswers = params?.askAnswers
+  let normalizedClientToolResult = params?.clientToolResult
   if (!normalizedToolConfirmation) {
     const permBlock = promptBlocks.find((b) => b.type === 'permission_decision')
     if (permBlock?.tool_use_id) {
-      // decision: allow | allow_always | reject  →  action: allow | allow_always | deny
       const action = permBlock.decision === 'reject' ? 'deny' : permBlock.decision || 'deny'
       normalizedToolConfirmation = { interruptId: permBlock.tool_use_id, payload: { action } }
     }
   }
-  if (!normalizedAskAnswers || Object.keys(normalizedAskAnswers).length === 0) {
+  if (!normalizedClientToolResult) {
     const resultBlock = promptBlocks.find((b) => b.type === 'tool_result')
     if (resultBlock?.tool_use_id) {
       const content = typeof resultBlock.content === 'string' ? resultBlock.content : String(resultBlock.content ?? '')
-      // runtime 用 Object.entries(answers) 格式化，key 仅用于展示，用通用 'answer'
-      normalizedAskAnswers = {
-        [resultBlock.tool_use_id]: { toolCallId: resultBlock.tool_use_id, answers: { answer: content } },
-      }
+      normalizedClientToolResult = { toolCallId: resultBlock.tool_use_id, content, isError: false }
     }
   }
 
-  // Resume payload (askAnswers / toolConfirmation) 必须路由到 runtime.chatStream 的
-  // resume 分支来 resolve 挂起的 question/permission，而不是只 observe。
-  // 这里优先检查 resume payload —— 有 resume 时跳过 observeStream early-return。
-  const hasResumePayload =
-    (normalizedAskAnswers && Object.keys(normalizedAskAnswers).length > 0) || !!normalizedToolConfirmation
+  const hasResumePayload = !!normalizedClientToolResult || !!normalizedToolConfirmation
 
   if (!hasResumePayload) {
     // Check if agent is already running via registry
@@ -705,13 +789,6 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
     // read failure doesn't affect main flow
   }
 
-  // Update task status to pending
-  try {
-    await getDb().tasks.update(sessionId, { status: 'pending', updatedAt: Date.now() })
-  } catch {
-    // write failure doesn't affect main flow
-  }
-
   // Resolve runtime: 优先级 request param > task's selectedRuntime > AGENT_RUNTIME env > default
   const runtime = agentRuntimeRegistry.resolve({
     explicitRuntime: params.runtime || taskRuntime,
@@ -726,7 +803,7 @@ async function handleSessionPrompt(c: any, id: number | string, params: SessionP
       userId,
       userCredentials,
       model: selectedModel,
-      askAnswers: normalizedAskAnswers,
+      clientToolResult: normalizedClientToolResult,
       toolConfirmation: normalizedToolConfirmation,
       permissionMode: params.permissionMode,
       mode: taskMode,
@@ -778,13 +855,7 @@ async function observeStream(
     try {
       const existingEvents = await persistenceService.getStreamEvents(sessionId, turnId)
       for (const evt of existingEvents) {
-        await stream.writeSSE({
-          data: JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'session/update',
-            params: { sessionId, update: evt.event },
-          }),
-        })
+        await stream.writeSSE({ data: serializeSseEvent(evt.event, sessionId) })
         lastSeq = Math.max(lastSeq, evt.seq)
       }
     } catch {
@@ -807,13 +878,7 @@ async function observeStream(
       try {
         const newEvents = await persistenceService.getStreamEvents(sessionId, turnId, lastSeq)
         for (const evt of newEvents) {
-          await stream.writeSSE({
-            data: JSON.stringify({
-              jsonrpc: '2.0',
-              method: 'session/update',
-              params: { sessionId, update: evt.event },
-            }),
-          })
+          await stream.writeSSE({ data: serializeSseEvent(evt.event, sessionId) })
           lastSeq = Math.max(lastSeq, evt.seq)
         }
 
@@ -877,6 +942,10 @@ async function observeStreamWithLiveCallback(
   userId: string,
   chatStreamFn: (callback: AgentCallback) => Promise<{ turnId: string; alreadyRunning: boolean }>,
 ): Promise<Response> {
+  // Mark task as pending — every call starts an agent run
+  getDb()
+    .tasks.update(sessionId, { status: 'pending', updatedAt: Date.now() })
+    .catch(() => {})
   return streamSSE(c, async (stream) => {
     let lastSeq = -1
     let streamClosed = false
@@ -900,24 +969,13 @@ async function observeStreamWithLiveCallback(
       }
 
       if (finalDoneSent) {
-        console.warn(
-          `[SSE leak] ${sessionId} liveCallback writing AFTER [DONE]: msg.type=${msg.type}, acpEvent.sessionUpdate=${(acpEvent as { sessionUpdate?: string }).sessionUpdate}`,
-        )
+        const tag = 'sessionUpdate' in acpEvent ? acpEvent.sessionUpdate : (acpEvent as any).method
+        console.warn(`[SSE leak] ${sessionId} liveCallback writing AFTER [DONE]: msg.type=${msg.type}, acpEvent=${tag}`)
       }
 
-      // writeSSE returns a Promise — attach .catch() so unhandled rejection doesn't
-      // surface as an uncaught error. Actual write failure sets streamClosed=true.
-      stream
-        .writeSSE({
-          data: JSON.stringify({
-            jsonrpc: '2.0',
-            method: 'session/update',
-            params: { sessionId, update: acpEvent },
-          }),
-        })
-        .catch(() => {
-          streamClosed = true
-        })
+      stream.writeSSE({ data: serializeSseEvent(acpEvent, sessionId) }).catch(() => {
+        streamClosed = true
+      })
     }
 
     // ── Launch agent with liveCallback ────────────────────────
@@ -930,13 +988,7 @@ async function observeStreamWithLiveCallback(
         const existingEvents = await persistenceService.getStreamEvents(sessionId, turnId)
         for (const evt of existingEvents) {
           if (evt.seq <= lastSeq) continue
-          await stream.writeSSE({
-            data: JSON.stringify({
-              jsonrpc: '2.0',
-              method: 'session/update',
-              params: { sessionId, update: evt.event },
-            }),
-          })
+          await stream.writeSSE({ data: serializeSseEvent(evt.event, sessionId) })
           lastSeq = Math.max(lastSeq, evt.seq)
         }
       } catch {
@@ -988,13 +1040,7 @@ async function observeStreamWithLiveCallback(
         // Only fetch events after what we've already delivered
         const newEvents = await persistenceService.getStreamEvents(sessionId, turnId, lastSeq)
         for (const evt of newEvents) {
-          await stream.writeSSE({
-            data: JSON.stringify({
-              jsonrpc: '2.0',
-              method: 'session/update',
-              params: { sessionId, update: evt.event },
-            }),
-          })
+          await stream.writeSSE({ data: serializeSseEvent(evt.event, sessionId) })
           lastSeq = Math.max(lastSeq, evt.seq)
         }
 
@@ -1213,24 +1259,16 @@ acp.post('/internal/ask-user', async (c) => {
   }
 
   // emit ask_user 事件 → SSE 推给前端 + 写入 stream_events
-  // 直接构造 ACP session update 格式（questions 在顶层），
-  // 而不是 AgentCallbackMessage 格式（questions 在 input 里嵌套）。
-  // 原因：stream_events 存的是原始事件，前端 reconnect 到 /observe 时直接回放，
-  // 不经过 convertToSessionUpdate 转换。所以事件必须已经是前端期望的格式。
+  // emitForConversation → makeEmitter → liveCallback + appendStreamEvents，
+  // 两者都经过 CloudbaseAgentService.convertToSessionUpdate，由其把 type:'ask_user'
+  // 转成标准 ACP 1.0.0 request_permission（title='AskUserQuestion'）。
+  // 所以这里只需最小 AgentCallbackMessage 形状。
   try {
     await emitForConversation(conversationId, {
       type: 'ask_user',
-      sessionUpdate: 'ask_user',
-      toolCallId,
-      assistantMessageId: '',
-      questions: questions as Array<{
-        question: string
-        header: string
-        options: Array<{ label: string; description: string }>
-      }>,
       id: toolCallId,
       input: { questions },
-    } as unknown as AgentCallbackMessage)
+    } as AgentCallbackMessage)
   } catch (e) {
     console.error('[internal/ask-user] emit failed:', e)
     return c.json({ error: 'emit failed' }, 500)

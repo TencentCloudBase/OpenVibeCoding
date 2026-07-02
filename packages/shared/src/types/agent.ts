@@ -277,6 +277,27 @@ export interface AcpImageBlock {
 export type AcpContentBlock = AcpTextBlock | AcpImageBlock
 
 /**
+ * `_meta.ref.*` 扩展命名空间。
+ *
+ * ACP 标准保留 `_meta` 用于扩展；本项目非标准字段（关联到其它实体的渲染线索）
+ * 统一放在 `_meta.ref.*` 下。`ref` = reference，语义：这些字段是给客户端渲染
+ * 用的"引用/关联"信息（assistantMessageId 关联消息、parentToolCallId 关联父工具、
+ * planContent 渲染计划），不绑定具体品牌（非 OAK 的 oak / 非 vibe）。
+ */
+export interface RefMeta {
+  ref?: {
+    /** 父 Task 的 toolCallId（子代理产生的工具链） */
+    parentToolCallId?: string
+    /** 服务端内部 assistantMessageId（SSE 关联用） */
+    assistantMessageId?: string
+    /** ExitPlanMode 计划内容（Markdown），仅 ExitPlanMode 工具携带 */
+    planContent?: string
+    [key: string]: unknown
+  } | null
+  [key: string]: unknown
+}
+
+/**
  * 工具权限决策动作
  *
  * - `allow`: 仅允许本次工具调用
@@ -302,8 +323,8 @@ export type AgentPermissionMode = 'default' | 'plan'
 export interface SessionPromptParams {
   sessionId: string
   prompt: AcpContentBlock[]
-  /** AskUserQuestion 的用户回答 { [assistantMessageId]: { toolCallId, answers: { [header]: value } } } */
-  askAnswers?: Record<string, { toolCallId: string; answers: Record<string, string> }>
+  /** 客户端工具执行结果（取代 askAnswers） */
+  clientToolResult?: { toolCallId: string; content: unknown; isError?: boolean }
   /** 工具确认结果 */
   toolConfirmation?: {
     interruptId: string
@@ -391,6 +412,8 @@ export interface ToolCallUpdate {
   input?: unknown
   /** P7: 父 Task 的 toolCallId，非空表示此调用由子代理（Task 工具）产生 */
   parentToolCallId?: string
+  /** ACP 1.0.0 扩展字段：assistantMessageId/parentToolCallId 等放在 _meta.ref.* */
+  _meta?: RefMeta
 }
 
 export interface ToolCallStatusUpdate {
@@ -408,6 +431,8 @@ export interface ToolCallStatusUpdate {
   error?: { message: string }
   /** P7: 父 Task 的 toolCallId（冗余字段，前端优先从 tool_call part 继承） */
   parentToolCallId?: string
+  /** ACP 1.0.0 扩展字段：parentToolCallId 等放在 _meta.ref.* */
+  _meta?: RefMeta
 }
 
 export interface AvailableCommandsUpdate {
@@ -662,4 +687,24 @@ export interface AgentOptions {
   permissionMode?: AgentPermissionMode
   /** 图片附件（多模态输入），转换后传给 SDK query() 的 ContentBlock[] */
   imageBlocks?: AcpImageBlock[]
+  /**
+   * 显式指定本轮的 turnId（assistantRecordId）。
+   *
+   * 用于 RESPONSE 恢复场景：路由层已写 tool_result 到特定 record，
+   * 传此字段让 runtime 继承同一个 recordId，避免生成新 turnId 导致
+   * restoreMessages 看不到刚写入的 tool_result。
+   */
+  turnId?: string
+  /**
+   * 客户端工具执行结果（RESPONSE 恢复场景）。
+   *
+   * 路由层收到 client/<ToolName> 的 JSON-RPC RESPONSE 后，
+   * 不直接写 DB，而是传给 runtime，由 runtime 在 resume 流程中
+   * 统一写 tool_result + finalize record。
+   */
+  clientToolResult?: {
+    toolCallId: string
+    content: unknown
+    isError?: boolean
+  }
 }

@@ -176,21 +176,23 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
     case 'tool_call': {
       // ACP 1.0.0: rawInput (new) with fallback to input (deprecated)
       const rawInput = u.rawInput ?? u.input
+      const metaAssistantId = u._meta?.assistantMessageId ?? u.assistantMessageId
+      const metaParentId = u._meta?.parentToolCallId ?? u.parentToolCallId
       setMessages((prev) =>
         prev.map((m) => {
           if (m.id !== assistantMsgId) return m
           const prevParts = m.parts || []
           const existingIdx = prevParts.findIndex((p) => p.type === 'tool_call' && p.toolCallId === u.toolCallId)
           // P7: 防御 —— 若服务端误把 parentToolCallId 设为自身（SDK 语义边界），忽略
-          const hasValidParent = u.parentToolCallId && u.parentToolCallId !== u.toolCallId
+          const hasValidParent = metaParentId && metaParentId !== u.toolCallId
           const newPart = {
             type: 'tool_call' as const,
             toolCallId: u.toolCallId || '',
             toolName: u.title || 'tool',
             input: rawInput,
-            assistantMessageId: u.assistantMessageId || assistantMsgId,
+            assistantMessageId: metaAssistantId || assistantMsgId,
             // P7: 子代理产生的工具链到父 Task；前端据此构建 SubagentCard 嵌套视图
-            ...(hasValidParent ? { parentToolCallId: u.parentToolCallId as string } : {}),
+            ...(hasValidParent ? { parentToolCallId: metaParentId as string } : {}),
           }
           if (existingIdx >= 0) {
             const updated = [...prevParts]
@@ -273,7 +275,6 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
       break
     }
 
-    case 'tool_confirm':
     case 'request_permission': {
       // ACP 1.0.0: request_permission nests fields under toolCall + uses rawInput
       // @deprecated tool_confirm uses flat toolCallId/toolName/input
@@ -281,21 +282,14 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
       const pcToolCallId = isNew ? u.toolCall?.toolCallId : u.toolCallId
       const pcToolName = isNew ? u.toolCall?.title : u.toolName
       const pcInput = (isNew ? u.toolCall?.rawInput : u.input) || {}
-      // planContent: old format carries it flat; new format via _meta.oak.planContent
-      const pcPlanContent = isNew ? u._meta?.oak?.planContent : u.planContent
-      const pcAssistantMessageId = isNew ? u._meta?.oak?.assistantMessageId : u.assistantMessageId
+      const pcPlanContent = isNew ? u._meta?.planContent : u.planContent
+      const pcAssistantMessageId = isNew ? u._meta?.assistantMessageId : u.assistantMessageId
 
       phaseRef.current = 'waiting_for_interaction'
       // 立即解除 sending 状态，使确认按钮可点击
       // （OpenCode runtime 的 SSE 不会在中断时关闭，必须显式重置）
       setIsSending(false)
       setIsStreamingResponse(false)
-      // OAK 把 AskUserQuestion 也通过 request_permission 上报（携带 rawInput.questions），
-      // 但它不是“批准/拒绝”语义而是问卷。问卷 UI 由 tool_call part 驱动
-      // （chat-transcript 的 resolveAskUserQuestion），这里不应弹出审批卡片。
-      if (pcToolName === 'AskUserQuestion') {
-        break
-      }
       setToolConfirm({
         toolCallId: pcToolCallId,
         assistantMessageId: pcAssistantMessageId,
@@ -319,14 +313,6 @@ export function applySessionUpdate(ctx: ApplySessionUpdateCtx): void {
       }
       break
     }
-
-    case 'ask_user':
-      phaseRef.current = 'waiting_for_interaction'
-      // 立即解除 sending 状态，使提交按钮可点击
-      // （OpenCode runtime 的 SSE 不会在中断时关闭，必须显式重置）
-      setIsSending(false)
-      setIsStreamingResponse(false)
-      break
 
     case 'artifact':
       if (u.artifact) {

@@ -18,10 +18,82 @@ import { resolveSandboxConfig, backfillSandboxConfig } from '../lib/sandbox-conf
 import { decrypt } from '../lib/crypto.js'
 import { encryptJWE } from '../lib/session.js'
 import type { AgentCallbackMessage, AgentOptions, CodeBuddyMessage, ExtendedSessionUpdate } from '@coder/shared'
+import type { ToolKind, PermissionOption } from '@agentclientprotocol/sdk'
 import { registerAgent, getAgentRun, completeAgent, isAgentRunning, type StopReason } from './agent-registry.js'
 import { EventBuffer } from './event-buffer.js'
 import { sessionPermissions, normalizeToolName } from './session-permissions.js'
 import { initRepo, pushToUserGit } from '../sandbox/git-personal'
+
+// ─── ACP 1.0.0 helpers ──────────────────────────────────────────────────────
+
+/**
+ * 工具名 → 标准 ACP ToolKind 映射。
+ * 与 OAK `acp-stream-adapter.ts:toolKindFromName` 对齐。注意 `'function'` 不是
+ * 合法 ToolKind，旧实现用了它，此处修正。
+ */
+function toolKindFromName(toolName: string): ToolKind {
+  switch (toolName) {
+    case 'Bash':
+    case 'bash':
+      return 'execute'
+    case 'Read':
+    case 'read':
+      return 'read'
+    case 'Write':
+    case 'write':
+    case 'Edit':
+    case 'edit':
+    case 'Patch':
+    case 'patch':
+    case 'ApplyPatch':
+      return 'edit'
+    case 'Grep':
+    case 'grep':
+    case 'Glob':
+    case 'glob':
+      return 'search'
+    case 'WebFetch':
+    case 'webfetch':
+    case 'Fetch':
+      return 'fetch'
+    case 'Agent':
+    case 'Task':
+    case 'TaskCreate':
+    case 'TaskUpdate':
+    case 'TaskGet':
+    case 'TaskList':
+      return 'think'
+    default:
+      // MCP tools (mcp__*) 和其它 SDK 内建工具默认 'other'。
+      // title 已携带足够上下文供客户端渲染。
+      return 'other'
+  }
+}
+
+/** Build flat `_meta` for tool_call / tool_call_update. */
+function flatMeta(opts: {
+  parentToolCallId?: string
+  assistantMessageId?: string
+  planContent?: string
+}): Record<string, unknown> | null {
+  const m: Record<string, unknown> = {}
+  if (opts.parentToolCallId) m.parentToolCallId = opts.parentToolCallId
+  if (opts.assistantMessageId) m.assistantMessageId = opts.assistantMessageId
+  if (opts.planContent) m.planContent = opts.planContent
+  return Object.keys(m).length > 0 ? m : null
+}
+
+/**
+ * 标准 permission options（与 OAK `buildPermissionOptions` 对齐）。
+ * 前端不读这些 options（渲染自己的按钮），但 ACP 1.0.0 规范要求 request_permission 携带。
+ */
+function buildPermissionOptions(): PermissionOption[] {
+  return [
+    { optionId: 'allow_always', name: 'Always allow', kind: 'allow_always' },
+    { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+    { optionId: 'reject', name: 'Reject', kind: 'reject_once' },
+  ]
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -316,11 +388,42 @@ function getBundledSkillsDir(): string {
 
 // ─── CloudbaseAgentService ─────────────────────────────────────────────────
 
+/**
+ * JSON-RPC REQUEST message — agent asks the client to do something.
+ *
+ * Follows the same pattern as standard ACP client methods (fs/read_text_file,
+ * terminal/create, session/request_permission). Pushed via SSE as a complete
+ * JSON-RPC REQUEST envelope. id = `${sessionId}:${toolCallId}` (deterministic).
+ */
+export interface JsonRpcRequestPayload {
+  jsonrpc: '2.0'
+  /** Deterministic: `${sessionId}:${toolCallId}`. */
+  id: string
+  method: string
+  params: Record<string, unknown>
+  _meta?: Record<string, unknown>
+}
+
+/**
+ * Result of {@link CloudbaseAgentService.convertToSessionUpdate}.
+ * Either a session/update notification payload or a JSON-RPC REQUEST.
+ */
+export type AcpStreamEvent = ExtendedSessionUpdate | JsonRpcRequestPayload
+
 export class CloudbaseAgentService {
+  /** Build a deterministic JSON-RPC request id: `${sessionId}:${toolCallId}`. */
+  static requestId(sessionId: string, toolCallId: string): string {
+    return `${sessionId}:${toolCallId}`
+  }
+
   /**
-   * 将内部 AgentCallbackMessage 转换为 ACP ExtendedSessionUpdate 格式
+   * 将内部 AgentCallbackMessage 转换为 ACP 流事件。
+   *
+   * - 标准工具/文本/思考 → ExtendedSessionUpdate（session/update notification）
+   * - tool_confirm → JsonRpcRequestPayload（session/request_permission REQUEST）
+   * - ask_user → JsonRpcRequestPayload（client/AskUserQuestion REQUEST）
    */
-  public static convertToSessionUpdate(msg: AgentCallbackMessage, sessionId: string): ExtendedSessionUpdate | null {
+  public static convertToSessionUpdate(msg: AgentCallbackMessage, sessionId: string): AcpStreamEvent | null {
     if (msg.type === 'text' && msg.content) {
       return {
         sessionUpdate: 'agent_message_chunk',
@@ -328,40 +431,45 @@ export class CloudbaseAgentService {
       } as ExtendedSessionUpdate
     }
     if (msg.type === 'thinking' && msg.content) {
+      // ACP 1.0.0: thinking → agent_thought_chunk，content 必须是 ContentBlock
       return {
-        sessionUpdate: 'thinking',
-        content: msg.content,
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: msg.content },
       } as ExtendedSessionUpdate
     }
     if (msg.type === 'tool_use') {
+      const meta = flatMeta({
+        assistantMessageId: msg.assistantMessageId,
+        parentToolCallId: msg.parent_tool_use_id || undefined,
+      })
       return {
         sessionUpdate: 'tool_call',
         toolCallId: msg.id || '',
         title: msg.name || 'tool',
-        kind: 'function',
+        kind: toolKindFromName(msg.name || ''),
         status: 'in_progress',
-        input: msg.input,
-        assistantMessageId: msg.assistantMessageId,
-        // P7: 子代理产生的工具带 parentToolCallId
-        ...(msg.parent_tool_use_id ? { parentToolCallId: msg.parent_tool_use_id } : {}),
+        rawInput: msg.input,
+        ...(meta ? { _meta: meta } : {}),
       } as ExtendedSessionUpdate
     }
     if (msg.type === 'tool_input_update') {
+      const meta = flatMeta({ parentToolCallId: msg.parent_tool_use_id || undefined })
       return {
         sessionUpdate: 'tool_call_update',
         toolCallId: msg.id || '',
         status: 'in_progress',
-        input: msg.input,
-        ...(msg.parent_tool_use_id ? { parentToolCallId: msg.parent_tool_use_id } : {}),
+        rawInput: msg.input,
+        ...(meta ? { _meta: meta } : {}),
       } as ExtendedSessionUpdate
     }
     if (msg.type === 'tool_result') {
+      const meta = flatMeta({ parentToolCallId: msg.parent_tool_use_id || undefined })
       return {
         sessionUpdate: 'tool_call_update',
         toolCallId: msg.tool_use_id || '',
         status: msg.is_error ? 'failed' : 'completed',
-        result: msg.content,
-        ...(msg.parent_tool_use_id ? { parentToolCallId: msg.parent_tool_use_id } : {}),
+        rawOutput: msg.content,
+        ...(meta ? { _meta: meta } : {}),
       } as ExtendedSessionUpdate
     }
     if (msg.type === 'error') {
@@ -379,34 +487,51 @@ export class CloudbaseAgentService {
       } as ExtendedSessionUpdate
     }
     if (msg.type === 'ask_user') {
+      // client/AskUserQuestion JSON-RPC REQUEST.
+      const questions = (msg.input as any)?.questions || []
+      const toolCallId = msg.id || ''
       return {
-        sessionUpdate: 'ask_user',
-        toolCallId: msg.id || '',
-        assistantMessageId: msg.assistantMessageId || '',
-        questions: (msg.input as any)?.questions || [],
-      } as ExtendedSessionUpdate
+        jsonrpc: '2.0' as const,
+        id: CloudbaseAgentService.requestId(sessionId, toolCallId),
+        method: 'client/AskUserQuestion',
+        params: { questions },
+        _meta: {
+          sessionId,
+          toolCallId,
+          assistantMessageId: msg.assistantMessageId || '',
+        },
+      }
     }
     if (msg.type === 'tool_confirm') {
+      // session/request_permission JSON-RPC REQUEST (standard ACP client method).
       const input = (msg.input as Record<string, unknown>) || {}
       const toolName = msg.name || ''
-      // P2: ExitPlanMode 工具额外提取计划内容为 planContent，供前端 PlanModeCard 渲染
-      // Claude Agent SDK 的 ExitPlanMode input schema 是开放的，不同版本/模型下字段名不一，
-      // 这里仅做"能提取到字符串就注入"的最小处理；完整的多字段兜底在前端 plan-content.ts。
+      const toolCallId = msg.id || ''
       let planContent: string | undefined
       if (toolName === 'ExitPlanMode') {
         if (typeof input.plan === 'string' && input.plan.trim()) {
           planContent = input.plan as string
         }
-        // 其它字段形态由前端 extractPlanContent 统一处理，服务端不重复实现
       }
+      const toolCall: Record<string, unknown> = {
+        toolCallId,
+        title: toolName,
+        kind: toolKindFromName(toolName),
+        status: 'pending',
+        rawInput: input,
+      }
+      const meta = flatMeta({ assistantMessageId: msg.assistantMessageId, planContent })
+      if (meta) toolCall._meta = meta
       return {
-        sessionUpdate: 'tool_confirm',
-        toolCallId: msg.id || '',
-        assistantMessageId: msg.assistantMessageId || '',
-        toolName,
-        input,
-        ...(planContent !== undefined ? { planContent } : {}),
-      } as ExtendedSessionUpdate
+        jsonrpc: '2.0' as const,
+        id: CloudbaseAgentService.requestId(sessionId, toolCallId),
+        method: 'session/request_permission',
+        params: {
+          sessionId,
+          toolCall,
+          options: buildPermissionOptions(),
+        },
+      }
     }
     if (msg.type === 'result') {
       // result events are not streamed as session updates
@@ -466,8 +591,11 @@ export class CloudbaseAgentService {
    * 计算本轮的 turnId (assistantMessageId)
    */
   private async computeTurnId(conversationId: string, options: AgentOptions): Promise<string> {
-    const { askAnswers, toolConfirmation, envId, userId } = options
-    const isResumeFromInterrupt = (askAnswers && Object.keys(askAnswers).length > 0) || !!toolConfirmation
+    // 显式指定（RESPONSE 恢复场景，路由层已写好 tool_result 到该 record）
+    if (options.turnId) return options.turnId
+
+    const { toolConfirmation, clientToolResult, envId, userId } = options
+    const isResumeFromInterrupt = !!toolConfirmation || !!clientToolResult
 
     if (isResumeFromInterrupt && conversationId && envId) {
       const record = await persistenceService.getLatestRecordStatus(conversationId, userId || 'anonymous', envId)
@@ -492,8 +620,8 @@ export class CloudbaseAgentService {
       userCredentials,
       maxTurns = 500,
       cwd,
-      askAnswers,
       toolConfirmation,
+      clientToolResult,
       mode,
       permissionMode: requestedPermissionMode,
       imageBlocks,
@@ -607,93 +735,56 @@ export class CloudbaseAgentService {
     let hasHistory = false
     let sandboxMcpClient: Awaited<ReturnType<typeof createSandboxMcpClient>> | null = null
 
-    // askAnswers / toolConfirmation 场景标记为 resume
-    const isResumeFromInterrupt = (askAnswers && Object.keys(askAnswers).length > 0) || !!toolConfirmation
+    // toolConfirmation / clientToolResult 场景标记为 resume
+    const isResumeFromInterrupt = !!toolConfirmation || !!clientToolResult
 
     if (conversationId && userContext.envId) {
-      // Resume + askAnswers 场景：先直接更新 DB，再 restore 即可拿到最新数据
-      // 新结构：askAnswers[messageId] = { toolCallId, answers }，用 toolCallId 作为 callId
-      //
-      // 与 toolConfirmation 分支对齐:除了覆盖 output/status,还要补齐
-      // providerData.{messageId, model, agent, toolResult{content, renderer}}
-      // + 顶层 sessionId,让 restore 后的 JSONL 结构与 baseline 一致。
-      // 否则 SDK resume 看到残缺的 function_call_result 会重发 AskUserQuestion。
-      if (askAnswers && Object.keys(askAnswers).length > 0) {
-        for (const [recordId, { toolCallId, answers }] of Object.entries(askAnswers)) {
-          const text = Object.entries(answers)
-            .map(([key, value]) => ` · ${key} → ${value}`)
-            .join('\n')
-          const output = { type: 'text', text }
+      // Resume + clientToolResult: 客户端已执行完工具，写 tool_result 到 DB
+      if (clientToolResult) {
+        const contentStr =
+          typeof clientToolResult.content === 'string'
+            ? clientToolResult.content
+            : JSON.stringify(clientToolResult.content ?? '')
+        const output = { type: 'text' as const, text: contentStr }
 
-          // 从原 function_call.metadata.providerData 继承 messageId/model/agent
-          const toolCallInfo = await persistenceService.getToolCallInfo(conversationId, recordId, toolCallId)
-          const tcProviderData = (toolCallInfo?.metadata?.providerData ?? {}) as Record<string, unknown>
-          const inheritedProviderData: Record<string, unknown> = {}
-          if (tcProviderData.messageId) inheritedProviderData.messageId = tcProviderData.messageId
-          if (tcProviderData.model) inheritedProviderData.model = tcProviderData.model
-          if (tcProviderData.agent) inheritedProviderData.agent = tcProviderData.agent
+        // 从原 tool_call 继承 providerData（messageId/model/agent），保证 SDK resume 格式完整
+        const toolCallInfo = await persistenceService.getToolCallInfo(
+          conversationId,
+          assistantMessageId,
+          clientToolResult.toolCallId,
+        )
+        const tcProviderData = (toolCallInfo?.metadata?.providerData ?? {}) as Record<string, unknown>
+        const inheritedProviderData: Record<string, unknown> = {}
+        if (tcProviderData.messageId) inheritedProviderData.messageId = tcProviderData.messageId
+        if (tcProviderData.model) inheritedProviderData.model = tcProviderData.model
+        if (tcProviderData.agent) inheritedProviderData.agent = tcProviderData.agent
 
-          // baseline 里 toolResult.content 是 MCP 返回的 [{type:text,text:...}] 的 stringify
-          // AskUserQuestion 没经过真实 MCP 调用,手动构造等价结构。
-          const askPayload = [{ type: 'text', text }]
-          const contentStr = JSON.stringify(askPayload)
+        const extraMetadata = {
+          sessionId: conversationId,
+          providerData: {
+            ...inheritedProviderData,
+            toolResult: { content: contentStr, renderer: output },
+          },
+        }
 
-          const extraMetadata = {
-            sessionId: conversationId,
-            providerData: {
-              ...inheritedProviderData,
-              toolResult: {
-                content: contentStr,
-                renderer: { type: 'media' },
-              },
-            },
-          }
-
+        try {
           await persistenceService.updateToolResult(
             conversationId,
-            recordId,
-            toolCallId,
+            assistantMessageId,
+            clientToolResult.toolCallId,
             output,
-            'completed',
+            clientToolResult.isError ? 'error' : 'completed',
             extraMetadata,
           )
-          if (recordId !== assistantMessageId) {
-            // 次要 recordId 的 tool_call 可能在另一条 DB record,同样需要继承它自己的 providerData
-            const secondaryInfo = await persistenceService.getToolCallInfo(
-              conversationId,
-              assistantMessageId,
-              toolCallId,
-            )
-            const secondaryPd = (secondaryInfo?.metadata?.providerData ?? {}) as Record<string, unknown>
-            const secondaryInherited: Record<string, unknown> = {}
-            if (secondaryPd.messageId) secondaryInherited.messageId = secondaryPd.messageId
-            if (secondaryPd.model) secondaryInherited.model = secondaryPd.model
-            if (secondaryPd.agent) secondaryInherited.agent = secondaryPd.agent
-
-            await persistenceService.updateToolResult(
-              conversationId,
-              assistantMessageId,
-              toolCallId,
-              output,
-              'completed',
-              {
-                sessionId: conversationId,
-                providerData: {
-                  ...secondaryInherited,
-                  toolResult: {
-                    content: contentStr,
-                    renderer: { type: 'media' },
-                  },
-                },
-              },
-            )
-          }
+        } catch (e) {
+          console.warn('[CloudbaseAgentService] updateToolResult for clientToolResult failed:', (e as Error).message)
         }
+        await persistenceService.updateRecordStatus(assistantMessageId, 'done')
       }
 
       // Resume + toolConfirmation 场景:**真实**处理在 sandbox + sandboxMcpClient
       // ready 之后再做(见下方注释 "Resume toolConfirmation: 真实执行" 块)。
-      // 此处只在原位置做 askAnswers 这种不依赖 sandbox 的处理。
+      // 此处只在原位置做 clientToolResult 这种不依赖 sandbox 的处理。
       // 真正的 allow/allow_always/deny 写 DB result 推迟,避免 sandbox 未就绪时
       // 写入占位文本"已允许,请继续。"导致 SDK 误以为工具已执行,从而重新生成
       // 一个新 toolCallId 再次申请权限的死循环。

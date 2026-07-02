@@ -22,7 +22,8 @@ import type {
   ArtifactInfo,
 } from '../types/task-chat'
 import { planModeAtomFamily } from '../lib/atoms/plan-mode'
-import { AcpClient } from '../lib/acp'
+import { AcpClient, type AcpStreamEvent } from '../lib/acp'
+import type { JsonRpcRequestPayload } from '@coder/shared'
 import { applySessionUpdate, type AgentPhaseInfo } from './apply-session-update'
 
 /** Agent 执行阶段的空闲态;Hook 初始化与 turn 结束时复位用 */
@@ -188,11 +189,17 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
   // SSE stream processing
   // ════════════════════════════════════════════════════════════════════
 
-  /** Dispatch a single SSE sessionUpdate event to the appropriate state setter. */
+  /** Dispatch a single SSE event (session update or JSON-RPC REQUEST) to the appropriate handler. */
   const applyStreamUpdate = useCallback(
-    (update: ExtendedSessionUpdate, assistantMsgId: string) => {
+    (update: AcpStreamEvent, assistantMsgId: string) => {
+      // JSON-RPC REQUEST: agent asks client to do something
+      if ('jsonrpc' in update && 'method' in update && 'id' in update) {
+        handleJsonRpcRequest(update as JsonRpcRequestPayload)
+        return
+      }
+      // session/update NOTIFICATION: standard flow
       applySessionUpdate({
-        update,
+        update: update as ExtendedSessionUpdate,
         assistantMsgId,
         taskId,
         phaseRef,
@@ -209,6 +216,57 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
       })
     },
     [clearQuestionState, setPlanMode, taskId],
+  )
+
+  /** Handle JSON-RPC REQUESTs from agent to client. */
+  const handleJsonRpcRequest = useCallback(
+    (req: JsonRpcRequestPayload) => {
+      switch (req.method) {
+        case 'session/request_permission': {
+          const tc = req.params.toolCall as Record<string, unknown> | undefined
+          const toolName = (tc?.title as string) || ''
+          // AskUserQuestion is NOT a permission request — the old code path via
+          // request_permission session update is deprecated. client/AskUserQuestion
+          // REQUESTs are handled separately in the default branch.
+          if (toolName === 'AskUserQuestion') break
+
+          phaseRef.current = 'waiting_for_interaction'
+          setIsSending(false)
+          setIsStreamingResponse(false)
+          setToolConfirm({
+            toolCallId: (tc?.toolCallId as string) || '',
+            assistantMessageId: (tc?._meta as any)?.assistantMessageId || '',
+            toolName,
+            input: (tc?.rawInput as Record<string, unknown>) || {},
+          })
+          // ExitPlanMode → update plan mode state
+          if (toolName === 'ExitPlanMode') {
+            const input = (tc?.rawInput as Record<string, unknown>) || {}
+            const planContent = typeof input.plan === 'string' ? input.plan : undefined
+            setPlanMode({
+              active: true,
+              planContent: planContent || null,
+              toolCallId: (tc?.toolCallId as string) || null,
+            })
+          }
+          break
+        }
+        default: {
+          // client/<ToolName>: dispatch by tool name
+          const toolName = req.method.startsWith('client/') ? req.method.slice('client/'.length) : req.method
+          if (toolName === 'AskUserQuestion') {
+            phaseRef.current = 'waiting_for_interaction'
+            setIsSending(false)
+            setIsStreamingResponse(false)
+          }
+          // Other client tools are handled by the tool_call part (already emitted
+          // as a session update before the REQUEST). The REQUEST signals "waiting
+          // for client execution", which holds the stream phase.
+          break
+        }
+      }
+    },
+    [setIsSending, setIsStreamingResponse, setPlanMode, setToolConfirm],
   )
 
   // ════════════════════════════════════════════════════════════════════
@@ -232,25 +290,51 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
   // ════════════════════════════════════════════════════════════════════
 
   /**
-   * 内部 helper：执行一次 session/prompt 流，统一负责 for-await 循环 + 错误提示 + finally 清理。
-   * 调用方只需准备 assistantMsgId 和 params（prompt/askAnswers/toolConfirmation/permissionMode），
-   * 不需要重复写 try/catch 模板。
+   * 内部 helper：执行一次 session/prompt 流，统一负责 for-await 循环 + 错误提示。
    */
   const runPromptStream = useCallback(
     async (assistantMsgId: string, params: Record<string, unknown>) => {
       try {
-        console.log('[runPromptStream] starting stream for', assistantMsgId)
+        console.log('[runPromptStream] starting for', assistantMsgId)
         for await (const update of acpClient.stream('session/prompt', params)) {
           applyStreamUpdate(update, assistantMsgId)
         }
-        console.log('[runPromptStream] stream completed normally')
+        console.log('[runPromptStream] completed')
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : 'Agent request failed'
-        console.error('[runPromptStream] stream error:', errMsg, err)
-        // Remove the empty agent placeholder message
+        console.error('[runPromptStream] error:', errMsg, err)
         setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
         toast.error(errMsg)
-        throw err // re-throw so callers (sendMessage etc.) can restore draft
+        throw err
+      }
+    },
+    [acpClient, applyStreamUpdate],
+  )
+
+  /**
+   * 内部 helper：发送 JSON-RPC RESPONSE 并消费恢复后的 SSE 流。
+   * 与 runPromptStream 同模式 —— 统一 for-await + 错误处理。
+   */
+  const runResponseStream = useCallback(
+    async (
+      assistantMsgId: string,
+      responseId: string,
+      result: unknown,
+      meta: { sessionId: string; toolCallId: string; assistantMessageId: string; method: string },
+      error?: { code?: number; message: string },
+    ) => {
+      try {
+        console.log('[runResponseStream] starting for', assistantMsgId, 'id=', responseId)
+        for await (const update of acpClient.sendResponse(responseId, result, meta, error)) {
+          applyStreamUpdate(update, assistantMsgId)
+        }
+        console.log('[runResponseStream] completed')
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : 'Agent response failed'
+        console.error('[runResponseStream] error:', errMsg, err)
+        setMessages((prev) => prev.filter((m) => m.id !== assistantMsgId))
+        toast.error(errMsg)
+        throw err
       }
     },
     [acpClient, applyStreamUpdate],
@@ -391,9 +475,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
       const answers: Record<string, string> = {}
       for (const question of askData.questions) {
         const answerValue = toolInputs[question.question] || toolAnswers[question.question]
-        // Key 约定: 使用 question.header（与 opencode AskUserQuestion custom tool 对齐，
-        // 后者通过 `data.answers[q.header]` 取值）。CodeBuddy SDK 也使用 header。
-        if (answerValue) answers[question.header] = answerValue
+        if (answerValue) answers[question.question] = answerValue
       }
 
       phaseRef.current = 'streaming'
@@ -412,19 +494,18 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
         }),
       )
 
-      // ACP 1.0.0 (OAK runtime): resume askUser via a tool_result prompt block.
-      // The content is the user's answer text. For multi-question forms we
-      // serialize the answers map; single-question (the common case) sends the
-      // answer value directly.
-      const answerValues = Object.values(answers)
-      const answerContent = answerValues.length === 1 ? answerValues[0] : JSON.stringify(answers)
+      // Send JSON-RPC RESPONSE to client/AskUserQuestion REQUEST.
+      // The RESPONSE itself returns the resumed agent's SSE stream — no separate session/prompt needed.
+      const answerContent = Object.entries(answers)
+        .map(([key, value]) => ` · ${key} → ${value}`)
+        .join('\n')
 
       try {
-        await runPromptStream(askData.assistantMessageId, {
+        await runResponseStream(askData.assistantMessageId, `${taskId}:${askData.toolCallId}`, answerContent, {
           sessionId: taskId,
-          prompt: [{ type: 'tool_result', tool_use_id: askData.toolCallId, content: answerContent }],
-          // @deprecated kept for old-runtime compatibility; OAK ignores it
-          askAnswers: { [askData.assistantMessageId]: { toolCallId: askData.toolCallId, answers } },
+          toolCallId: askData.toolCallId,
+          assistantMessageId: askData.assistantMessageId,
+          method: 'client/AskUserQuestion',
         })
       } finally {
         await exitStreaming()
@@ -436,7 +517,7 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
       exitStreaming,
       manualInputsByTool,
       questionAnswersByTool,
-      runPromptStream,
+      runResponseStream,
       taskId,
     ],
   )
@@ -477,27 +558,25 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
         }
       }
 
-      // ACP 1.0.0 (OAK runtime): resume via a permission_decision prompt block.
-      // action → decision mapping:
-      //   allow → 'allow', allow_always → 'allow_always',
-      //   deny / reject_and_exit_plan → 'reject'
-      // @deprecated old runtimes (HunyuanAgent/OpenCode) used
-      //   toolConfirmation: { interruptId, payload: { action } } — kept as fallback
       const decision = action === 'allow_always' ? 'allow_always' : action === 'allow' ? 'allow' : 'reject'
 
       try {
-        await runPromptStream(data.assistantMessageId, {
-          sessionId: taskId,
-          prompt: [{ type: 'permission_decision', tool_use_id: data.toolCallId, decision }],
-          // @deprecated kept for old-runtime compatibility; OAK ignores it
-          toolConfirmation: { interruptId: data.toolCallId, payload: { action } },
-          ...(nextPermissionMode ? { permissionMode: nextPermissionMode } : {}),
-        })
+        await runResponseStream(
+          data.assistantMessageId,
+          `${taskId}:${data.toolCallId}`,
+          { outcome: { outcome: 'selected' as const, optionId: decision } },
+          {
+            sessionId: taskId,
+            toolCallId: data.toolCallId,
+            assistantMessageId: data.assistantMessageId,
+            method: 'session/request_permission',
+          },
+        )
       } finally {
         await exitStreaming()
       }
     },
-    [enterStreaming, exitStreaming, runPromptStream, setPlanMode, taskId, toolConfirm],
+    [enterStreaming, exitStreaming, runResponseStream, setPlanMode, taskId, toolConfirm],
   )
 
   /** Reconnect to an ongoing agent stream after page refresh. */
@@ -530,6 +609,8 @@ export function useChatStream(taskId: string, options: UseChatStreamOptions = {}
   const loadHistoryPage = useCallback(
     async (params: { cursor?: string | null; limit?: number; sort?: 'ASC' | 'DESC' } = {}) => {
       for await (const update of acpClient.loadHistory(params)) {
+        // Only handle session updates (skip JSON-RPC REQUESTs in history replay)
+        if (!('sessionUpdate' in update)) continue
         if (update.sessionUpdate === 'history_page') {
           const messages = update.messages as TaskMessage[]
           setMessages(messages)

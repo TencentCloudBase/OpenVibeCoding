@@ -57,6 +57,10 @@ export class TaskLogger {
     await this.appendLog('command', message)
   }
 
+  /**
+   * 更新 task.progress（0-100）并可选追加一条 info 日志。
+   * 若注册了 ACP notifier，同步推送 task_progress 事件。
+   */
   async updateProgress(progress: number, message?: string) {
     try {
       if (message) {

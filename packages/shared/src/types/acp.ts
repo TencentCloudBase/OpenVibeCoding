@@ -7,7 +7,11 @@ import type {
   ToolCallUpdate,
   ToolCallStatusUpdate,
   AvailableCommandsUpdate,
+  RefMeta,
 } from './agent'
+
+// Re-export RefMeta for convenience
+export type { RefMeta }
 
 // Extended session update types for task/logging notifications
 export interface LogUpdate {
@@ -17,56 +21,21 @@ export interface LogUpdate {
   timestamp: number
 }
 
-/** @deprecated replaced by AgentThoughtChunkUpdate in agent.ts (ACP 1.0.0) */
+/**
+ * 任务进度上报（非标准扩展，与 log/agent_phase 同类）。
+ *
+ * 注意：进度百分比（progress）与 agent_thought_chunk（thinking 文本）语义不同，
+ */
 export interface TaskProgressUpdate {
   sessionUpdate: 'task_progress'
   progress: number
   status: 'pending' | 'processing' | 'completed' | 'error' | 'stopped'
 }
 
-/** @deprecated replaced by tool_call.locations in ACP 1.0.0 — will be removed next version */
-export interface FileChangeUpdate {
-  sessionUpdate: 'file_change'
-  filename: string
-  action: 'add' | 'modify' | 'delete'
-}
-
-/** @deprecated replaced by AgentThoughtChunkUpdate in agent.ts (ACP 1.0.0) */
-export interface ThinkingUpdate {
-  sessionUpdate: 'thinking'
-  content: string
-}
-
-export interface AskUserUpdate {
-  sessionUpdate: 'ask_user'
-  toolCallId: string
-  assistantMessageId: string
-  questions: Array<{
-    question: string
-    header: string
-    options: Array<{ label: string; description: string }>
-    multiSelect: boolean
-  }>
-}
-
-/** @deprecated replaced by RequestPermissionUpdate (ACP 1.0.0) */
-export interface ToolConfirmUpdate {
-  sessionUpdate: 'tool_confirm'
-  toolCallId: string
-  assistantMessageId: string
-  toolName: string
-  input: Record<string, unknown>
-  /**
-   * ExitPlanMode 工具专用：模型呈交的计划内容（Markdown 文本）。
-   * 其它工具此字段为空。前端用于在 PlanModeCard 中高亮渲染。
-   */
-  planContent?: string
-}
-
 /** ACP 1.0.0 standard — replaces ToolConfirmUpdate */
 export interface RequestPermissionUpdate {
   sessionUpdate: 'request_permission'
-  sessionId?: string
+  sessionId: string
   toolCall: {
     toolCallId: string
     title?: string | null
@@ -78,7 +47,7 @@ export interface RequestPermissionUpdate {
     name?: string
     kind: string
   }>
-  _meta?: { oak?: Record<string, unknown> }
+  _meta?: RefMeta
 }
 
 /** ACP 1.0.0 standard — token usage update */
@@ -183,10 +152,6 @@ export type ExtendedSessionUpdate =
   | BaseSessionUpdate
   | LogUpdate
   | TaskProgressUpdate
-  | FileChangeUpdate
-  | ThinkingUpdate
-  | AskUserUpdate
-  | ToolConfirmUpdate
   | RequestPermissionUpdate
   | ArtifactUpdate
   | HistoryPageUpdate
@@ -209,13 +174,76 @@ export type { PermissionAction, AgentPermissionMode } from './agent'
 
 export type AgentRunStatus = 'running' | 'completed' | 'error' | 'cancelled'
 
+/**
+ * JSON-RPC NOTIFICATION — session/update wrapped in full envelope.
+ *
+ * All non-REQUEST stream messages carry this shape on the wire:
+ * ``{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"x","update":{...}}}``
+ */
+export interface JsonRpcNotification {
+  jsonrpc: '2.0'
+  method: string
+  params: Record<string, unknown>
+}
+
+/**
+ * JSON-RPC REQUEST — agent asks the client to do something.
+ *
+ * id = `${sessionId}:${toolCallId}` (deterministic, no collision risk).
+ * Sent as a complete SSE data line (not wrapped in session/update).
+ */
+export interface JsonRpcRequestPayload {
+  jsonrpc: '2.0'
+  id: string
+  method: string
+  params: Record<string, unknown>
+  _meta?: Record<string, unknown>
+}
+
+/**
+ * Canonical on-wire message: either a notification or a request.
+ * Both carry the full JSON-RPC envelope.
+ *
+ * ExtendedSessionUpdate (bare payload) is the old format.
+ * Use {@link normalizeStreamEvent} to upgrade old data on read.
+ */
+export type AcpWireMessage = JsonRpcNotification | JsonRpcRequestPayload
+
+/**
+ * Normalize a stream event to the canonical {@link AcpWireMessage} format.
+ *
+ * Old data stored as bare {@link ExtendedSessionUpdate} (no JSON-RPC envelope)
+ * is upgraded by wrapping in a ``session/update`` notification. New data
+ * (already an envelope) passes through unchanged.
+ */
+export function normalizeStreamEvent(event: unknown, sessionId: string): AcpWireMessage {
+  const e = event as Record<string, unknown> | null | undefined
+  if (!e) {
+    return { jsonrpc: '2.0', method: 'session/update', params: { sessionId, update: {} } }
+  }
+  // Already a JSON-RPC envelope (notification or request)
+  if (e.jsonrpc === '2.0' && typeof e.method === 'string') {
+    if ('id' in e) {
+      return event as JsonRpcRequestPayload
+    }
+    return event as JsonRpcNotification
+  }
+  // Old format: bare ExtendedSessionUpdate → wrap in session/update notification
+  return {
+    jsonrpc: '2.0',
+    method: 'session/update',
+    params: { sessionId, update: event },
+  }
+}
+
 export interface StreamEvent {
   eventId: string
   conversationId: string
   turnId: string
   envId: string
   userId: string
-  event: ExtendedSessionUpdate
+  /** Canonical on-wire message (JSON-RPC envelope). Old bare payloads are normalized on read via {@link normalizeStreamEvent}. */
+  event: AcpWireMessage
   seq: number
   createTime: number
 }
