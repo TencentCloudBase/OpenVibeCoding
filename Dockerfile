@@ -13,6 +13,9 @@ COPY packages/web/package.json packages/web/
 COPY packages/server/package.json packages/server/
 COPY packages/shared/package.json packages/shared/
 COPY packages/dashboard/package.json packages/dashboard/
+COPY packages/chat-core/package.json packages/chat-core/
+COPY packages/chat-playground/package.json packages/chat-playground/
+COPY packages/open-agent-kernel/package.json packages/open-agent-kernel/
 
 # Install all dependencies
 RUN pnpm install --frozen-lockfile
