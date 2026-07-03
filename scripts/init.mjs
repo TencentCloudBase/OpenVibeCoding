@@ -478,6 +478,21 @@ async function runCloudbaseLogin() {
   })
 }
 
+/**
+ * 设置 cloudbase CLI 的全局默认环境，使后续所有 cloudbase 命令无需再显式指定环境。
+ * 设置失败不阻断流程——deploy 时仍会通过 -e 显式指定环境。
+ */
+async function setCloudbaseDefaultEnv(envId) {
+  if (!envId) return
+  log('正在设置 cloudbase 默认环境')
+  try {
+    execSync(`cloudbase env use ${envId}`, { stdio: 'pipe', encoding: 'utf-8' })
+    log('已设置 cloudbase 默认环境', 'success')
+  } catch (e) {
+    log(`设置默认环境失败：${e.stderr?.trim() || e.message || e}（deploy 时将显式指定环境）`, 'warn')
+  }
+}
+
 // In-memory store for TCB credentials (not persisted to .env.local)
 const tcbConfig = {
   secretId: '',
@@ -611,6 +626,7 @@ async function setupCloudbaseConfig() {
     if (useExisting) {
       tcbConfig.envId = existingEnvId
       tcbConfig.provisionMode = serverEnv['TCB_PROVISION_MODE'] || 'shared'
+      await setCloudbaseDefaultEnv(existingEnvId)
       return true
     }
   }
@@ -673,6 +689,7 @@ async function setupCloudbaseConfig() {
 
   tcbConfig.envId = selectedEnvId
   log(`TCB_ENV_ID 已记录：${selectedEnvId}`, 'success')
+  await setCloudbaseDefaultEnv(selectedEnvId)
 
   // ── TCB_PROVISION_MODE 选择 ───────────────────────────────────
   console.log('')
@@ -1256,7 +1273,7 @@ async function setupSandboxImage() {
   try {
     log(`部署沙箱镜像到云托管服务：${SERVICE_NAME}`)
     execSync(
-      `cloudbase cloudrun deploy -s ${SERVICE_NAME} --port 9000 --force --source .`,
+      `cloudbase cloudrun deploy  -e ${envId} -s ${SERVICE_NAME} --port 9000 --force --source .`,
       { stdio: 'inherit', cwd: SOURCE_DIR }
     )
     log('部署命令已提交，等待云端 CD 构建...', 'success')
