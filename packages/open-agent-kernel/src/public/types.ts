@@ -8,6 +8,8 @@
 
 import type { McpServerConfig as SdkMcpServerConfig } from '@anthropic-ai/claude-agent-sdk'
 import type { z } from 'zod'
+import type { AcpSessionUpdate, AcpStreamMessage } from '../acp/index.js'
+import type { StreamAdapter } from '../adapters/index.js'
 
 /**
  * 平台凭证，用于初始化 CloudBase 管理端/服务端 SDK。
@@ -55,18 +57,34 @@ export interface SandboxConfig {
   /**
    * 是否启用默认 sandbox。
    *
-   * - `true`：使用内置默认 provider（当前为 `ags-stateful`），并补齐默认 runtime/scope
+   * - `true`：使用内置默认 provider（见 `provider` 字段，默认 `ags-stateful`），并补齐默认 runtime/scope
    * - `false` / 未配置 sandbox：不启用 sandbox
    *
    * 如果显式传了 `runtime`，即使不传 `enabled` 也会启用 sandbox。
    */
   enabled?: boolean
   /**
-   * 默认 sandbox 产品类型。当前仅内置 `ags-stateful`。
+   * 沙箱产品类型。当前内置：
+   * - `local`（默认）：OAK 宿主进程本地 FS + Claude SDK 内置工具（过渡方案，AGS 产品化未就绪时的默认）
+   * - `ags-stateful`：腾讯云 AGS Agent Sandbox 产品 + TRW 远程数据面（需要 CLOUDBASE_APIKEY）
+   *
+   * 选 `local` 时：
+   *   - SDK 内置工具(Bash/Read/Write/Edit/Glob/Grep)默认开启(local provider 即用本地 FS,
+   *     无需经 mcp__sandbox__* HTTP 数据面)
+   *   - 不暴露 HTTP 数据面 —— `SandboxInstance.request()` 会抛 SandboxError
+   *   - cwd 跨请求持久化由 kernel 自动驱动(在 send 边界做 tar.gz 单包 COS 同步)
    *
    * 未来可扩展到其他 CloudBase/第三方 sandbox 产品；高级用户也可直接传 `runtime`。
    */
-  provider?: 'ags-stateful'
+  provider?: 'local' | 'ags-stateful'
+  /**
+   * local provider 的工作区根目录。未设置时按 session 上下文推导：
+   * `OAK_WORKSPACE_ROOT` 或 `os.tmpdir()/oak-workspaces/{envId}/{userId}/{conversationId}`。
+   *
+   * 与 `AgentConfig.cwd` 必须一致(若两者都设置)——local 模式下 SDK 内置工具以 cwd
+   * 为工作目录,COS 同步同一目录树。
+   */
+  workspaceRoot?: string
   /**
    * 默认 AGS 数据面认证 JWT。
    *
@@ -234,7 +252,7 @@ export type McpServerConfig = SdkMcpServerConfig
 // ============================================================
 
 /**
- * 审批决策（用户对 tool_approval_required 的响应）。
+ * 审批决策（用户对 ACP request_permission 的响应）。
  *
  * 这是协议无关的超集——业务侧的 ACP / AG-UI / 自家 SSE 等协议只需要把
  * 自己的决策枚举映射成下面的字段即可。
@@ -450,6 +468,18 @@ export interface AgentConfig {
   model: ModelInput
   systemPrompt?: string
 
+  /**
+   * 是否启用流式增量输出。默认 true。
+   *
+   * 启用时 SDK 透传 includePartialMessages,事件流发出增量 message_delta(逐字),
+   * 最终再发一个 message_complete(完整文本)。
+   * 关闭时不发增量,assistant 文本一次性作为 message_delta + message_complete 发出。
+   *
+   * 注:部署形态若在网关层缓冲整个响应(如 SCF web-function 只投递最后一次 write),
+   * 即使开了流式,前端也要等整轮结束才一次性收到 —— 那是网关行为,与本开关无关。
+   */
+  stream?: boolean
+
   // ── 能力 ────────────────────────────────────────
   tools?: ToolDefinition<any, any>[]
   /**
@@ -539,6 +569,12 @@ export interface AgentConfig {
 
   // ── 钩子 ────────────────────────────────────────
   hooks?: AgentHooks
+
+  /**
+   * @internal 高级覆盖：未传时使用内置 AcpStreamAdapter。
+   * 常规用户无需声明此字段，session.send() 默认输出 ACP session/update。
+   */
+  streamAdapter?: StreamAdapter<AcpStreamMessage>
 }
 
 /**
@@ -695,49 +731,27 @@ export interface Session {
    * 发送用户消息，返回事件流。
    * 字符串糖：等价于 { type: 'message', content: input }
    */
-  send(input: string | SessionInput): AsyncIterable<SessionEvent>
+  send(input: string | SessionInput): AsyncIterable<AcpStreamMessage>
 
   /**
    * 响应工具审批（PR #7.0）。
    *
-   * 当事件流给出 `tool_approval_required` 后，业务收集到用户决策（allow/deny/scope/...）
-   * 调本方法注入决策。kernel 把决策写入 PermissionStore，然后内部 resume 一次 SDK 运行：
-   * Hook 再次触发时从 store 读到决策并放行 / 拒绝，agent 继续往下跑。
+   * 当 ACP 更新流给出 `session/request_permission` JSON-RPC REQUEST 后，业务收集到
+   * 用户决策（allow/deny/scope/...）调本方法注入决策。kernel 把决策写入 PermissionStore，
+   * 然后内部 resume 一次 SDK 运行。
    *
-   * 返回的事件流是"决策注入后"的运行流（可能包含 message_delta / tool_call /
-   * tool_result / 再次的 tool_approval_required / session_idle 等）。
-   *
-   * 注意：调用方应确保同一 toolUseId 不被并发响应；重复响应会用最后一次为准。
+   * 返回的事件流是"决策注入后"的 ACP 流（AcpStreamMessage 联合：标准 session updates +
+   * 可能的 JSON-RPC REQUESTs）。
    */
-  respondApproval(opts: { toolUseId: string; decision: ApprovalDecision }): AsyncIterable<SessionEvent>
+  respondApproval(opts: { toolUseId: string; decision: ApprovalDecision }): AsyncIterable<AcpStreamMessage>
 
   /**
    * PR #7.1: 注入客户端工具结果并 resume agent 运行。
    *
-   * 配套 'tool_use_required' 事件使用：业务侧在客户端执行完 AgentConfig.tools[]
-   * 中声明的工具后，调本方法把结果回灌给 kernel：
-   *   1. kernel 把结果写入内部 client-tool store
-   *   2. 起一轮 SDK query（resume）→ 模型重发同名工具 → PreToolUse hook 这次
-   *      把结果通过 updatedInput 注入 → 包装的 MCP stub 直接返回它，写一条
-   *      正常（非 error）的 tool_result 进 transcript。
-   *
-   * 返回的事件流是"结果注入后"的运行流（可能包含 message_delta / tool_call /
-   * tool_result / session_idle 等）。
+   * 客户端执行完 `client/<ToolName>` REQUEST 对应的工具后，调本方法把结果回灌给 kernel。
+   * 返回的事件流是"结果注入后"的 ACP 流。
    */
-  respondToolUse(opts: { toolUseId: string; output: unknown; isError?: boolean }): AsyncIterable<SessionEvent>
-
-  /**
-   * 注入用户对 askUser 提问的回答并 resume agent 运行。
-   *
-   * 配套 'ask_user_required' 事件使用：业务侧收集到用户回答后，
-   * 调本方法把回答回灌给 kernel：
-   *   1. kernel 把回答写入内部 askUser store
-   *   2. 起一轮 SDK query（resume）→ 模型重发 askUser 工具 → PreToolUse hook 这次
-   *      从 store 读到回答 → 放行 → MCP stub 返回回答作为 tool_result
-   *
-   * 返回的事件流是"回答注入后"的运行流。
-   */
-  respondAskUser(opts: { toolUseId: string; answer: string }): AsyncIterable<SessionEvent>
+  respondToolUse(opts: { toolUseId: string; output: unknown; isError?: boolean }): AsyncIterable<AcpStreamMessage>
 
   /** 拉取历史消息 */
   getHistory(opts?: { limit?: number; before?: number }): Promise<MessageRecord[]>
@@ -801,103 +815,6 @@ export type AttachmentInput =
   | { type: 'file'; source: string | Uint8Array; mimeType?: string }
   | { type: 'url'; url: string; mimeType?: string }
   | { type: 'cos'; fileId: string; mimeType?: string }
-
-// ============================================================
-// Session 事件流
-// ============================================================
-
-export type SessionEvent =
-  | { type: 'message_delta'; text: string }
-  | { type: 'message_complete'; text: string }
-  | {
-      type: 'tool_call'
-      toolUseId: string
-      toolName: string
-      input: unknown
-    }
-  | {
-      type: 'tool_result'
-      toolUseId: string
-      toolName: string
-      output: unknown
-      isError: boolean
-    }
-  | {
-      /**
-       * 工具调用需要用户审批（PR #7.0）。
-       *
-       * 收到此事件后，本轮 SDK 运行会自然结束（紧跟 `session_idle.requires_action`）。
-       * 业务收集到决策后调 `session.respondApproval({ toolUseId, decision })` 继续。
-       *
-       * 协议无关字段：客户端协议（ACP/AG-UI/SSE）适配只需把这些字段映射到自家协议。
-       */
-      type: 'tool_approval_required'
-      toolUseId: string
-      toolName: string
-      input: unknown
-      /**
-       * 给客户端 UI 的辅助提示，**协议无关**。
-       * - displayName：UI 按钮 / 标题用的短名
-       * - description：长描述（"will read files in ~/Downloads"）
-       * - suggestedScopes：UI 可呈现的"作用范围"选项（once/session/forever）
-       */
-      hints?: {
-        displayName?: string
-        description?: string
-        suggestedScopes?: Array<'once' | 'session' | 'forever'>
-      }
-      /**
-       * Resume token（业务可不持久化，conversationId + toolUseId 就够 resumeApproval；
-       * 此字段留作未来跨进程 RunState 持久化的扩展点）。
-       */
-      runStateJson: string
-    }
-  | {
-      /**
-       * 客户端工具需要客户端执行（PR #7.1）。
-       *
-       * 当模型调用 AgentConfig.tools[] 中声明的"client-side custom tool"时，
-       * kernel 不会真的调 execute()，而是让 PreToolUse hook 拦截：
-       *   1. 写一个 pending entry 到内部 client-tool store
-       *   2. 用一个 sentinel deny 让 SDK 终止本轮
-       *   3. 翻译层识别 sentinel 后吐出本事件
-       *
-       * 业务侧收到本事件 → 在客户端实际执行工具 → 调
-       * `session.respondToolUse({ toolUseId, output, isError? })` 注入结果，
-       * kernel 会 resume 一轮 SDK 让模型重发同名工具，hook 这次会注入结果，
-       * 模型基于真实结果继续。
-       */
-      type: 'tool_use_required'
-      toolUseId: string
-      toolName: string
-      input: unknown
-    }
-  | {
-      /**
-       * Agent 主动向用户提问。
-       *
-       * 当模型调用内置 askUser 工具时，kernel 用 sentinel 中断 turn，
-       * 翻译层识别后吐出本事件。业务侧收集用户回答后调
-       * `session.respondAskUser({ toolUseId, answer })` 注入回答并 resume。
-       *
-       * 与 codebuddy 的区别：codebuddy 的 AskUser hang 住进程；
-       * OAK 的 askUser 是流终止+resume，不阻塞、支持分布式。
-       */
-      type: 'ask_user_required'
-      toolUseId: string
-      question: string
-      options?: string[]
-    }
-  | {
-      type: 'handoff'
-      fromAgent: string
-      toAgent: string
-    }
-  | {
-      type: 'session_idle'
-      reason: 'completed' | 'requires_action' | 'aborted' | 'error'
-    }
-  | { type: 'error'; error: Error }
 
 // ============================================================
 // 历史消息记录（PR #4.6 扩展）

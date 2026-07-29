@@ -482,8 +482,26 @@ function resolveAskUserQuestion(
   if (part.toolName !== 'AskUserQuestion' || !isPending || !part.toolCallId) return undefined
   try {
     const args = typeof part.input === 'string' ? JSON.parse(part.input) : part.input
-    const questions = args?.questions
-    if (!Array.isArray(questions) || questions.length === 0) return undefined
+    // 两种 input 格式：
+    //   1. 旧/opencode: { questions: [{ question, header, options:[{label,description}], multiSelect }] }
+    //   2. OAK kernel:  { question: string, options?: string[] }（单问题，options 为字符串数组）
+    let questions = args?.questions
+    if (!Array.isArray(questions) || questions.length === 0) {
+      // 尝试 OAK 单问题格式
+      if (args && typeof args.question === 'string') {
+        const opts: string[] = Array.isArray(args.options) ? args.options : []
+        questions = [
+          {
+            question: args.question,
+            header: 'Agent asks a question',
+            options: opts.map((o: string) => ({ label: o, description: '' })),
+            multiSelect: false,
+          },
+        ]
+      } else {
+        return undefined
+      }
+    }
     return {
       toolCallId: part.toolCallId,
       assistantMessageId: part.assistantMessageId || message.id,

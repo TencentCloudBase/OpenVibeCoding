@@ -9,7 +9,7 @@
  *    调用方不再需要每次传 sessionId。
  * 2. **非流式方法**（request/initializeSession/cancel）带 5xx 自动重试；
  *    `request` 还在 409 时尝试 reconnect 一次原请求（最多 2 次）。
- * 3. **流式方法**（stream/observe）返回 `AsyncIterable<ExtendedSessionUpdate>`，
+ * 3. **流式方法**（stream/observe）返回 `AsyncIterable<AcpStreamEvent>`，
  *    不做自动重试（流中断后的状态恢复由 hook 的 reconnectToStream 负责）。
  * 4. **错误统一抛 AcpStreamError**：SSE 帧里的 `{ error: {...} }` 会作为异常抛出，
  *    让 hook 用单个 try/catch 覆盖传输错误 + 协议错误。
@@ -22,6 +22,7 @@
  */
 import type {
   ExtendedSessionUpdate,
+  JsonRpcRequestPayload,
   SessionDeleteParams,
   SessionDeleteResult,
   SessionListParams,
@@ -30,6 +31,12 @@ import type {
   SessionNewResult,
 } from '@coder/shared'
 import { fetchWithRetry } from './fetch-with-retry'
+
+/**
+ * Union type yielded by the SSE stream: either a session/update notification
+ * payload or a JSON-RPC REQUEST from the agent to the client.
+ */
+export type AcpStreamEvent = ExtendedSessionUpdate | JsonRpcRequestPayload
 
 export interface AcpClientOptions {
   /** 非流式 JSON-RPC 基地址，如 `/api/agent/acp` */
@@ -43,6 +50,12 @@ export interface AcpClientOptions {
    * 同名 header 会覆盖默认值；返回值变化无需重建 client。
    */
   getHeaders?: () => Record<string, string> | undefined
+  /**
+   * 是否在请求头里带 `X-Task-Id`（默认 true）。
+   * 同源 web 主应用需要它配合 server 的 task 级资源解析；
+   * playground 等跨域场景可关闭，taskId 走 body/query 传递即可。
+   */
+  sendTaskIdHeader?: boolean
 }
 
 /**
@@ -70,6 +83,7 @@ export class AcpClient {
   private readonly observeBaseUrl: string
   private readonly taskId: string
   private readonly getExtraHeaders?: () => Record<string, string> | undefined
+  private readonly sendTaskIdHeader: boolean
 
   /** 单调递增的 JSON-RPC id（避免 Date.now() 同毫秒冲突） */
   private nextId = 1
@@ -85,17 +99,21 @@ export class AcpClient {
     this.observeBaseUrl = options.observeBaseUrl ?? options.baseUrl.replace(/\/acp$/, '/observe')
     this.taskId = options.taskId
     this.getExtraHeaders = options.getHeaders
+    this.sendTaskIdHeader = options.sendTaskIdHeader ?? true
   }
 
   /**
-   * 合并请求 headers：默认 Content-Type + X-Task-Id（如有），叠加 getHeaders() 返回值。
-   * 调用方传 `withTaskId=false` 用于 GET observe 等不需要 X-Task-Id 的请求。
+   * 合并请求 headers：默认 Content-Type，按需附加 X-Task-Id，叠加 getHeaders() 返回值。
+   *
+   * `sendTaskIdHeader=true`（默认）时 POST 请求带 `X-Task-Id`，配合同源 server
+   * 的 task 级资源解析。playground 等跨域场景关闭后，taskId 由 body/query 携带。
+   * `withTaskId=false` 用于 GET observe 等不需要 taskId 的请求（始终不发）。
    */
   private buildHeaders(opts: { withTaskId?: boolean; jsonBody?: boolean } = {}): Record<string, string> {
     const { withTaskId = true, jsonBody = true } = opts
     const headers: Record<string, string> = {}
     if (jsonBody) headers['Content-Type'] = 'application/json'
-    if (withTaskId && this.taskId) headers['X-Task-Id'] = this.taskId
+    if (withTaskId && this.sendTaskIdHeader && this.taskId) headers['X-Task-Id'] = this.taskId
     const extra = this.getExtraHeaders?.()
     if (extra) Object.assign(headers, extra)
     return headers
@@ -184,7 +202,7 @@ export class AcpClient {
    *
    * 不做自动重试（流中断后的恢复由调用方的 reconnectToStream 负责）。
    */
-  async *stream(method: 'session/prompt', params: unknown, signal?: AbortSignal): AsyncIterable<ExtendedSessionUpdate> {
+  async *stream(method: 'session/prompt', params: unknown, signal?: AbortSignal): AsyncIterable<AcpStreamEvent> {
     const body = this.buildRequestBody(method, params)
     const res = await fetch(withIntentQuery(this.baseUrl, method), {
       method: 'POST',
@@ -229,7 +247,7 @@ export class AcpClient {
    *
    * 契约同 `stream()`：AsyncIterable，正常结束 return，错误 throw。
    */
-  async *observe(turnId: string, signal?: AbortSignal): AsyncIterable<ExtendedSessionUpdate> {
+  async *observe(turnId: string, signal?: AbortSignal): AsyncIterable<AcpStreamEvent> {
     const url = withIntentQuery(`${this.observeBaseUrl}/${this.taskId}?turnId=${encodeURIComponent(turnId)}`, 'observe')
     const res = await fetch(url, {
       credentials: 'include',
@@ -263,7 +281,7 @@ export class AcpClient {
    */
   async *loadHistory(
     params: { cursor?: string | null; limit?: number; sort?: 'ASC' | 'DESC' } = {},
-  ): AsyncIterable<ExtendedSessionUpdate> {
+  ): AsyncIterable<AcpStreamEvent> {
     const body = this.buildRequestBody('session/load', {
       sessionId: this.taskId,
       replay: true,
@@ -304,6 +322,59 @@ export class AcpClient {
    */
   async cancel(): Promise<void> {
     await this.request('session/cancel', { sessionId: this.taskId })
+  }
+
+  /**
+   * Send a JSON-RPC RESPONSE to a pending REQUEST from the agent,
+   * and receive the resumed agent's SSE stream.
+   *
+   * `_meta` carries routing fields (sessionId, toolCallId, assistantMessageId)
+   * so the server can match the RESPONSE without relying on in-memory state.
+   */
+  /**
+   * `result` is the tool output directly (like `fs/read_text_file` returns file content).
+   * Errors use the JSON-RPC `error` field instead of `result`.
+   */
+  async *sendResponse(
+    responseId: string,
+    result: unknown,
+    meta?: { sessionId?: string; toolCallId?: string; assistantMessageId?: string; method?: string },
+    error?: { code?: number; message: string },
+  ): AsyncIterable<AcpStreamEvent> {
+    const body: Record<string, unknown> = { jsonrpc: '2.0', id: responseId }
+    if (error) {
+      body.error = error
+    } else {
+      body.result = result ?? null
+    }
+    if (meta) body._meta = meta
+
+    const res = await fetch(withIntentQuery(this.baseUrl, 'response'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.buildHeaders(),
+      body: JSON.stringify(body),
+    })
+
+    if (!res.ok || !res.body) {
+      const msg = await extractErrorMessage(res)
+      throw new AcpStreamError(msg || `ACP response failed: ${res.status} ${res.statusText}`, 'response')
+    }
+
+    const contentType = res.headers.get('content-type') || ''
+    if (!contentType.includes('text/event-stream')) {
+      try {
+        const json = (await res.json()) as JsonRpcResponse
+        if (json.error) {
+          throw new AcpStreamError(json.error.message || 'ACP response rejected', 'response')
+        }
+      } catch (e) {
+        if (e instanceof AcpStreamError) throw e
+      }
+      return
+    }
+
+    yield* parseSseBody(res, 'response')
   }
 
   /**
@@ -459,16 +530,20 @@ export class AcpClient {
 // ────────────────────────────────────────────────────────────────────
 
 /**
- * 解析 SSE response.body，yield 每个 `session/update` 的 update 字段。
+ * Parse SSE response.body, yield AcpStreamEvent (ExtendedSessionUpdate | JsonRpcRequestPayload).
  *
- * SSE 格式契约（与当前 readSSEStream 一致）：
- * - 每行 `data: {...}\n`
- * - `data: [DONE]` 表示正常结束
- * - `{... error: {message}}` 帧抛 AcpStreamError
- * - 其余帧若 `method === 'session/update'`，yield `params.update`
- * - 解析失败的行静默跳过
+ * SSE wire format:
+ * - ``data: <json>\n\n`` for each message
+ * - ``data: [DONE]`` signals normal end
+ * - ``{... error: {message}}`` frames throw AcpStreamError
+ *
+ * Message types:
+ * - JSON-RPC REQUEST:  has ``id`` + ``method`` (e.g. session/request_permission,
+ *   client/AskUserQuestion) → yield the full message as JsonRpcRequestPayload
+ * - JSON-RPC NOTIFICATION: has ``method`` without ``id`` → if
+ *   ``method === 'session/update'``, yield ``params.update`` as ExtendedSessionUpdate
  */
-async function* parseSseBody(res: Response, rpcMethod: string): AsyncIterable<ExtendedSessionUpdate> {
+async function* parseSseBody(res: Response, rpcMethod: string): AsyncIterable<AcpStreamEvent> {
   if (!res.body) return
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -487,7 +562,11 @@ async function* parseSseBody(res: Response, rpcMethod: string): AsyncIterable<Ex
         if (!line.startsWith('data: ')) continue
         if (line.trim() === 'data: [DONE]') continue
 
-        let event: JsonRpcResponse & { method?: string; params?: { update?: ExtendedSessionUpdate } }
+        let event: JsonRpcResponse & {
+          method?: string
+          id?: number | string
+          params?: { update?: ExtendedSessionUpdate }
+        }
         try {
           event = JSON.parse(line.slice(6))
         } catch {
@@ -497,6 +576,14 @@ async function* parseSseBody(res: Response, rpcMethod: string): AsyncIterable<Ex
         if (event.error) {
           throw new AcpStreamError(event.error.message || 'ACP stream error', rpcMethod)
         }
+
+        // JSON-RPC REQUEST: has id + method → agent asks client to do something
+        if (event.id !== undefined && event.id !== null && typeof event.method === 'string') {
+          yield event as unknown as JsonRpcRequestPayload
+          continue
+        }
+
+        // JSON-RPC NOTIFICATION: session/update → yield the update payload
         if (event.method === 'session/update' && event.params?.update) {
           yield event.params.update
         }

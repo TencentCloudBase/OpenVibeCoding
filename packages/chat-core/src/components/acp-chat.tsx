@@ -14,6 +14,8 @@ export interface AcpChatProps {
   acpObserveBaseUrl?: string
   /** 每次 ACP 请求附加的 headers（如第三方 server 的 Bearer token）。 */
   getAcpHeaders?: () => Record<string, string> | undefined
+  /** 是否带 X-Task-Id header，默认 true。跨域 playground 可关闭。 */
+  sendTaskIdHeader?: boolean
 }
 
 /**
@@ -23,7 +25,14 @@ export interface AcpChatProps {
  * 不包含 web 产品层的部署产物、PR 评论、Actions tab、预览等能力。
  * Transcript 样式复用 TaskChat 已定稿的 ChatTranscript。
  */
-export function AcpChat({ sessionId, onStreamComplete, acpBaseUrl, acpObserveBaseUrl, getAcpHeaders }: AcpChatProps) {
+export function AcpChat({
+  sessionId,
+  onStreamComplete,
+  acpBaseUrl,
+  acpObserveBaseUrl,
+  getAcpHeaders,
+  sendTaskIdHeader,
+}: AcpChatProps) {
   const [draft, setDraft] = useState('')
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [currentTime, setCurrentTime] = useState(Date.now())
@@ -42,6 +51,7 @@ export function AcpChat({ sessionId, onStreamComplete, acpBaseUrl, acpObserveBas
     acpBaseUrl,
     acpObserveBaseUrl,
     getAcpHeaders,
+    sendTaskIdHeader,
   })
 
   const loadHistory = useCallback(async () => {

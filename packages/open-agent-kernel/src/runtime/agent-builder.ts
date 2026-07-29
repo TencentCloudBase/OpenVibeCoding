@@ -18,7 +18,7 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import { mkdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, realpathSync } from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import type {
@@ -35,13 +35,14 @@ import {
   OAK_CLIENT_TOOL_RESULT_KEY,
   type PreToolUseHookLocalState,
   type ClientToolResultStore,
-  type AskUserStore,
 } from '../permissions/hooks.js'
 import {
   ClaudeHomeSyncEngine,
   CloudBaseCosClaudeHomeStore,
+  createWorkspaceCwdArchiveEngine,
   deriveAgentConfigDir,
   deriveClaudeConfigDir,
+  WorkspaceCwdArchiveEngine,
 } from '../claude-home/index.js'
 import { ConfigError, InvalidConfigError } from '../internal/errors.js'
 import type { AgentConfig, SandboxConfig, ToolDefinition, UserMemoryConfig } from '../public/types.js'
@@ -84,6 +85,14 @@ export interface BuiltClaudeQueryParams {
    * 在 query 结束后(尤其 0 消息时)读取它,把子进程 init/退出原因打到日志。
    */
   debugFilePath?: string
+  /**
+   * workspacePersist 启用时返回:cwd 工作目录持久化引擎(无沙箱场景)。
+   * 调用方(create-agent)挂到 send 两端:
+   *   send-start → cwdPersistEngine.pullOnSendStart()
+   *   send-end   → cwdPersistEngine.pushOnSendEnd()
+   * 与沙箱 snapshotEngine 互斥(启用沙箱时本字段为 undefined)。
+   */
+  cwdPersistEngine?: WorkspaceCwdArchiveEngine
 }
 
 /**
@@ -104,6 +113,14 @@ export function buildClaudeQueryOptions(
   config: AgentConfig,
   extra: {
     sandboxInstance?: SandboxInstance
+    /**
+     * 沙箱模式 hint,决定内置工具默认开关 + cwdPersistEngine 是否互斥。
+     *   - 'local'  : sandbox.provider='local'(宿主进程本地 FS + SDK 内置工具)
+     *   - 'remote' : AGS/TRW 等远程沙箱(有 HTTP 数据面 + 自带 workspaceSnapshot)
+     *   - 'none'   : 无沙箱(纯对话,或 workspacePersist 独立持久化)
+     * 未传时按 sandboxInstance 推断:有 instance → 'remote',否则 'none'。
+     */
+    sandboxMode?: SandboxMode
     extraMcpServers?: Record<string, SdkMcpServerConfig>
     conversationId?: string
     hookLocalState?: PreToolUseHookLocalState
@@ -111,10 +128,10 @@ export function buildClaudeQueryOptions(
     clientToolNames?: ReadonlySet<string>
     /** PR #7.1: store for client-supplied tool results (in-memory by default). */
     clientToolStore?: import('../permissions/hooks.js').ClientToolResultStore
-    /** askUser: store for pending askUser entries. */
-    askUserStore?: AskUserStore
     /** Task 9 for userMemory:agent.startSession({ userId }) 透传过来 */
     userId?: string
+    /** workspacePersist:cwd 持久化的 per-session key 命名空间。 */
+    sessionId?: string
   } = {},
 ): BuiltClaudeQueryParams {
   const credential = resolveCredential({
@@ -178,19 +195,6 @@ export function buildClaudeQueryOptions(
   // 哪里可写、session 目录怎么隔离/GC)。需要可写、隔离的工作目录时,由调用方(agent
   // runtime)显式传 config.cwd(它才掌握运行环境)。
   const effectiveCwd = userCwd ?? process.cwd()
-
-  // ── cwd 可写性检查(serverless 只读 FS)─────────────────────────────
-  // claude CLI 在 cwd 里会做事(git 检测、写临时文件、--add-dir 等)。cwd 不可写会让
-  // 子进程在 init 阶段静默失败、exit 0 却 0 输出。这里只做"诚实报告":不可写就 warn
-  // 明确指出原因 + 让调用方传可写 config.cwd,但不偷偷换路径(换路径也是越权)。
-  if (probeWritable(effectiveCwd) !== true) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[oak] cwd '${effectiveCwd}' is not writable (serverless read-only FS?). ` +
-        `The claude subprocess may exit silently with 0 output. ` +
-        `Pass a writable AgentConfig.cwd from the caller (it owns the runtime FS layout).`,
-    )
-  }
 
   // settingSources 启用条件:任一资产层需要文件加载
   //   - 用户传 cwd → 'project'(skills、项目 CLAUDE.md)
@@ -298,16 +302,25 @@ export function buildClaudeQueryOptions(
   //   - 上述任一并提供了 conversationId + hookLocalState（runtime 必须配齐）
   const hasClientTools = Boolean(config.tools && config.tools.length > 0)
   const hasApproval = config.permissions !== undefined && config.permissions.requireApproval !== undefined
-  const hasAskUser = Boolean(extra.askUserStore)
+  // askUser 现在复用 clientToolStore(askUser 是 clientTool 的特化,toolName='askUser')。
+  // clientToolStore 在 create-agent 里始终注入(askUser 是内置工具),所以 hasAskUser 始终 true。
+  const hasAskUser = Boolean(extra.clientToolStore)
   const userHasApprovalConfig =
     (hasApproval || hasClientTools || hasAskUser) && Boolean(extra.conversationId) && Boolean(extra.hookLocalState)
 
+  // sandboxMode hint:决定内置工具默认开关 + sandboxMcpServer 是否注入 + cwdPersistEngine 是否互斥。
+  // local provider → 'local'(SDK 内置工具直接操作本地 cwd,不注入 sandbox MCP);
+  // 有远程 sandboxInstance → 'remote'(走 AGS HTTP 数据面);其余 → 'none'。
+  const sandboxMode: SandboxMode = extra.sandboxMode ?? (extra.sandboxInstance ? 'remote' : 'none')
+
   // ── 合并 mcpServers：用户配置 + 沙箱 MCP（PR #6A）+ 内置 cloudbase MCP（PR #6.5）─
   // 沙箱实例由 create-agent 在 send 前 acquire 好后传入，这里只是注入。
+  // local provider 的实例无 HTTP 数据面(request() 抛错),不注入 sandbox MCP ——
+  // 改由 SDK 内置工具直接操作本地 cwd。
   const mergedMcpServers: Record<string, SdkMcpServerConfig> | undefined = (() => {
     const userServers = config.mcpServers ? validateMcpServers(config.mcpServers) : undefined
     const merged: Record<string, SdkMcpServerConfig> = { ...(userServers ?? {}) }
-    if (extra.sandboxInstance) {
+    if (extra.sandboxInstance && sandboxMode === 'remote') {
       // key 'sandbox' 决定工具名前缀：mcp__sandbox__bash 等
       merged.sandbox = createSandboxMcpServer(extra.sandboxInstance)
     }
@@ -316,10 +329,10 @@ export function buildClaudeQueryOptions(
       Object.assign(merged, extra.extraMcpServers)
     }
     // ── 内置 askUser 工具 → SDK MCP server 'kernel' (mcp__kernel__askUser)
-    // 模型可通过此工具主动向用户提问，kernel 用 sentinel 中断 turn，
-    // Host 收集回答后调 respondAskUser() resume。
-    if (extra.askUserStore) {
-      merged.kernel = createBuiltinAskUserMcpServer(extra.askUserStore, extra.conversationId)
+    // 模型可通过此工具主动向用户提问,kernel 用 sentinel 中断 turn,
+    // Host 收集回答后调 respondToolUse() resume(askUser 复用 clientToolStore)。
+    if (extra.clientToolStore) {
+      merged.kernel = createBuiltinAskUserMcpServer(extra.clientToolStore, extra.conversationId)
     }
     // ── 用户自定义 ToolDefinition[] → SDK MCP server 'custom' (mcp__custom__*)
     // SDK 的 query() 不接受 tools 数组——所有工具必须打包成 MCP server 注入。
@@ -346,7 +359,6 @@ export function buildClaudeQueryOptions(
       localState: extra.hookLocalState!,
       ...(extra.clientToolNames ? { clientToolNames: extra.clientToolNames } : {}),
       ...(extra.clientToolStore ? { clientToolStore: extra.clientToolStore } : {}),
-      ...(extra.askUserStore ? { askUserStore: extra.askUserStore } : {}),
     })
     return {
       PreToolUse: [
@@ -379,6 +391,22 @@ export function buildClaudeQueryOptions(
       })
     : undefined
 
+  // ── cwd 持久化:仅在 sandboxMode='local' 时启用 ──
+  // 三种模式的"cwd 是否会被模型改 + 谁持久化"矩阵:
+  //   - 'none'   : 模型无内置工具,cwd 不会被改 → 不需要持久化
+  //   - 'local'  : 模型用 SDK 内置工具改 cwd → workspacePersist 必须启用(local 无自己的 COS 同步)
+  //   - 'remote' : AGS snapshot 负责 → 互斥禁用
+  // LocalRuntimeSandbox.acquire 只创建/校验目录,不碰 COS;这里补上 tar.gz 单包持久化。
+  const cwdPersistEngine =
+    sandboxMode === 'local'
+      ? resolveCwdPersistEngine(config, {
+          credential,
+          cwd: effectiveCwd,
+          sessionId: extra.sessionId,
+          userId: extra.userId,
+        })
+      : undefined
+
   const options: ClaudeOptions = {
     model: credential.modelId,
     env,
@@ -390,6 +418,8 @@ export function buildClaudeQueryOptions(
     strictMcpConfig: true,
     // 持久化策略：注入 store 时必须 true（SDK 强制约束）
     persistSession: enablePersist,
+    // ACP adapter consumes SDK stream_event messages for token/tool input streaming.
+    includePartialMessages: true,
     ...(sessionStore ? { sessionStore } : {}),
     ...(config.session?.flush ? { sessionStoreFlush: config.session.flush } : {}),
     // ── 系统提示 ──
@@ -409,17 +439,122 @@ export function buildClaudeQueryOptions(
     // 因此始终 bypass SDK 的内置权限系统，让 Hook 全权负责。
     permissionMode: 'bypassPermissions' as const,
     allowDangerouslySkipPermissions: true,
-    // ── 内置工具默认全部禁用(沙箱能力通过上面的 mcpServers 提供)──
-    // 例外:启用 skills 时必须保留 'Skill' 工具,否则模型无法 invoke discovered skills
-    // (SDK 文档:"If you also pass an explicit tools list, include 'Skill' in that list
-    //   so Claude can invoke skills.")
-    tools: config.skills?.enabled !== undefined ? ['Skill'] : [],
+    // ── 流式:始终开启 includePartialMessages(AcpStreamAdapter 处理增量)──
+    // SDK 只有此项为 true 才 emit stream_event(增量 chunk);adapter 据此发 agent_message_chunk。
+    // ── 内置工具(默认禁用,local provider 自动开)──
+    // 默认 tools=[](或仅 'Skill'):避免模型操作 kernel 宿主机 FS。
+    //   - sandbox.provider='local' → 自动开 'claude_code' preset(SDK 全部内置工具)
+    //   - 沙箱(ags-stateful)能力另经 mcpServers 提供
+    tools: resolveBuiltinTools(config, sandboxMode),
+    // ── pathToClaudeCodeExecutable 透传 ──
+    // 默认情况下 SDK 用 require.resolve("@anthropic-ai/claude-agent-sdk-<platform>/claude")
+    // 来定位原生二进制。在 SCF 等只读 /var/user 的运行时里,平台包无法预装进
+    // node_modules(云构建会触发 Dependency error / 超体积上限),只能运行时下载到
+    // 可写目录(如 /tmp)。此时通过 OAK_CLAUDE_CODE_EXECUTABLE_PATH 显式指定二进制
+    // 绝对路径,SDK 会直接 spawn 它而跳过 require.resolve 探测。
+    // 该变量未设置时不影响原有行为(SDK 仍走默认解析)。
+    // 注意:用 OAK_ 前缀而非 CLAUDE_,因为我们把整份 env 透传进 SDK 子进程,CLAUDE_
+    // 前缀的变量会被 Claude CLI 误读,而 OAK_ 命名空间只属于我们自己。
+    ...(process.env.OAK_CLAUDE_CODE_EXECUTABLE_PATH
+      ? { pathToClaudeCodeExecutable: process.env.OAK_CLAUDE_CODE_EXECUTABLE_PATH }
+      : {}),
   }
 
-  return { options, credential, syncEngine, snapshotEngine, ...(debugFilePath ? { debugFilePath } : {}) }
+  return {
+    options,
+    credential,
+    syncEngine,
+    snapshotEngine,
+    ...(debugFilePath ? { debugFilePath } : {}),
+    ...(cwdPersistEngine ? { cwdPersistEngine } : {}),
+  }
 }
 
 // ─── 辅助 ────────────────────────────────────────────────────────
+
+/**
+ * 沙箱模式 hint,影响内置工具默认开关 + cwdPersistEngine 互斥逻辑。
+ * - 'local'  : sandbox.provider='local'(宿主进程本地 FS + SDK 内置工具,无 HTTP 数据面)
+ * - 'remote' : AGS/TRW 等远程沙箱(有 HTTP 数据面 + workspaceSnapshot)
+ * - 'none'   : 无沙箱(纯对话,或 workspacePersist 独立持久化)
+ */
+export type SandboxMode = 'local' | 'remote' | 'none'
+
+/**
+ * 解析 SDK 内置工具集(options.tools)。
+ *
+ *   - sandboxMode === 'local' → 'claude_code' preset(local provider 即用本地 FS,
+ *     SDK 内置 Bash/Read/Write/Edit/Glob/Grep 直接操作 cwd,preset 已含 Skill)
+ *   - 其他 → [](或仅 'Skill' 若启用 skills)
+ *
+ * 安全默认:无 local provider 时模型拿不到本地 Bash/Read/Write,
+ * 避免操作 kernel 宿主机 FS。
+ */
+function resolveBuiltinTools(config: AgentConfig, sandboxMode: SandboxMode): ClaudeOptions['tools'] {
+  const skillsOn = config.skills?.enabled !== undefined
+
+  if (sandboxMode === 'local') {
+    // local provider 默认开 SDK 全部内置工具(preset 已含 Skill)
+    return { type: 'preset', preset: 'claude_code' }
+  }
+
+  // 默认禁用:仅在启用 skills 时保留 'Skill'
+  return skillsOn ? ['Skill'] : []
+}
+
+/**
+ * 构造 cwd 持久化引擎(仅 sandboxMode='local' 时调用)。
+ *
+ * local provider 没有 AGS 那样的远程 snapshot 数据面;OAK 在 send 边界做 tar.gz 单包
+ * 归档(send-start pull、send-end push),per-session 跨容器/请求恢复 cwd。
+ *
+ * 前置条件:
+ *   - 有 sessionId(用作 COS key 命名空间)
+ *   - 有 credentials(COS 操作走 CAM 签名)
+ *
+ * 缺 sessionId → graceful degrade(warn + undefined,不阻塞 send)。
+ * cwd 不可写不在此检查 —— 实际写操作(pullOnSendStart 解包 tar.gz)会 fail-fast,
+ * 错误信息更准确(具体到哪一步、什么 errno)。
+ */
+function resolveCwdPersistEngine(
+  config: AgentConfig,
+  args: {
+    credential: ResolvedCredential
+    cwd: string
+    sessionId: string | undefined
+    userId: string | undefined
+  },
+): WorkspaceCwdArchiveEngine | undefined {
+  // userId 兜底:不要求业务传 userId,缺省用占位(COS key 只用 sessionId)
+  const userId = args.userId ?? 'anonymous'
+
+  if (!args.sessionId) {
+    // eslint-disable-next-line no-console
+    console.warn(`[oak/workspacePersist] sandbox.provider='local' but sessionId missing; skipping cwd persistence.`)
+    return undefined
+  }
+
+  const credentials = config.credentials
+    ? { ...config.credentials, envId: config.credentials.envId ?? config.envId }
+    : undefined
+
+  try {
+    return createWorkspaceCwdArchiveEngine({
+      ...(credentials ? { credentials } : {}),
+      envId: config.envId,
+      userId,
+      sessionId: args.sessionId,
+      cwd: args.cwd,
+    })
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[oak/workspacePersist] failed to construct engine, cwd persistence disabled:',
+      (err as Error)?.message,
+    )
+    return undefined
+  }
+}
 
 function isUserMemoryEnabled(config: UserMemoryConfig | undefined): boolean {
   return config === true || (typeof config === 'object' && config.enabled === true)
@@ -633,16 +768,17 @@ function extractSessionStore(config: AgentConfig): SessionStore | null {
  *
  * 注册一个 `askUser` 工具，模型可通过它主动向用户提问。
  * 工具的 execute() 是 stub——实际执行由 PreToolUse hook 拦截（sentinel 模式），
- * Host 收集用户回答后调 session.respondAskUser() resume。
+ * Host 收集用户回答后调 session.respondToolUse() resume。
  *
- * resume 时 hook 从 store 读到回答 → allow → 此 stub 读取回答并返回。
+ * resume 时 hook 从 clientToolStore 读到回答 → allow → 此 stub 读取回答并返回。
+ * askUser 在 store 里的 toolName='askUser',result.output={answer}。
  */
 function createBuiltinAskUserMcpServer(
-  askUserStore: AskUserStore,
+  clientToolStore: ClientToolResultStore,
   conversationId?: string,
 ): ReturnType<typeof createSdkMcpServer> {
   const askUserTool = sdkTool(
-    'askUser',
+    'AskUserQuestion',
     'Ask the user a question and wait for their answer. Use this when you need clarification, confirmation, or a choice from the user.',
     {
       question: z.string().describe('The question to ask the user'),
@@ -651,27 +787,30 @@ function createBuiltinAskUserMcpServer(
         .optional()
         .describe('Optional predefined answer options for the user to choose from'),
     },
-    async (input: Record<string, unknown>) => {
+    async (_input: Record<string, unknown>) => {
       // Resume path: check if an answer is already stashed in the store.
-      if (conversationId && askUserStore.scanRecent) {
-        const questionText = (input.question as string) ?? ''
-        const scanned = await askUserStore.scanRecent({
+      // AskUserQuestion 的 toolName='AskUserQuestion',scanRecent 按 toolName 匹配。
+      if (conversationId && clientToolStore.scanRecent) {
+        const scanned = await clientToolStore.scanRecent({
           conversationId,
-          question: questionText,
+          toolName: 'AskUserQuestion',
         })
         if (scanned?.result) {
-          await askUserStore.delete({
+          await clientToolStore.delete({
             conversationId,
             toolUseId: scanned.toolUseId,
           })
+          // result.output 是 { answer: string }(respondAskUser 写入时包装的)
+          const output = scanned.result.output as { answer?: string } | string
+          const text = typeof output === 'string' ? output : (output.answer ?? JSON.stringify(output))
           return {
-            content: [{ type: 'text', text: scanned.result.answer }],
+            content: [{ type: 'text', text }],
           }
         }
       }
       // Should not reach here in normal flow — the hook intercepts before execute().
       return {
-        content: [{ type: 'text', text: '(askUser: no answer available)' }],
+        content: [{ type: 'text', text: '(AskUserQuestion: no answer available)' }],
         isError: true,
       }
     },
@@ -681,24 +820,6 @@ function createBuiltinAskUserMcpServer(
     version: '1.0.0',
     tools: [askUserTool],
   })
-}
-
-/**
- * 探测一个目录是否可写(诊断用,不抛错)。
- * 返回 true / false / 'missing'(目录不存在或探测异常)。
- */
-function probeWritable(dir: string): true | false | 'missing' {
-  try {
-    mkdirSync(dir, { recursive: true })
-    const probe = path.join(dir, `.oak-write-probe-${randomBytes(3).toString('hex')}`)
-    // 用同步 fs 直接试写删 —— 避免引入额外异步链路
-    writeFileSync(probe, 'x')
-    unlinkSync(probe)
-    return true
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return 'missing'
-    return false
-  }
 }
 
 /**

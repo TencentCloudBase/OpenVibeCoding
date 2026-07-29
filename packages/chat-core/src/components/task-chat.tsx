@@ -259,13 +259,19 @@ export function TaskChat({
                   }
                 }
                 const toolName = (toolCall as { toolName?: string }).toolName || 'tool'
-                setToolConfirm({
-                  toolCallId: lastResult.toolCallId,
-                  assistantMessageId: latestAgent.id,
-                  toolName,
-                  input: toolInput,
-                  ...(toolName === 'ExitPlanMode' ? { planContent: extractPlanContent(toolInput) || undefined } : {}),
-                })
+                // AskUserQuestion 不是"批准/拒绝"语义而是问卷，问卷 UI 由 tool_call part
+                // 驱动（chat-transcript 的 resolveAskUserQuestion），这里不应重建
+                // toolConfirm 弹出审批卡片。与 apply-session-update.ts 的 request_permission
+                // 分支保持一致。
+                if (toolName !== 'AskUserQuestion') {
+                  setToolConfirm({
+                    toolCallId: lastResult.toolCallId,
+                    assistantMessageId: latestAgent.id,
+                    toolName,
+                    input: toolInput,
+                    ...(toolName === 'ExitPlanMode' ? { planContent: extractPlanContent(toolInput) || undefined } : {}),
+                  })
+                }
               }
             }
           }
